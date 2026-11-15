@@ -63,6 +63,7 @@ export class PlatformAdminClient {
 }
 
 export type OAuthProviderRecord = {
+  archived: boolean;
   enabled: boolean;
   provider_key: string;
   default_secret_name: string;
@@ -111,7 +112,7 @@ export function createOAuthProvider(client: PlatformAdminClient, input: OAuthPro
 export function updateOAuthProvider(
   client: PlatformAdminClient,
   id: string,
-  input: Partial<OAuthProviderInput> & { expected_version: number },
+  input: Partial<OAuthProviderInput> & { archived?: boolean; expected_version: number },
 ) {
   return client.request<OAuthProviderRecord>(`/oauth-providers/${encodeURIComponent(id)}`, {
     method: 'PATCH',

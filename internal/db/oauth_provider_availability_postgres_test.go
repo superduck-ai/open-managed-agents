@@ -43,3 +43,22 @@ func TestOAuthProviderAvailabilityMigrationPostgres(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthProviderArchiveMigrationPostgres(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("需要隔离 PostgreSQL；跳过不能视为通过")
+	}
+	database := newIsolatedSessionResourceMigrationTestDatabase(t, t.Context(), address)
+	provider := newMigrationTestProvider(t, database)
+	if _, err := provider.UpTo(t.Context(), 128); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(t.Context(), `UPDATE platform_oauth_providers SET archived=NULL WHERE builtin_key='friday'`); err == nil {
+		t.Fatal("归档状态接受 NULL")
+	}
+	var archived bool
+	if err := database.QueryRowContext(t.Context(), `SELECT archived FROM platform_oauth_providers WHERE builtin_key='friday'`).Scan(&archived); err != nil || archived {
+		t.Fatal("已有客户端未默认保持未归档", err)
+	}
+}

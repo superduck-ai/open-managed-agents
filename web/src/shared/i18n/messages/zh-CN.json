@@ -3430,7 +3430,7 @@
   "platformAdmin.oauthManagement.defaultSecretName": "默认变量名",
   "platformAdmin.oauthManagement.enable": "启用",
   "platformAdmin.oauthManagement.disable": "停用",
-  "platformAdmin.oauthManagement.disabled": "已停用",
+  "platformAdmin.oauthManagement.disabled": "停用",
   "platformAdmin.oauthManagement.disableTitle": "停用客户端？",
   "platformAdmin.oauthManagement.enableTitle": "启用客户端？",
   "platformAdmin.oauthManagement.disableBody": "从工作区可选服务方中隐藏。已有凭证和会话继续可用；停用不会撤销授权或自动刷新能力。",
@@ -3698,5 +3698,15 @@
   "common.download": "下载",
   "common.unknown": "未知",
   "managedAgents.memoryStores.attach.mountPath": "挂载路径",
-  "managedAgents.memoryStores.attach.mountPathHelp": "由服务端分配，保存时无需提交此值。"
+  "managedAgents.memoryStores.attach.mountPathHelp": "由服务端分配，保存时无需提交此值。",
+  "platformAdmin.oauthManagement.enabledState": "启用",
+  "platformAdmin.oauthManagement.archived": "已归档",
+  "platformAdmin.oauthManagement.all": "全部",
+  "platformAdmin.oauthManagement.archive": "归档",
+  "platformAdmin.oauthManagement.restore": "恢复",
+  "platformAdmin.oauthManagement.archiveTitle": "归档客户端？",
+  "platformAdmin.oauthManagement.restoreTitle": "恢复客户端？",
+  "platformAdmin.oauthManagement.archiveBody": "从未归档列表和工作区可选服务方中隐藏。已有凭证和自动刷新继续可用。",
+  "platformAdmin.oauthManagement.restoreBody": "恢复客户端，并保留归档前的启用或停用状态。",
+  "platformAdmin.oauthManagement.noMatches": "没有符合筛选条件的 OAuth 客户端"
 }

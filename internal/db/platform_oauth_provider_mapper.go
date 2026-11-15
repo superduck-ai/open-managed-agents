@@ -18,6 +18,7 @@ type platformOAuthProviderRow struct {
 	Scope                      string         `db:"scope"`
 	BuiltinKey                 sql.NullString `db:"builtin_key"`
 	Enabled                    bool           `db:"enabled"`
+	Archived                   bool           `db:"archived"`
 	Protected                  bool           `db:"protected"`
 	Version                    int64          `db:"version"`
 	DefaultSecretName          string         `db:"default_secret_name"`
@@ -41,6 +42,7 @@ type upsertPlatformOAuthProviderParams struct {
 	Scope                      string
 	DefaultSecretName          string
 	Enabled                    bool
+	Archived                   bool
 	ClientIDEnvelope           *string
 	Version                    int64
 	ClientSecretEnvelope       *string

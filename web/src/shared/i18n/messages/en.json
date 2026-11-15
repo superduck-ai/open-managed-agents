@@ -3698,5 +3698,15 @@
   "common.download": "Download",
   "common.unknown": "Unknown",
   "managedAgents.memoryStores.attach.mountPath": "Mount path",
-  "managedAgents.memoryStores.attach.mountPathHelp": "Assigned by the server. This value is not sent when saving."
+  "managedAgents.memoryStores.attach.mountPathHelp": "Assigned by the server. This value is not sent when saving.",
+  "platformAdmin.oauthManagement.enabledState": "Enabled",
+  "platformAdmin.oauthManagement.archived": "Archived",
+  "platformAdmin.oauthManagement.all": "All",
+  "platformAdmin.oauthManagement.archive": "Archive",
+  "platformAdmin.oauthManagement.restore": "Restore",
+  "platformAdmin.oauthManagement.archiveTitle": "Archive OAuth client?",
+  "platformAdmin.oauthManagement.restoreTitle": "Restore OAuth client?",
+  "platformAdmin.oauthManagement.archiveBody": "Hide from the active list and workspace provider catalog. Existing credentials and automatic refresh remain available.",
+  "platformAdmin.oauthManagement.restoreBody": "Restore the client with its previous enabled or disabled state.",
+  "platformAdmin.oauthManagement.noMatches": "No matching OAuth clients"
 }

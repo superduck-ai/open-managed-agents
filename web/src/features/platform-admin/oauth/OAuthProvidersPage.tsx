@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, MoreVertical, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, KeyRound, MoreVertical, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import {
@@ -11,6 +11,8 @@ import {
   DropdownMenuSeparator,
 } from '../../../shared/ui/dropdown-menu';
 import { Button } from '../../../shared/ui/button';
+import { Badge } from '../../../shared/ui/badge';
+import { ResourceFilterDropdown } from '../../../shared/ui/resource-list-controls';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
@@ -34,19 +36,26 @@ import { deleteOAuthProvider, listOAuthProviders, type OAuthProviderRecord } fro
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 import { OAuthProviderDialog } from './OAuthProviderDialog';
-import { OAuthProviderStatusDialog } from './OAuthProviderStatusDialog';
+import { OAuthProviderStatusDialog, type OAuthProviderStatusAction } from './OAuthProviderStatusDialog';
 import type { ApiError } from '../../../shared/api/client';
+
+type OAuthProviderFilter = 'active' | 'enabled' | 'disabled' | 'archived' | 'all';
 
 const oauthProvidersKey = ['platform-oauth-providers'] as const;
 
 export function OAuthProvidersPage() {
-  const { msg, locale } = useI18n();
+  const { msg } = useI18n();
   const { client } = usePlatformAdmin();
   const queryClient = useQueryClient();
   const errorMessage = usePlatformAdminError();
   const [editing, setEditing] = useState<OAuthProviderRecord | null | undefined>(undefined);
   const [deleting, setDeleting] = useState<OAuthProviderRecord | null>(null);
-  const [toggling, setToggling] = useState<OAuthProviderRecord | null>(null);
+  const [statusChange, setStatusChange] = useState<{
+    provider: OAuthProviderRecord;
+    action: OAuthProviderStatusAction;
+  } | null>(null);
+  const [status, setStatus] = useState<OAuthProviderFilter>('active');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const query = useQuery({
     queryKey: oauthProvidersKey,
@@ -68,7 +77,14 @@ export function OAuthProvidersPage() {
     setEditing(undefined);
     await queryClient.invalidateQueries({ queryKey: oauthProvidersKey });
   };
-  const providers = query.data ?? [];
+  const providers = (query.data ?? []).filter((provider) => matchesOAuthProviderStatus(provider, status));
+  const statusOptions: Array<{ value: OAuthProviderFilter; label: string }> = [
+    { value: 'active', label: msg('common.active', 'Active') },
+    { value: 'enabled', label: msg('platformAdmin.oauthManagement.enabledState', 'Enabled') },
+    { value: 'disabled', label: msg('platformAdmin.oauthManagement.disabled', 'Disabled') },
+    { value: 'archived', label: msg('platformAdmin.oauthManagement.archived', 'Archived') },
+    { value: 'all', label: msg('platformAdmin.oauthManagement.all', 'All') },
+  ];
   return (
     <section>
       <ResourcePageHeader
@@ -84,6 +100,19 @@ export function OAuthProvidersPage() {
           </Button>
         }
       />
+      <div className="mb-7 flex flex-wrap items-center gap-2">
+        <ResourceFilterDropdown
+          label={msg('managedAgents.filters.status', 'Status')}
+          valueLabel={statusOptions.find((option) => option.value === status)!.label}
+          options={statusOptions}
+          value={status}
+          menu="status"
+          open={filterOpen}
+          menuWidthClass="w-[230px]"
+          onOpenChange={(menu) => setFilterOpen(menu !== null)}
+          onSelect={setStatus}
+        />
+      </div>
       {query.isPending ? (
         <p role="status">{msg('common.loading', 'Loading...')}</p>
       ) : query.isError ? (
@@ -93,97 +122,30 @@ export function OAuthProvidersPage() {
       ) : providers.length === 0 ? (
         <ResourceListState
           icon={KeyRound}
-          title={msg('platformAdmin.oauthManagement.empty', 'No OAuth clients yet')}
-          body={msg(
-            'platformAdmin.oauthManagement.emptyBody',
-            'Register a client to let workspaces authorize ENV OAuth credentials.',
-          )}
+          title={
+            query.data?.length
+              ? msg('platformAdmin.oauthManagement.noMatches', 'No matching OAuth clients')
+              : msg('platformAdmin.oauthManagement.empty', 'No OAuth clients yet')
+          }
+          body={
+            query.data?.length
+              ? undefined
+              : msg(
+                  'platformAdmin.oauthManagement.emptyBody',
+                  'Register a client to let workspaces authorize ENV OAuth credentials.',
+                )
+          }
         />
       ) : (
-        <Table className={`${dataTableClassName} min-w-[900px]`}>
-          <TableHeader>
-            <TableRow className={dataTableHeaderRowClassName}>
-              <TableHead className={dataTableHeaderCellClassName}>
-                {msg('platformAdmin.oauthManagement.name', 'Name')}
-              </TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>
-                {msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint')}
-              </TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>
-                {msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint')}
-              </TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>
-                {msg('platformAdmin.oauthManagement.clientId', 'Client ID')}
-              </TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>
-                {msg('platformAdmin.oauthManagement.updatedAt', 'Updated')}
-              </TableHead>
-              <TableHead className={dataTableHeaderCellClassName} />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {providers.map((provider) => (
-              <DataTableRow key={provider.id} clickable onClick={() => setEditing(provider)}>
-                <DataTableCell edge="start" className="font-medium">
-                  <span className="flex items-center gap-2">
-                    <OAuthProviderAvatar providerKey={provider.provider_key} logoUrl={provider.logo_url} />
-                    <span>{provider.name}</span>
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {!provider.enabled
-                      ? msg('platformAdmin.oauthManagement.disabled', 'Disabled')
-                      : provider.configured
-                        ? msg('platformAdmin.oauthManagement.configured', 'Configured')
-                        : msg('platformAdmin.oauthManagement.unconfigured', 'Not configured')}
-                  </span>
-                </DataTableCell>
-                <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
-                  {provider.authorize_endpoint}
-                </DataTableCell>
-                <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
-                  {provider.token_endpoint}
-                </DataTableCell>
-                <DataTableCell className="font-mono text-xs">{provider.client_id}</DataTableCell>
-                <DataTableCell>{new Date(provider.updated_at).toLocaleDateString(locale)}</DataTableCell>
-                <DataTableCell edge="end">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={msg('skills.moreFor', 'More actions for {name}', { name: provider.name })}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      }
-                    >
-                      <MoreVertical className="size-4" strokeWidth={1.5} aria-hidden />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44" onClick={(event) => event.stopPropagation()}>
-                      <DropdownMenuItem onClick={() => setToggling(provider)}>
-                        {provider.enabled ? <PowerOff size={15} aria-hidden /> : <Power size={15} aria-hidden />}
-                        {provider.enabled
-                          ? msg('platformAdmin.oauthManagement.disable', 'Disable')
-                          : msg('platformAdmin.oauthManagement.enable', 'Enable')}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => {
-                          setError(null);
-                          setDeleting(provider);
-                        }}
-                      >
-                        <Trash2 size={15} aria-hidden />
-                        {msg('platformAdmin.oauthManagement.delete', 'Delete')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </DataTableCell>
-              </DataTableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <OAuthProvidersTable
+          providers={providers}
+          onEdit={setEditing}
+          onStatusChange={(provider, action) => setStatusChange({ provider, action })}
+          onDelete={(provider) => {
+            setError(null);
+            setDeleting(provider);
+          }}
+        />
       )}
       {editing !== undefined ? (
         <OAuthProviderDialog
@@ -193,12 +155,13 @@ export function OAuthProvidersPage() {
           onConflict={() => queryClient.invalidateQueries({ queryKey: oauthProvidersKey })}
         />
       ) : null}
-      {toggling ? (
+      {statusChange ? (
         <OAuthProviderStatusDialog
-          provider={toggling}
-          onClose={() => setToggling(null)}
+          provider={statusChange.provider}
+          action={statusChange.action}
+          onClose={() => setStatusChange(null)}
           onSaved={async () => {
-            setToggling(null);
+            setStatusChange(null);
             await queryClient.invalidateQueries({ queryKey: oauthProvidersKey });
           }}
           onConflict={() => queryClient.invalidateQueries({ queryKey: oauthProvidersKey })}
@@ -241,5 +204,119 @@ export function OAuthProvidersPage() {
         </Dialog>
       ) : null}
     </section>
+  );
+}
+
+function matchesOAuthProviderStatus(provider: OAuthProviderRecord, status: OAuthProviderFilter) {
+  if (status === 'all') return true;
+  if (status === 'active') return !provider.archived;
+  if (status === 'archived') return provider.archived;
+  return !provider.archived && (provider.enabled ? status === 'enabled' : status === 'disabled');
+}
+
+function OAuthProvidersTable({
+  providers,
+  onEdit,
+  onDelete,
+  onStatusChange,
+}: {
+  providers: OAuthProviderRecord[];
+  onEdit: (provider: OAuthProviderRecord) => void;
+  onDelete: (provider: OAuthProviderRecord) => void;
+  onStatusChange: (provider: OAuthProviderRecord, action: OAuthProviderStatusAction) => void;
+}) {
+  const { msg, locale } = useI18n();
+  return (
+    <Table className={`${dataTableClassName} min-w-[900px]`}>
+      <TableHeader>
+        <TableRow className={dataTableHeaderRowClassName}>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('platformAdmin.oauthManagement.name', 'Name')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('managedAgents.filters.status', 'Status')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('platformAdmin.oauthManagement.clientId', 'Client ID')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName}>
+            {msg('platformAdmin.oauthManagement.updatedAt', 'Updated')}
+          </TableHead>
+          <TableHead className={dataTableHeaderCellClassName} />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {providers.map((provider) => (
+          <DataTableRow key={provider.id} clickable onClick={() => onEdit(provider)}>
+            <DataTableCell edge="start" className="font-medium">
+              <span className="flex items-center gap-2">
+                <OAuthProviderAvatar providerKey={provider.provider_key} logoUrl={provider.logo_url} />
+                <span>{provider.name}</span>
+              </span>
+            </DataTableCell>
+            <DataTableCell>
+              <Badge variant="secondary">
+                {provider.archived
+                  ? msg('platformAdmin.oauthManagement.archived', 'Archived')
+                  : provider.enabled
+                    ? msg('platformAdmin.oauthManagement.enabledState', 'Enabled')
+                    : msg('platformAdmin.oauthManagement.disabled', 'Disabled')}
+              </Badge>
+            </DataTableCell>
+            <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
+              {provider.authorize_endpoint}
+            </DataTableCell>
+            <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
+              {provider.token_endpoint}
+            </DataTableCell>
+            <DataTableCell className="font-mono text-xs">{provider.client_id}</DataTableCell>
+            <DataTableCell>{new Date(provider.updated_at).toLocaleDateString(locale)}</DataTableCell>
+            <DataTableCell edge="end">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={msg('skills.moreFor', 'More actions for {name}', { name: provider.name })}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  }
+                >
+                  <MoreVertical className="size-4" strokeWidth={1.5} aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44" onClick={(event) => event.stopPropagation()}>
+                  {!provider.archived ? (
+                    <DropdownMenuItem onClick={() => onStatusChange(provider, provider.enabled ? 'disable' : 'enable')}>
+                      {provider.enabled ? <PowerOff size={15} aria-hidden /> : <Power size={15} aria-hidden />}
+                      {provider.enabled
+                        ? msg('platformAdmin.oauthManagement.disable', 'Disable')
+                        : msg('platformAdmin.oauthManagement.enable', 'Enable')}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onClick={() => onStatusChange(provider, provider.archived ? 'restore' : 'archive')}>
+                    {provider.archived ? <ArchiveRestore size={15} aria-hidden /> : <Archive size={15} aria-hidden />}
+                    {provider.archived
+                      ? msg('platformAdmin.oauthManagement.restore', 'Restore')
+                      : msg('platformAdmin.oauthManagement.archive', 'Archive')}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => onDelete(provider)}>
+                    <Trash2 size={15} aria-hidden />
+                    {msg('platformAdmin.oauthManagement.delete', 'Delete')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </DataTableCell>
+          </DataTableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

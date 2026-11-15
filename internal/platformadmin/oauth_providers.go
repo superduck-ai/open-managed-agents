@@ -37,6 +37,7 @@ type OAuthProviderCreateInput struct {
 }
 
 type OAuthProviderUpdateInput struct {
+	Archived                *bool   `json:"archived"`
 	DefaultSecretName       *string `json:"default_secret_name"`
 	Enabled                 *bool   `json:"enabled"`
 	ExpectedVersion         int64   `json:"expected_version"`
@@ -52,6 +53,7 @@ type OAuthProviderUpdateInput struct {
 }
 
 type OAuthProviderView struct {
+	Archived                bool      `json:"archived"`
 	Enabled                 bool      `json:"enabled"`
 	ProviderKey             string    `json:"provider_key"`
 	Builtin                 bool      `json:"builtin"`
@@ -348,7 +350,7 @@ func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAu
 
 func oauthProviderView(provider db.PlatformOAuthProvider, clientID string) OAuthProviderView {
 	return OAuthProviderView{
-		Enabled: provider.Enabled, ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
+		Archived: provider.Archived, Enabled: provider.Enabled, ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
 		HasClientID: provider.ClientIDEnvelope != nil, HasClientSecret: provider.ClientSecretEnvelope != nil,
 		Configured: provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil, Version: provider.Version,
 		Name: provider.Name, LogoURL: provider.LogoURL, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
@@ -391,6 +393,9 @@ func (i OAuthProviderUpdateInput) changedFields() []string {
 			fields = append(fields, field.name)
 		}
 	}
+	if i.Archived != nil {
+		fields = append(fields, "archived")
+	}
 	if i.Enabled != nil {
 		fields = append(fields, "enabled")
 	}
@@ -403,7 +408,7 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return invalid("请求 JSON 无效")
 	}
-	for _, key := range []string{"client_id", "client_secret", "default_secret_name", "enabled"} {
+	for _, key := range []string{"client_id", "client_secret", "default_secret_name", "enabled", "archived"} {
 		if value, exists := fields[key]; exists && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return invalid("配置字段不能为 null")
 		}
@@ -414,6 +419,9 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 }
 
 func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthProviderUpdateInput) error {
+	if input.Archived != nil {
+		provider.Archived = *input.Archived
+	}
 	if input.DefaultSecretName != nil {
 		name, err := normalizeOAuthProviderSecretName(*input.DefaultSecretName)
 		if err != nil {

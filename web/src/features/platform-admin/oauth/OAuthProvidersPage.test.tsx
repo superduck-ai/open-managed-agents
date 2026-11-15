@@ -42,6 +42,7 @@ function mount() {
 }
 
 const provider = {
+  archived: false,
   enabled: true,
   id: 'poap_test',
   provider_key: 'custom:poap_test',
@@ -126,7 +127,9 @@ test('飞书客户端通过更多操作统一提供停用和删除', async () =>
   mount();
   expect(await screen.findByText('飞书')).toBeTruthy();
   expect(screen.queryByText('内置')).toBeNull();
-  expect(screen.getByText('已配置')).toBeTruthy();
+  expect(screen.queryByText('已配置')).toBeNull();
+  expect(screen.getByRole('columnheader', { name: '状态' })).toBeTruthy();
+  expect(screen.getByText('启用')).toBeTruthy();
   expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
   expect(screen.queryByText('暂无 OAuth 客户端')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '飞书的更多操作' }));
@@ -388,4 +391,65 @@ test.each([true, false])('客户端启停确认并仅提交状态和版本：%s'
   fireEvent.click(screen.getByRole('button', { name: '确认' }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(JSON.parse(String(writes[0].body))).toEqual({ enabled: !enabled, expected_version: provider.version });
+});
+
+test('状态筛选区分活跃、启用、停用和归档客户端', async () => {
+  const records = [
+    provider,
+    { ...provider, id: 'disabled', name: 'Disabled client', enabled: false },
+    { ...provider, id: 'archived', name: 'Archived client', archived: true },
+  ];
+  globalThis.fetch = mock(async () => Response.json(records)) as typeof fetch;
+  mount();
+  await screen.findByText('Example OAuth');
+  expect(screen.getByText('Disabled client')).toBeTruthy();
+  expect(screen.queryByText('Archived client')).toBeNull();
+  for (const [label, visible, hidden] of [
+    ['启用', 'Example OAuth', 'Disabled client'],
+    ['停用', 'Disabled client', 'Example OAuth'],
+    ['已归档', 'Archived client', 'Example OAuth'],
+    ['全部', 'Example OAuth', 'not-a-client'],
+  ]) {
+    fireEvent.click(screen.getByRole('combobox', { name: /^状态 / }));
+    fireEvent.click(await screen.findByRole('option', { name: label }));
+    await screen.findByText(visible);
+    expect(screen.queryByText(hidden)).toBeNull();
+  }
+  expect(screen.getByText('Archived client')).toBeTruthy();
+  expect(screen.getByText('Disabled client')).toBeTruthy();
+});
+
+test('归档确认后隐藏客户端，恢复保留启用状态且仅提交归档状态和版本', async () => {
+  let record = { ...provider };
+  const writes: Record<string, unknown>[] = [];
+  globalThis.fetch = mock(async (_input, options) => {
+    if (options?.method === 'PATCH') {
+      const body = JSON.parse(String(options.body));
+      writes.push(body);
+      record = { ...record, ...body, version: record.version + 1 };
+      return Response.json(record);
+    }
+    return Response.json([record]);
+  }) as typeof fetch;
+  mount();
+  await screen.findByText('Example OAuth');
+  fireEvent.click(screen.getByRole('button', { name: 'Example OAuth的更多操作' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }));
+  expect(writes).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: '确认' }));
+  await screen.findByText('没有符合筛选条件的 OAuth 客户端');
+  expect(writes[0]).toEqual({ archived: true, expected_version: 1 });
+  fireEvent.click(screen.getByRole('combobox', { name: /^状态 / }));
+  fireEvent.click(await screen.findByRole('option', { name: '已归档' }));
+  await screen.findByText('Example OAuth');
+  fireEvent.click(screen.getByRole('button', { name: 'Example OAuth的更多操作' }));
+  expect(screen.queryByRole('menuitem', { name: '停用' })).toBeNull();
+  fireEvent.click(await screen.findByRole('menuitem', { name: '恢复' }));
+  fireEvent.click(screen.getByRole('button', { name: '确认' }));
+  await screen.findByText('没有符合筛选条件的 OAuth 客户端');
+  expect(writes[1]).toEqual({ archived: false, expected_version: 2 });
+  fireEvent.click(screen.getByRole('combobox', { name: /^状态 / }));
+  fireEvent.click(await screen.findByRole('option', { name: '活跃' }));
+  await screen.findByText('Example OAuth');
+  expect(screen.getByText('启用')).toBeTruthy();
 });

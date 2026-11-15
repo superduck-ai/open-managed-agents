@@ -197,3 +197,13 @@ func TestDisabledProviderRemainsResolvableForExistingCredentials(t *testing.T) {
 		t.Fatal("停用错误撤销了已有凭证的刷新客户端", err)
 	}
 }
+
+func TestArchivedProviderRemainsResolvableForExistingCredentials(t *testing.T) {
+	service, provider := providerFixture(t)
+	provider.Enabled = true
+	provider.Archived = true
+	snapshot, err := NewResolver(providerStoreStub{provider: provider}, service, nil).ResolveEnvOAuthProvider(t.Context(), "builtin:feishu")
+	if err != nil || snapshot.Enabled || snapshot.ClientSecret == "" {
+		t.Fatal("归档错误撤销了已有凭证的刷新客户端", err)
+	}
+}

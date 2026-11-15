@@ -16,13 +16,40 @@ import {
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 
+const statusChanges = {
+  enable: { enabled: true },
+  disable: { enabled: false },
+  archive: { archived: true },
+  restore: { archived: false },
+};
+
+export type OAuthProviderStatusAction = keyof typeof statusChanges;
+
+const actionTitles = {
+  enable: 'Enable OAuth client?',
+  disable: 'Disable OAuth client?',
+  archive: 'Archive OAuth client?',
+  restore: 'Restore OAuth client?',
+};
+
+const actionBodies = {
+  enable: 'Show in the workspace provider catalog for creating new credentials.',
+  disable:
+    'Hide from the workspace provider catalog. Existing credentials and sessions remain available; disabling does not revoke authorization or automatic refresh.',
+  archive:
+    'Hide from the active list and workspace provider catalog. Existing credentials and automatic refresh remain available.',
+  restore: 'Restore the client with its previous enabled or disabled state.',
+};
+
 export function OAuthProviderStatusDialog({
   provider,
+  action,
   onClose,
   onSaved,
   onConflict,
 }: {
   provider: OAuthProviderRecord;
+  action: OAuthProviderStatusAction;
   onClose: () => void;
   onSaved: () => Promise<void>;
   onConflict: () => Promise<void>;
@@ -33,7 +60,7 @@ export function OAuthProviderStatusDialog({
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
-      updateOAuthProvider(client, provider.id, { enabled: !provider.enabled, expected_version: provider.version }),
+      updateOAuthProvider(client, provider.id, { ...statusChanges[action], expected_version: provider.version }),
     onSuccess: onSaved,
     onError: async (cause: unknown) => {
       setError(errorMessage(cause));
@@ -44,22 +71,10 @@ export function OAuthProviderStatusDialog({
     <Dialog open onOpenChange={(open) => !open && !mutation.isPending && onClose()}>
       <DialogContent className="sm:max-w-md" closeButtonDisabled={mutation.isPending}>
         <DialogHeader>
-          <DialogTitle>
-            {provider.enabled
-              ? msg('platformAdmin.oauthManagement.disableTitle', 'Disable OAuth client?')
-              : msg('platformAdmin.oauthManagement.enableTitle', 'Enable OAuth client?')}
-          </DialogTitle>
+          <DialogTitle>{msg(`platformAdmin.oauthManagement.${action}Title`, actionTitles[action])}</DialogTitle>
           <DialogDescription>
             <span className="mb-1 block font-medium text-foreground">{provider.name}</span>
-            {provider.enabled
-              ? msg(
-                  'platformAdmin.oauthManagement.disableBody',
-                  'Hide from the workspace provider catalog. Existing credentials and sessions remain available; disabling does not revoke authorization or automatic refresh.',
-                )
-              : msg(
-                  'platformAdmin.oauthManagement.enableBody',
-                  'Show in the workspace provider catalog for creating new credentials.',
-                )}
+            {msg(`platformAdmin.oauthManagement.${action}Body`, actionBodies[action])}
           </DialogDescription>
         </DialogHeader>
         {error ? (

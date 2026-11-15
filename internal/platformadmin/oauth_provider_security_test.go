@@ -295,3 +295,16 @@ func TestOAuthProviderPlatformManagementIsUniform(t *testing.T) {
 		t.Fatal("平台客户端不可删除", err)
 	}
 }
+
+func TestOAuthProviderArchiveAndRestorePreserveConfiguration(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	store.provider.Enabled = true
+	archived, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, Archived: new(true)})
+	if err != nil || !archived.Archived || !archived.Enabled {
+		t.Fatal("归档未保留启用状态", err)
+	}
+	restored, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: archived.Version, Archived: new(false)})
+	if err != nil || restored.Archived || !restored.Enabled || restored.Name != archived.Name {
+		t.Fatal("恢复归档配置失败", err)
+	}
+}

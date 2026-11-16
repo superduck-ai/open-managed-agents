@@ -215,12 +215,15 @@ export const anthropicApi = {
 
 export const anthropicBetaApi = {
   files: {
-    download(fileId: string, workspaceId?: string) {
+    download(fileId: string, workspaceId?: string, signal?: AbortSignal) {
       return sdkCall(() =>
         getAnthropicClient().beta.files.download(
           fileId,
           {},
-          { ...requestOptions(workspaceId), signal: getScopeSignal() },
+          {
+            ...requestOptions(workspaceId),
+            signal: signal ? AbortSignal.any([signal, getScopeSignal()]) : getScopeSignal(),
+          },
         ),
       );
     },

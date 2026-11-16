@@ -26,6 +26,7 @@ type toolCallSubmission struct {
 }
 
 type toolCallResponse struct {
+	CallID       string          `json:"call_id"`
 	CallUUID     string          `json:"call_uuid"`
 	Attempt      int             `json:"attempt"`
 	Tool         string          `json:"tool"`
@@ -37,7 +38,7 @@ type toolCallResponse struct {
 }
 
 func toolCallReply(call db.SandboxToolCall) toolCallResponse {
-	return toolCallResponse{CallUUID: call.UUID, Attempt: call.Attempt, Tool: call.ToolName, State: call.State, DeadlineAt: call.DeadlineAt, CancelReason: call.CancelReason, Result: call.Result}
+	return toolCallResponse{CallID: call.ExternalID, CallUUID: call.UUID, Attempt: call.Attempt, Tool: call.ToolName, State: call.State, DeadlineAt: call.DeadlineAt, CancelReason: call.CancelReason, Result: call.Result}
 }
 
 func toolCallDone(state string) bool {

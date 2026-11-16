@@ -67,6 +67,9 @@ func TestOAuthRefreshFailureNotifications(t *testing.T) {
 			if len(recorder.events) != tc.want {
 				t.Fatalf("notifications=%d want %d", len(recorder.events), tc.want)
 			}
+			if store.clearCalls != tc.want {
+				t.Fatalf("永久失效清理次数=%d，期望=%d", store.clearCalls, tc.want)
+			}
 			if tc.want == 1 {
 				event := recorder.events[0]
 				if event.EventType != "vault_credential.refresh_failed" || event.ResourceID != stale.ExternalID || event.WorkspaceUUID != stale.WorkspaceUUID || event.WorkspaceExternalID != "workspace-test" || event.Options.VaultID == nil || *event.Options.VaultID != stale.VaultExternalID {

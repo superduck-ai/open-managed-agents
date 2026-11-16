@@ -47,6 +47,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	if s == nil {
 		return nil
 	}
+	if payload.Request.Subtype == "request_oauth" {
+		return s.handleOAuthRequest(ctx, codeSessionID, workerEpoch, payload, meta)
+	}
 	toolName := firstNonEmpty(payload.Request.ToolName, payload.ToolName)
 	threadID := workerOutputSessionThreadID(payload)
 	if payload.Request.AgentID != "" {
@@ -521,6 +524,17 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 	if request.EventType != "agent.custom_tool_use" {
 		return false, nil
 	}
+	if sandboxOAuthRequest(request) {
+		if err := s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(locked db.CodeSession) error {
+			if locked.CurrentWorkerEpoch != codeSession.CurrentWorkerEpoch {
+				return db.ErrWorkerEpochMismatch
+			}
+			return nil
+		}); err != nil {
+			return true, err
+		}
+		return true, s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID})
+	}
 	if payload.IsError && len(payload.Content) == 0 {
 		payload.Content = []selfHostedToolContent{{Type: "text", Text: "User declined to answer."}}
 	}
@@ -688,6 +702,9 @@ func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, 
 }
 
 func toolPermissionPublicIdentity(toolName string, identity toolIdentity) (string, string) {
+	if identity.Kind == "oauth" {
+		return "agent.custom_tool_use", "RequestOAuth"
+	}
 	if identity.Kind == "agent_toolset" && identity.ToolName == "ask_user_question" {
 		return "agent.custom_tool_use", "AskUserQuestion"
 	}

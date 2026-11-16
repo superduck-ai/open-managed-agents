@@ -121,6 +121,12 @@ func (w *channelWorker) handleCardAction(ctx context.Context, event *channeltype
 		return nil
 	}
 	switch value.Kind {
+	case "cancel_oauth":
+		err := w.cancelOAuthCardAction(ctx, apiKey, value, events)
+		if err == nil {
+			w.resumeReplyDelivery(receipt)
+		}
+		return err
 	case "confirm":
 		if err := w.confirmCardAction(ctx, apiKey, value, events); err != nil {
 			return err
@@ -331,4 +337,22 @@ func (w *channelWorker) confirmCardAction(ctx context.Context, apiKey string, va
 		confirmation["session_thread_id"] = request.SessionThreadID
 	}
 	return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, confirmation, value.requestKey)
+}
+
+func (w *channelWorker) cancelOAuthCardAction(ctx context.Context, apiKey string, value channelActionValue, events []omaEvent) error {
+	for _, request := range events {
+		if request.ID != value.ToolUseID || request.Type != "agent.custom_tool_use" || request.Name != "RequestOAuth" || value.ThreadID != "" && request.SessionThreadID != value.ThreadID {
+			continue
+		}
+		result := map[string]any{
+			"type": "user.custom_tool_result", "custom_tool_use_id": value.ToolUseID,
+			"is_error": true,
+			"content":  []map[string]string{{"type": "text", "text": "用户取消了目标服务授权。"}},
+		}
+		if request.SessionThreadID != "" {
+			result["session_thread_id"] = request.SessionThreadID
+		}
+		return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, result, value.requestKey)
+	}
+	return invalidChannelCardReceipt()
 }

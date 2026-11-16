@@ -443,7 +443,7 @@ export class CcrSession {
           request_id: requestId,
           ...(threadId ? { session_thread_id: threadId } : {}),
           request: {
-            subtype: "can_use_tool",
+            subtype: request.kind === "oauth" ? "request_oauth" : "can_use_tool",
             tool_name: request.toolName,
             tool_use_id: request.callId,
             input: request.input,

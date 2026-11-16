@@ -37,7 +37,7 @@ func newReplyRunner(worker *channelWorker, task *channelReplyTask, msg *channelM
 		presentation: presentation,
 		task:         task,
 		msg:          msg,
-		reply:        channelReply{thinking: presentation.IncludeThinking, stopValue: &value},
+		reply:        channelReply{thinking: presentation.IncludeThinking, stopValue: &value, oauthOrigin: worker.supervisor.oauthOrigin},
 		seen:         make(map[string]struct{}),
 	}
 }

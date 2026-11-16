@@ -53,6 +53,8 @@ type runtimeStore interface {
 }
 
 type runtimeSupervisor struct {
+	personalVault   func(context.Context, db.ChannelRecord, string) (string, error)
+	oauthOrigin     string
 	fileMaxBytes    int64
 	putAttachment   SessionAttachmentWriter
 	subscribeEvents SessionEventSubscriber

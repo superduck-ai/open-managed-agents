@@ -287,3 +287,24 @@ channel_reply_deliveries 只保存平台交付信息：渠道/输入事件/Sessi
 产物去重统一使用既有 `channel_reply_deliveries.artifact_delivery` 的冻结计划与逐项交付回执，删除 worker 内的第二份去重表及无持久回执的发送旁路。测试亦使用同一持久交接路径。旧外置 bridge 的代理路由、凭据同步及专属实现和测试删除；原生路由保留共享 CSRF、凭据验证和租户/归档边界检查。旧 bridge 配置仅保留解析兼容。
 
 运行凭据直接复用 `EnsureChannelWorkspaceCredential`，每次使用时读取原生凭据状态与密文；渠道不再永久缓存明文 Key，凭据更新与停用不依赖 worker 重启。
+
+## ENV OAuth 与旧渠道个人授权对照
+
+main 的 `env_oauth` 已支持内置飞书和自定义 OAuth 提供方、授权码/PKCE、回调状态、Vault 加密凭据、自动刷新及刷新租约、环境变量占位符和出口替换。渠道会话已有的 `vault_ids` 可直接携带这种凭据；不需要另建 token 表、刷新任务或 CLI 凭据同步器。
+
+旧渠道的个人授权不能仅以 MCP OAuth 或机器人应用创建授权代替。旧 `work-assistant/chat-auth.ts` 校验 App ID 与用户 open_id，按应用和用户维护 Vault 关联；通过 CLI 完成刷新后读取其加密令牌，将 access token 同步为 OMA `environment_variable` 凭据。旧 UI 的 `user-im.ts` 另有设备码登录、授权状态及用户身份群列表；bridge 提示词要求私聊发起用户授权、等待完成后继续任务。群消息订阅权限的补权属于应用权限，不能与个人 OAuth 混为一谈。报告和计划功能仍不在迁移范围。
+
+| 旧行为 | OMA 可复用能力 | 渠道职责 |
+| --- | --- | --- |
+| CLI 设备码与轮询 | ENV OAuth 授权入口、PKCE、原生回调与流程状态 | 私聊中的链接/二维码引导及完成反馈；无需复制设备码协议 |
+| 读取 CLI 密钥库、解密 token、同步静态变量 | `env_oauth` Vault 凭据、加密服务和自动刷新 | 保存渠道用户与 Vault/凭据的关联，不保存 token 副本 |
+| App ID/open_id 校验与个人 Vault | 原生工作区/Vault 权限及会话 `vault_ids` | 授权主体与消息操作者的可信关联，禁止把个人授权自动共享给整个群或渠道 |
+| 到期、撤销、重新授权 | 原生刷新租约、提供方版本/可用性及重新授权错误 | 将错误呈现为重新授权入口，并在授权后继续原任务 |
+| 授权等待与任务继续 | 原生会话、工具执行、事件订阅与取消 | 授权完成与待处理输入的关联，避免重复提交 |
+| 群列表与邀请机器人 | 已授权凭据及现有飞书 SDK/API | 按用户身份调用和 scope 校验；机器人 token 不能替代用户身份 |
+
+提供方的 OAuth Client ID 与渠道机器人 App ID 可能不同；open_id 是应用内身份，不能跨应用直接比较。当前先使用渠道应用核验原消息发送者，再进入目标服务的原生 ENV/MCP OAuth。原生 flow 的可空 continuation 只补充原会话、请求、渠道及浏览器关联，不保存 token 副本。
+
+当前已实现私聊个人 Vault 挂载、授权卡片、操作者核验、原生回调交接及取消。真实飞书中的 Friday 首次授权、自然到期刷新、撤销后到期重新授权，以及 Notion 首次授权、撤销、取消与重新授权续跑已通过。群列表与邀请机器人不包含在本轮迁移中；其余验收边界见 [工具 OAuth 设计与记录](channel-tool-oauth.md)。
+
+这条旧逻辑也用于普通个人对话：`shared-chat.ts` 在 `prepareCredentials` 返回个人 Vault，并在有运行任务时定期调用 `ChatCredentials.prepare` 同步 CLI 刷新后的 token；并非只用于报告。因此报告功能排除在外不构成遗漏普通对话个人授权的理由。新实现应由 OMA `env_oauth` 在实际出口请求时解析/刷新凭据，删除对话层的定时同步职责。旧按需 scope 与原生提供方固定 scope 的配置合同也需对齐，渠道不能自行扩大平台提供方的授权范围。

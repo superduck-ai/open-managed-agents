@@ -37,6 +37,7 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 }
 
 func (h *Handler) registerRuntimeRoutes(router chi.Router) {
+	router.Post("/code/sandbox/oauth", h.handleSandboxOAuth)
 	router.Route("/code/upstreamproxy", func(router chi.Router) {
 		router.Get("/ca-cert", h.handleUpstreamProxyCACertificate)
 		router.Get("/ws", h.handleUpstreamProxyWebSocket)

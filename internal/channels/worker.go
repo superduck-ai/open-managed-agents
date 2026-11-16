@@ -136,6 +136,13 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 	if err != nil {
 		return "", err
 	}
+	personalID := ""
+	if msg.ChatType == "p2p" && w.supervisor.personalVault != nil {
+		personalID, err = w.supervisor.personalVault(ctx, w.record, msg.UserID)
+		if err != nil {
+			return "", err
+		}
+	}
 	sessionID, err := w.supervisor.store.GetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey)
 	if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return "", errors.Join(errChannelSessionUnconfirmed, err)
@@ -155,6 +162,9 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 	}
 	metadata := channelSessionMetadata(w.record, msg, scopeKey)
 	metadata["channel_resources"] = resources.Fingerprint
+	if personalID != "" {
+		resources.VaultIDs = append(resources.VaultIDs, personalID)
+	}
 	created, err := w.supervisor.oma.createSession(ctx, apiKey, w.record.AgentExternalID, parseChannelMounts(w.record.Mounts).AgentVersion, environmentID, channelSessionTitle(msg.Content), metadata, resources.Resources, resources.VaultIDs)
 	if err != nil {
 		return "", err

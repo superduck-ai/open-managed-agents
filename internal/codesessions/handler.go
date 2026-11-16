@@ -24,6 +24,8 @@ import (
 // Handler 是 code-session 的 HTTP transport 边界。
 // 它持有协议相关的鉴权、代理连接和日志状态；业务状态与业务编排统一委托给 Service。
 type Handler struct {
+	oauthCredentials       OAuthCredentialWaiter
+	prepareEnvOAuth        func(context.Context, db.VaultCredential) error
 	toolCallNotifications  *nats.Conn
 	cfg                    config.Config
 	db                     *db.DB
@@ -141,6 +143,7 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		)
 	}
 	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
+	h.prepareEnvOAuth = injector.PrepareEnvOAuthCredential
 	return h
 }
 

@@ -103,6 +103,11 @@ func (i *Injector) envOAuthTokenResolver() *envOAuthTokenResolver {
 	return i.envOAuthTokens
 }
 
+func (i *Injector) PrepareEnvOAuthCredential(ctx context.Context, credential db.VaultCredential) error {
+	_, err := i.envOAuthTokens.resolve(ctx, &credential)
+	return err
+}
+
 // WithPlatformOAuthClients supplies vault.platform_oauth_clients so mcp_oauth
 // refresh can re-resolve deploy-config secrets that were never sealed.
 func (i *Injector) WithPlatformOAuthClients(clients []config.PlatformOAuthClientConfig) *Injector {

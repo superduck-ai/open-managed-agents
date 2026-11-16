@@ -9,6 +9,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper EnvOAuthFlowMapper -sql ./env_oauth_flow_mapper.xml -out ./env_oauth_flow_mapper.sqlmap.gen.go -dialect postgres
 
 type envOAuthFlowRow struct {
+	Continuation            sql.NullString `db:"continuation"`
 	UUID                    string         `db:"uuid"`
 	ExternalID              string         `db:"external_id"`
 	OrganizationUUID        string         `db:"organization_uuid"`
@@ -40,6 +41,7 @@ type envOAuthFlowRow struct {
 }
 
 type insertEnvOAuthFlowParams struct {
+	Continuation            *string
 	UUID                    string
 	ExternalID              string
 	OrganizationUUID        string

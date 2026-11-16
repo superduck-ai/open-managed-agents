@@ -25,6 +25,7 @@ type channelReplyBlock struct {
 }
 
 type channelReply struct {
+	oauthOrigin  string
 	interrupted  bool
 	thinking     bool
 	ended        bool
@@ -110,7 +111,7 @@ func (r *channelReply) consume(record db.ChannelRecord, event omaEvent) (string,
 		r.thinking = false
 		r.status = "正在调用工具"
 		return line, true
-	case "agent.tool_result", "agent.mcp_tool_result", "agent.custom_tool_result":
+	case "agent.tool_result", "agent.mcp_tool_result", "agent.custom_tool_result", "user.custom_tool_result":
 		return "", r.consumeToolResult(event) || interactionChanged
 	}
 	return "", interactionChanged
@@ -181,6 +182,9 @@ func (r *channelReply) render() string {
 	status := r.status
 	if !r.ended && !r.interrupted && len(r.interactions) > 0 {
 		status = "等待确认"
+		if len(r.interactions) == 1 && r.interactions[0].Name == "RequestOAuth" {
+			status = "等待授权"
+		}
 	}
 	if status == "" {
 		status = "正在处理"

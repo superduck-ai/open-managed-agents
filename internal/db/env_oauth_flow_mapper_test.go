@@ -26,14 +26,14 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 		wantID:    "EnvOAuthFlowMapper.Insert",
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
-			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
+			"params.Continuation", "params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 			"params.VaultUUID", "params.VaultExternalID", "params.ProviderVersion", "params.ProviderKey", "params.SecretName",
 			"params.DisplayName", "params.RedirectURL", "params.AuthorizeEndpoint", "params.TokenEndpoint",
 			"params.ClientIDEnvelope", "params.CodeVerifierEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
 			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CredentialExternalID", "params.CreatedByAPIKeyUUID",
 			"params.CreatedAt", "params.ExpiresAt",
 		},
-		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope", "params.CodeVerifierEnvelope"},
+		wantSensitiveArgumentNames: []string{"params.Continuation", "params.ClientIDEnvelope", "params.CodeVerifierEnvelope"},
 		wantSQLFragments:           []string{"INSERT INTO env_oauth_flows", "RETURNING"},
 	})
 

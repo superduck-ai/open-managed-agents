@@ -54,6 +54,15 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	if err != nil || got.State != "dispatched" || got.Attempt != 1 {
 		t.Fatalf("claim: %+v %v", got, err)
 	}
+	sandboxScope := scope
+	sandboxScope.WorkerEpoch = 0
+	if current, err := store.GetSandboxToolCall(ctx, sandboxScope); err != nil || current.UUID != call.UUID {
+		t.Fatalf("沙箱身份读取原工具：%+v %v", current, err)
+	}
+	sandboxScope.SandboxUUID = uuid.NewString()
+	if _, err := store.GetSandboxToolCall(ctx, sandboxScope); !errors.Is(err, ErrToolCallSandboxRetired) {
+		t.Fatalf("其他沙箱读取原工具：%v", err)
+	}
 	if _, err := store.ReportSandboxToolCall(ctx, SandboxToolCallReport{Scope: scope, CallUUID: call.UUID, Attempt: 2, Event: "started"}); !errors.Is(err, ErrToolCallConflict) {
 		t.Fatalf("wrong attempt accepted: %v", err)
 	}
@@ -71,6 +80,18 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	}
 	if got, err := store.GetSandboxToolCall(ctx, scope); err != nil || got.TimeoutMS == nil || *got.TimeoutMS != 600000 || got.DeadlineAt.Before(started.Add(10*time.Minute-time.Second)) {
 		t.Fatalf("execution deadline: %+v %v", got, err)
+	}
+	paused, err := store.ReportSandboxToolCall(ctx, SandboxToolCallReport{Scope: scope, CallUUID: call.UUID, Attempt: 2, Event: "oauth_wait"})
+	if err != nil || paused.OAuthWaitStartedAt == nil || paused.State != "running" {
+		t.Fatalf("OAuth 等待绑定错误：%+v %v", paused, err)
+	}
+	loaded, err := store.GetSandboxToolCall(ctx, scope)
+	if err != nil || loaded.OAuthWaitStartedAt == nil || !loaded.OAuthWaitStartedAt.Equal(*paused.OAuthWaitStartedAt) {
+		t.Fatalf("OAuth 等待扫描错误：%+v %v", loaded, err)
+	}
+	resumed, err := store.ReportSandboxToolCall(ctx, SandboxToolCallReport{Scope: scope, CallUUID: call.UUID, Attempt: 2, Event: "oauth_resume"})
+	if err != nil || resumed.OAuthWaitStartedAt != nil || !resumed.DeadlineAt.After(paused.DeadlineAt) {
+		t.Fatalf("OAuth 等待恢复错误：%+v %v", resumed, err)
 	}
 	if got, err := store.ReportSandboxToolCall(ctx, SandboxToolCallReport{Scope: scope, CallUUID: call.UUID, Attempt: 1, Event: "reject"}); err != nil || got.State != "running" {
 		t.Fatalf("late reject: %+v %v", got, err)

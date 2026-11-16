@@ -8,6 +8,33 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestSandboxToolCallOAuthWaitKeepsLeaseAndCancellation(t *testing.T) {
+	now := time.Now().UTC()
+	lease := now.Add(time.Minute)
+	row := sandboxToolCallRow{State: "running", DeadlineAt: now.Add(time.Second), LeaseExpiresAt: &lease}
+	if err := applySandboxToolCallReport(&row, SandboxToolCallReport{Event: "oauth_wait"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := applySandboxToolCallReport(&row, SandboxToolCallReport{Event: "oauth_wait"}, now); err == nil {
+		t.Fatal("同一调用不能叠加两个独立授权等待")
+	}
+	expireSandboxToolCall(&row, now.Add(5*time.Second))
+	if row.State != "running" {
+		t.Fatal("授权等待不应消耗执行超时")
+	}
+	if err := applySandboxToolCallReport(&row, SandboxToolCallReport{Event: "oauth_resume"}, now.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if row.OAuthWaitStartedAt != nil || !row.DeadlineAt.Equal(now.Add(6*time.Second)) {
+		t.Fatal("授权完成必须恢复原剩余执行预算")
+	}
+	row.OAuthWaitStartedAt = &now
+	expireSandboxToolCall(&row, lease.Add(sandboxToolCallLeaseGrace+time.Second))
+	if row.State != "lost" {
+		t.Fatal("授权等待不能掩盖执行器租约丢失")
+	}
+}
+
 func TestSandboxToolCallRejectCannotUndoRunningAttempt(t *testing.T) {
 	now := time.Now().UTC()
 	sandbox := "sandbox"
@@ -190,5 +217,5 @@ func TestSandboxToolCallPayloadBindingsAreSensitive(t *testing.T) {
 	row := sandboxToolCallRow{Input: []byte(`{"command":"private"}`), Result: []byte(`{"content":[]}`), FinalizerState: []byte(`{}`), LateResult: []byte(`{}`)}
 	bound := buildSandboxToolCallMapperInsert(yourbatis.DialectPostgres, row)
 	assertMapperBuilderContract(t, mapperBuilderContract{statement: sandboxToolCallMapperInsertStatement, bound: bound, wantID: "SandboxToolCallMapper.Insert", wantKind: yourbatis.StatementInsert,
-		wantArgumentNames: []string{"row.UUID", "row.OrganizationUUID", "row.WorkspaceUUID", "row.CodeSessionUUID", "row.ExternalID", "row.ThreadID", "row.WorkerEpoch", "row.SandboxUUID", "row.Attempt", "row.ToolName", "row.Input", "row.State", "row.DeadlineAt", "row.TimeoutMS", "row.LeaseExpiresAt", "row.CancelRequestedAt", "row.CancelReason", "row.StopGraceUntil", "row.Result", "row.ResultObjectKey", "row.ResultBytes", "row.ResultSHA256", "row.Finalizer", "row.FinalizerState", "row.FinalizeTimeoutMS", "row.FinalizeUntil", "row.ErrorCode", "row.LateResult", "row.CreatedAt", "row.UpdatedAt", "row.FinishedAt"}, wantSensitiveArgumentNames: []string{"row.Input", "row.Result", "row.FinalizerState", "row.LateResult"}, wantSQLFragments: []string{"INSERT INTO sandbox_tool_calls", "ON CONFLICT (code_session_uuid, thread_id, external_id) DO NOTHING"}})
+		wantArgumentNames: []string{"row.UUID", "row.OrganizationUUID", "row.WorkspaceUUID", "row.CodeSessionUUID", "row.ExternalID", "row.ThreadID", "row.WorkerEpoch", "row.SandboxUUID", "row.Attempt", "row.ToolName", "row.Input", "row.State", "row.DeadlineAt", "row.OAuthWaitStartedAt", "row.TimeoutMS", "row.LeaseExpiresAt", "row.CancelRequestedAt", "row.CancelReason", "row.StopGraceUntil", "row.Result", "row.ResultObjectKey", "row.ResultBytes", "row.ResultSHA256", "row.Finalizer", "row.FinalizerState", "row.FinalizeTimeoutMS", "row.FinalizeUntil", "row.ErrorCode", "row.LateResult", "row.CreatedAt", "row.UpdatedAt", "row.FinishedAt"}, wantSensitiveArgumentNames: []string{"row.Input", "row.Result", "row.FinalizerState", "row.LateResult"}, wantSQLFragments: []string{"INSERT INTO sandbox_tool_calls", "ON CONFLICT (code_session_uuid, thread_id, external_id) DO NOTHING"}})
 }

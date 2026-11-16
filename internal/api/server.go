@@ -230,6 +230,8 @@ func NewServer(deps ServerDeps) *Server {
 		tunnelBroker:      deps.TunnelBroker,
 	}
 	channelService.WithSessionEvents(s.subscribeChannelEvents).WithSessionAttachments(s.putChannelAttachment)
+	s.codeSessions.WithOAuthCredentials(s.sessions.WaitForOAuthCredential)
+	channelService.WithOAuthProviders(envOAuthProviders, s.startChannelMCPOAuth)
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
@@ -360,6 +362,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
+	router.Get("/oauth/channels/{channel_id}/sessions/{session_id}/requests/{request_id}", s.handleChannelOAuthStart)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {

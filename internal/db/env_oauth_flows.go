@@ -12,6 +12,7 @@ import (
 )
 
 type EnvOAuthFlow struct {
+	Continuation            *OAuthContinuation
 	UUID                    string
 	ExternalID              string
 	OrganizationUUID        string
@@ -58,8 +59,13 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 	if err != nil {
 		return EnvOAuthFlow{}, err
 	}
+	continuation, err := oauthContinuationJSON(flow.Continuation)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
 	row, err := mapper.Insert(ctx, insertEnvOAuthFlowParams{
+		Continuation:            continuation,
 		UUID:                    flow.UUID,
 		ExternalID:              flow.ExternalID,
 		OrganizationUUID:        flow.OrganizationUUID,
@@ -110,6 +116,14 @@ func (d *DB) ClaimEnvOAuthFlow(ctx context.Context, externalID string, claimedAt
 	return rowsAffected > 0, nil
 }
 
+func (d *DB) CompleteEnvOAuthIdentity(ctx context.Context, externalID string, completedAt time.Time) error {
+	affected, err := NewEnvOAuthFlowMapper(d.mapperDB).Complete(ctx, externalID, "", completedAt)
+	if err == nil && affected != 1 {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (d *DB) SaveEnvOAuthCredential(ctx context.Context, flowID string, credential VaultCredential, existing bool) (VaultCredential, error) {
 	var saved VaultCredential
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -153,6 +167,10 @@ func (d *DB) FailEnvOAuthFlow(ctx context.Context, externalID, errorCode string,
 }
 
 func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
+	continuation, err := decodeOAuthContinuation(r.Continuation)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	allowedHosts := make([]string, 0)
 	if r.AllowedHosts != "" {
 		if err := json.Unmarshal([]byte(r.AllowedHosts), &allowedHosts); err != nil {
@@ -172,6 +190,7 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 		return EnvOAuthFlow{}, err
 	}
 	return EnvOAuthFlow{
+		Continuation:            continuation,
 		UUID:                    r.UUID,
 		ExternalID:              r.ExternalID,
 		OrganizationUUID:        r.OrganizationUUID,

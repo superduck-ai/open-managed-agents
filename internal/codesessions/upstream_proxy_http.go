@@ -40,6 +40,11 @@ func (h *Handler) forwardUpstreamProxyHTTP(w http.ResponseWriter, request *http.
 		http.Error(w, "Invalid HTTP proxy target", http.StatusBadRequest)
 		return
 	}
+	if request.URL.Host == "oma.internal" && request.URL.Path == "/oauth" && request.URL.RawQuery == "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+		h.handleSandboxOAuth(w, request)
+		return
+	}
 	policy, err := h.loadUpstreamPolicyContext(request.Context(), identity)
 	if err != nil || !policy.policy.AuthorizeHTTPURL(request.URL).Allow {
 		http.Error(w, "HTTP proxy target is not allowed", http.StatusForbidden)

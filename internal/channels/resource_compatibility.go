@@ -21,6 +21,9 @@ func (r channelResourceMount) matches(actual omaSessionResource) bool {
 
 func (w *channelWorker) compatibleMounts(session omaSession) bool {
 	mounts := parseChannelMounts(w.record.Mounts)
+	if w.supervisor.personalVault != nil && session.Metadata["chat_type"] == "p2p" && session.Metadata["actor_id"] != "" {
+		mounts.VaultIDs = append(mounts.VaultIDs, personalVaultID(w.record, session.Metadata["actor_id"]))
+	}
 	if !slices.Equal(mounts.VaultIDs, session.VaultIDs) {
 		return false
 	}

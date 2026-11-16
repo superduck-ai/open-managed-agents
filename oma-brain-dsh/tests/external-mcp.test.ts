@@ -19,6 +19,8 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
   const httpRequests: { method: string; path: string }[] = [];
   let failDiscovery = false;
   let authenticationStatus: number | undefined;
+  let oauthChallenge = false;
+  let readOnlyHint = false;
   let failCall = false;
   let errorResult = false;
   let outputText: string | undefined;
@@ -66,7 +68,7 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
       expect(request.headers.get("Authorization")).toBe("Bearer peer-secret");
       const body = (await request.json()) as Payload;
       requests.push(body);
-      if (authenticationStatus !== undefined) return new Response(null, { status: authenticationStatus });
+      if (authenticationStatus !== undefined) return new Response(null, { status: authenticationStatus, headers: oauthChallenge ? { "WWW-Authenticate": 'Bearer resource_metadata="https://peer.example/.well-known/oauth-protected-resource"' } : {} });
       if (body.method.startsWith("notifications/"))
         return new Response(null, { status: 202 });
       if (body.method === "server/discover")
@@ -104,6 +106,7 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
         const tool = {
           name: "microsoft_docs_fetch",
           description: "Fetch documentation",
+          ...(readOnlyHint ? { annotations: { readOnlyHint: true } } : {}),
           inputSchema: {
             type: "object",
             properties: { url: { type: "string" } },
@@ -165,7 +168,8 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
         },
       },
     },
-    failAuthentication: (status: number) => { authenticationStatus = status; },
+    failAuthentication: (status: number, oauth = false) => { authenticationStatus = status; oauthChallenge = oauth; },
+    readOnly: () => { readOnlyHint = true; },
     recoverAuthentication: () => { authenticationStatus = undefined; },
     failDiscovery: () => {
       failDiscovery = true;
@@ -1108,3 +1112,69 @@ for (const status of [401, 403]) {
     } finally { await client.close(); p.close(); }
   });
 }
+
+for (const [status, challenge] of [[401, false], [403, true]] as const) {
+  test(`普通 ${status} 不触发 OAuth`, async () => {
+    const p = peer();
+    const client = new ExternalMcpClient(externalServers(p.config)[0]!);
+    try {
+      const [tool] = await client.discover(new AbortController().signal);
+      p.failAuthentication(status, challenge);
+      let authorizations = 0;
+      const result = await client.call(tool!, { url: "https://example.com" }, new AbortController().signal, undefined, async () => { authorizations++; });
+      expect(result.isError).toBe(true);
+      expect(authorizations).toBe(0);
+    } finally { await client.close(); p.close(); }
+  });
+}
+
+for (const readOnly of [false, true]) {
+  test(`MCP OAuth 恢复后${readOnly ? "只读继续原调用" : "结果未知的写操作不重放"}`, async () => {
+    const p = peer();
+    const client = new ExternalMcpClient(externalServers(p.config)[0]!);
+    try {
+      if (readOnly) p.readOnly();
+      const [tool] = await client.discover(new AbortController().signal);
+      p.failAuthentication(401, true);
+      let authorizations = 0;
+      const result = await client.call(tool!, { url: "https://example.com" }, new AbortController().signal, undefined, async () => {
+        authorizations++;
+        p.recoverAuthentication();
+      });
+      expect(authorizations).toBe(1);
+      expect(p.requests.filter(request => request.method === "tools/call")).toHaveLength(readOnly ? 2 : 1);
+      expect(result.isError).toBe(!readOnly);
+      if (!readOnly) expect(JSON.stringify(result)).toContain("结果未知");
+    } finally { await client.close(); p.close(); }
+  });
+}
+
+test("首次授权发现的真实 MCP 工具应保留到下一轮", async () => {
+  const f = await fixture();
+  try {
+    f.p.failAuthentication(401, true);
+    await f.session.open();
+    const connect = mcpEvents("connect_1");
+    connect[1]!.content_block.name = "mcp__peer__connect";
+    connect[2]!.delta.partial_json = "{}";
+    f.b.onApproval = async payload => {
+      const oauth = payload.request.subtype === "request_oauth";
+      if (oauth) f.p.recoverAuthentication();
+      await f.session.control({
+        type: "control_response",
+        response: { subtype: "success", request_id: payload.request_id, response: {
+          behavior: "allow",
+          ...(oauth ? { externalResult: { isError: false, content: [{ type: "text", text: '{"authorized":true}' }] } } : {}),
+        } },
+      });
+    };
+    f.b.modelScript = [connect, textEvents("Connected")];
+    await f.session.receive("oauth_connect", { content: "Connect peer" });
+    const discoveries = f.p.requests.filter(request => request.method === "tools/list").length;
+    f.b.modelScript = [mcpEvents("after_oauth"), textEvents("Fetched")];
+    await f.session.receive("oauth_next_turn", { content: "Fetch documentation", oma_refresh_tools: true });
+    expect(f.p.requests.filter(request => request.method === "tools/list")).toHaveLength(discoveries);
+    expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    expect((await nativeOutcomes(f.session))?.after_oauth?.failed).toBe(false);
+  } finally { await f.close(); }
+});

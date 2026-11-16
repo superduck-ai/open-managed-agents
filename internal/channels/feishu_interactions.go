@@ -9,7 +9,7 @@ func (r *channelReply) consumeInteraction(event omaEvent) bool {
 			return false
 		}
 	case "agent.custom_tool_use":
-		if !isQuestionTool(event.Name) {
+		if !isQuestionTool(event.Name) && event.Name != "RequestOAuth" {
 			return false
 		}
 	case "user.tool_confirmation", "user.custom_tool_result", "agent.tool_result", "agent.mcp_tool_result", "agent.custom_tool_result":
@@ -36,6 +36,10 @@ func (r *channelReply) interactionElements() []map[string]any {
 		value := *r.stopValue
 		value.ToolUseID = event.ID
 		value.ThreadID = event.SessionThreadID
+		if event.Type == "agent.custom_tool_use" && event.Name == "RequestOAuth" {
+			elements = append(elements, r.oauthElements(value, event)...)
+			continue
+		}
 		if event.Type == "agent.custom_tool_use" {
 			value.Kind = "answer"
 			questions := parseQuestions(event.Input)

@@ -13,25 +13,29 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 type Service struct {
-	agent      http.Handler
-	workspace  http.Handler
-	supervisor *runtimeSupervisor
-	local      *localService
-	store      *db.DB
-	logger     *slog.Logger
+	oauthProviders vaults.EnvOAuthProviderResolver
+	startMCPOAuth  func(context.Context, OAuthTarget) (string, error)
+	agent          http.Handler
+	workspace      http.Handler
+	supervisor     *runtimeSupervisor
+	local          *localService
+	store          *db.DB
+	logger         *slog.Logger
 }
 
 func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *secrets.Service) *Service {
 	logger = logging.LoggerOrDefault(logger)
 	oma := newOMAClient(omaBaseURL(cfg))
 	supervisor := newRuntimeSupervisor(store, cipher, oma, logger)
+	supervisor.oauthOrigin = cfg.Auth.ConsoleURL
 	supervisor.fileMaxBytes = cfg.Storage.MaxFileBytes
 	service := newLocalService(store, cipher, supervisor, logger)
 	handler := newLocalHandler(service, logger)
-	return &Service{
+	result := &Service{
 		agent:      handler.agentRouter(),
 		workspace:  handler.workspaceRouter(),
 		supervisor: supervisor,
@@ -39,6 +43,8 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		store:      store,
 		logger:     logger,
 	}
+	supervisor.personalVault = result.ensurePersonalVault
+	return result
 }
 
 func (s *Service) AgentHandler() http.Handler {

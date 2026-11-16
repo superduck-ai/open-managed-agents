@@ -8,6 +8,7 @@ import (
 )
 
 type MCPOAuthFlow struct {
+	Continuation              *OAuthContinuation
 	UUID                      string
 	ExternalID                string
 	OrganizationUUID          string
@@ -52,7 +53,7 @@ func (d *DB) CreateMCPOAuthFlow(ctx context.Context, flow MCPOAuthFlow) (MCPOAut
 	if err != nil {
 		return MCPOAuthFlow{}, err
 	}
-	return row.flow(), nil
+	return row.flow()
 }
 
 func (d *DB) GetMCPOAuthFlow(ctx context.Context, externalID string) (MCPOAuthFlow, error) {
@@ -61,7 +62,7 @@ func (d *DB) GetMCPOAuthFlow(ctx context.Context, externalID string) (MCPOAuthFl
 	if err != nil {
 		return MCPOAuthFlow{}, mapNoRows(err)
 	}
-	return row.flow(), nil
+	return row.flow()
 }
 
 func (d *DB) CompleteMCPOAuthFlow(ctx context.Context, externalID, credentialExternalID string, completedAt time.Time) error {
@@ -89,11 +90,16 @@ func (d *DB) FailMCPOAuthFlow(ctx context.Context, externalID, errorCode string,
 }
 
 func mcpOAuthFlowInsertParams(flow MCPOAuthFlow) (insertMCPOAuthFlowParams, error) {
+	continuation, err := oauthContinuationJSON(flow.Continuation)
+	if err != nil {
+		return insertMCPOAuthFlowParams{}, err
+	}
 	if err := requireCompleteSecretEnvelope(flow.SecretEnvelope); err != nil {
 		return insertMCPOAuthFlowParams{}, err
 	}
 	ciphertext, nonce, wrappedDEK, formatVersion, keyProvider, keyVersion := vaultCredentialSecretColumns(flow.SecretEnvelope)
 	return insertMCPOAuthFlowParams{
+		Continuation:              continuation,
 		UUID:                      flow.UUID,
 		ExternalID:                flow.ExternalID,
 		OrganizationUUID:          flow.OrganizationUUID,
@@ -129,12 +135,17 @@ func mcpOAuthFlowInsertParams(flow MCPOAuthFlow) (insertMCPOAuthFlowParams, erro
 	}, nil
 }
 
-func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
+func (r mcpOAuthFlowRow) flow() (MCPOAuthFlow, error) {
+	continuation, err := decodeOAuthContinuation(r.Continuation)
+	if err != nil {
+		return MCPOAuthFlow{}, err
+	}
 	userUUID := ""
 	if r.UserUUID.Valid {
 		userUUID = r.UserUUID.String
 	}
 	flow := MCPOAuthFlow{
+		Continuation:              continuation,
 		UUID:                      r.UUID,
 		ExternalID:                r.ExternalID,
 		OrganizationUUID:          r.OrganizationUUID,
@@ -191,5 +202,10 @@ func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
 			KeyVersion:    keyVersion,
 		}
 	}
-	return flow
+	return flow, nil
+}
+
+func (d *DB) ClaimMCPOAuthFlow(ctx context.Context, externalID string, claimedAt time.Time) (bool, error) {
+	affected, err := NewMCPOAuthFlowMapper(d.mapperDB).Claim(ctx, externalID, claimedAt)
+	return affected == 1, err
 }

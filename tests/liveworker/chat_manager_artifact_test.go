@@ -49,7 +49,6 @@ func configurePublicManagerArtifact(t *testing.T, cfg *config.Config) {
 		t.Fatalf("unsupported OMA_MANAGER_ARTIFACT_MODE %q; use path or url", mode)
 	}
 	cfg.EnvironmentRunner.ManagerArtifact = artifact
-	cfg.EnvironmentRunner.ManagerPath = "/oma-verification-must-use-external-manager"
 	t.Logf("external Manager mode=%s sha256=%s", os.Getenv("OMA_MANAGER_ARTIFACT_MODE"), artifact.SHA256)
 }
 
@@ -105,7 +104,6 @@ func verifyPublicManagerVersions(t *testing.T) {
 			provider, stop := startPublicRunner(t, e, func(cfg *config.Config, provider *chatDockerProvider) {
 				artifactSHA = cfg.EnvironmentRunner.ManagerArtifact.SHA256
 				cfg.EnvironmentRunner.ManagerArtifact.Version = scenario.required
-				cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 				if scenario.seed == "image" && cfg.EnvironmentRunner.ManagerArtifact.Path != "" {
 					cfg.EnvironmentRunner.ManagerArtifact.Path = "/oma-artifact-must-not-be-loaded"
 				}

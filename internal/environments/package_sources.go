@@ -10,6 +10,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
+func packageSourceCommand(sources config.EnvironmentPackageConfig, command string) string {
+	prelude := packageSourcePrelude(sources)
+	if prelude == "" {
+		return command
+	}
+	return "sh -c " + shellQuote(prelude+command)
+}
+
 func packageSourcePrelude(sources config.EnvironmentPackageConfig) string {
 	if sources.Empty() {
 		return ""

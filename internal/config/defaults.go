@@ -65,7 +65,6 @@ func defaultConfig() Config {
 			Enabled:                 true,
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
-			ManagerPath:             "/usr/local/bin/environment-manager",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		Observability: ObservabilityConfig{

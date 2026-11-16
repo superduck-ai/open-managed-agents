@@ -36,7 +36,6 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 	store := newFakeStore("runner-cloud-bucket")
@@ -580,7 +579,6 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.EnvironmentRunner.PackageProvisionTimeout = cfgPackageProvisionTimeoutForTest
 	cfg.E2B.Template = "fake-template"
@@ -768,7 +766,6 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 
@@ -832,7 +829,6 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 
@@ -955,7 +951,6 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 
@@ -1040,7 +1035,6 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 
@@ -1131,7 +1125,6 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 				t.Fatalf("load config: %v", err)
 			}
 			cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-			cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 			cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 			cfg.E2B.Template = "fake-template"
 
@@ -1219,7 +1212,6 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 		t.Fatalf("load config: %v", err)
 	}
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.E2B.Template = "fake-template"
 

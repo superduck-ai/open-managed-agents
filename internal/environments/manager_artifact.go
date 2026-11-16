@@ -339,50 +339,36 @@ func managerArtifactLinkCommand(target, entry string) string {
 		"mv -f -- \"$staging/link\" " + shellQuote(entry)
 }
 
-func (r *Runner) installEnvironmentManager(ctx context.Context, sandboxID string) (string, error) {
+func (r *Runner) installEnvironmentManager(ctx context.Context, sandboxID string) error {
 	if r.managerArtifacts == nil {
-		return "", nil
+		return nil
 	}
-	managerPath := r.cfg.EnvironmentRunner.ManagerPath
-	if managerPath == "" {
-		managerPath = defaultEnvironmentManagerPath
-	}
-	if reusable, err := r.reuseEnvironmentManager(ctx, sandboxID, managerPath); err != nil {
-		return "", err
+	if reusable, err := r.reuseEnvironmentManager(ctx, sandboxID, environmentManagerPath); err != nil {
+		return err
 	} else if reusable {
-		return managerPath, nil
+		return nil
 	}
 	artifact, err := r.managerArtifacts.Load(ctx)
 	if err != nil {
-		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_load", errEnvironmentManagerInstall, err)
+		return r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_load", errEnvironmentManagerInstall, err)
 	}
 	defer artifact.File.Close()
 	target := managerArtifactInstallPath(artifact.SHA256)
 	reusable, err := r.reuseEnvironmentManager(ctx, sandboxID, target)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if !reusable {
 		if err := r.provider.WriteFileFrom(ctx, sandboxID, target+".partial", artifact.File); err != nil {
-			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_upload", errEnvironmentManagerInstall, err)
+			return r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_upload", errEnvironmentManagerInstall, err)
 		}
 		if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactActivateCommand(target, artifact.SHA256, r.managerArtifacts.cfg.Version), managerArtifactActivateLimit); err != nil {
-			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
+			return r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
 		}
 	}
-	if target != managerPath {
-		if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactLinkCommand(target, managerPath), managerArtifactActivateLimit); err != nil {
-			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
-		}
+	if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactLinkCommand(target, environmentManagerPath), managerArtifactActivateLimit); err != nil {
+		return r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
 	}
 	r.logger.InfoContext(ctx, "environment manager artifact installed", "sandbox_id", sandboxID, "manager_sha256", artifact.SHA256, "size_bytes", artifact.Size)
-	return managerPath, nil
-}
-
-func (r *Runner) environmentManagerConfig(managerPath string) config.Config {
-	cfg := r.cfg
-	if managerPath != "" {
-		cfg.EnvironmentRunner.ManagerPath = managerPath
-	}
-	return cfg
+	return nil
 }

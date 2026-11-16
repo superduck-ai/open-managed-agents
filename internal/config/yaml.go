@@ -247,7 +247,6 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		value *string
 	}{
 		{name: "llm_provider_presets_file", value: &cfg.LLMProviderPresetsFile},
-		{name: "environment_runner.manager_path", value: &cfg.EnvironmentRunner.ManagerPath},
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},
 		{name: "environment_runner.manager_artifact.path", value: &cfg.EnvironmentRunner.ManagerArtifact.Path},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},

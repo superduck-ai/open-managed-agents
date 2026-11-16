@@ -346,7 +346,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		*work = updatedWork
 	}
 
-	managerCfg, proceed, err := r.prepareSandboxManagerAndPackages(ctx, run, env, record, work, providerSandboxID, preinstalled, preparation != nil)
+	proceed, err := r.prepareSandboxManagerAndPackages(ctx, run, env, record, work, providerSandboxID, preinstalled, preparation != nil)
 	if err != nil {
 		return true, err
 	}
@@ -394,7 +394,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		}
 		ctx = run.begin(ctx, "manager_start")
 		managerCtx := trace.ContextWithSpan(runtimeCtx, trace.SpanFromContext(ctx))
-		managerCommand := environmentManagerShellCommand(launch.CodeSessionID, managerCfg)
+		managerCommand := environmentManagerShellCommand(launch.CodeSessionID, r.cfg)
 		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, managerCommand, launch.Manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
@@ -436,31 +436,27 @@ func (r *Runner) prepareSandboxManagerAndPackages(
 	providerSandboxID string,
 	preinstalled bool,
 	managed bool,
-) (config.Config, bool, error) {
+) (bool, error) {
 	manifest, provision, err := buildPackageManifest(env.Config)
 	if err != nil {
 		ctx = run.begin(ctx, "packages")
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return config.Config{}, false, err
+		return false, err
 	}
 	provisionPackages := provision && !preinstalled
-	managerCfg := r.cfg
 	if r.managerArtifacts != nil && (managed || provisionPackages) {
 		ctx = run.begin(ctx, "manager_install")
-		managerPath, err := r.installEnvironmentManager(ctx, providerSandboxID)
-		if err != nil {
+		if err := r.installEnvironmentManager(ctx, providerSandboxID); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return config.Config{}, false, err
+			return false, err
 		}
-		managerCfg = r.environmentManagerConfig(managerPath)
 	}
 	ctx = run.begin(ctx, "packages")
 	r.persistPackageSources(ctx, providerSandboxID)
 	if !provisionPackages {
-		return managerCfg, true, nil
+		return true, nil
 	}
-	proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest, managerCfg)
-	return managerCfg, proceed, err
+	return r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
 }
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
@@ -503,7 +499,6 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	work *db.EnvironmentWork,
 	providerSandboxID string,
 	manifest []byte,
-	managerCfg config.Config,
 ) (bool, error) {
 	if collections.IsBlank(providerSandboxID) {
 		err := errors.New("provider returned an empty sandbox id for package provisioning")
@@ -516,7 +511,7 @@ func (r *Runner) provisionCreatedSandboxPackages(
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return false, err
 	}
-	if err := r.provisionPackages(ctx, providerSandboxID, manifest, managerCfg); err != nil {
+	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
 		if r.failCreatedSandbox(ctx, record, work, providerSandboxID, err) {
 			return false, nil
 		}
@@ -534,9 +529,9 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	return false, nil
 }
 
-func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte, managerCfg config.Config) error {
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
 	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
-		Command: buildPackageProvisionCommand(managerCfg),
+		Command: buildPackageProvisionCommand(r.cfg),
 		Stdin:   manifest,
 		Timeout: r.cfg.EnvironmentRunner.PackageProvisionTimeout,
 	})

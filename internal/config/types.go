@@ -246,7 +246,6 @@ type EnvironmentRunnerConfig struct {
 	Enabled                 bool                             `yaml:"enabled"`
 	Concurrency             int                              `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration                    `yaml:"package_provision_timeout"`
-	ManagerPath             string                           `yaml:"manager_path"`
 	ManagerArtifact         EnvironmentManagerArtifactConfig `yaml:"manager_artifact"`
 	ClaudePath              string                           `yaml:"claude_path"`
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to

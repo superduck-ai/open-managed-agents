@@ -46,10 +46,6 @@ COPY --from=go-builder /oma-server /usr/local/bin/oma-server
 # 前端产物（Caddy 通过 compose volume 挂载使用）
 COPY --from=web-builder /web/dist /web-dist
 
-# 运行时资产说明：
-# - environment-manager: 默认路径 /usr/local/bin/environment-manager，本镜像未包含。
-#   在 docker-compose 部署中由 e2b-local 提供；如不使用 e2b-local，
-#   请通过 YAML 的 environment_runner.manager_path 指向外部二进制。
 
 RUN useradd --no-create-home --shell /bin/false oma \
     && chown -R oma:oma /web-dist

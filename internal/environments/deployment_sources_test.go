@@ -77,8 +77,8 @@ exit `+strconv.Itoa(exitCode)+"\n")
 			if err := os.WriteFile(gemrc, []byte(gemOriginal), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentPackages: deploymentSourceFixture(), EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}}
-			command := exec.CommandContext(t.Context(), "sh", "-c", buildPackageProvisionCommand(cfg))
+			cfg := config.Config{EnvironmentPackages: deploymentSourceFixture()}
+			command := exec.CommandContext(t.Context(), "sh", "-c", packageSourceCommand(cfg.EnvironmentPackages, shellQuote(manager)+" "+packageProvisionArgs))
 			command.Env = append(os.Environ(), "CAPTURE="+dir, "PATH="+bin+":"+os.Getenv("PATH"), "NPM_CONFIG_USERCONFIG="+npmrc,
 				"NPM_CONFIG_REGISTRY=https://image.example.internal/npm/", "GOSUMDB=image-sumdb", "CARGO_HOME="+cargoHome, "GEMRC="+gemrc)
 			manifest := `{"version":1,"packages":{"type":"packages","cargo":["crate@1.2.3"],"gem":["gem-name:1.2.3"]}}`
@@ -132,8 +132,8 @@ func TestDeploymentSourcesCleanUpAfterSignal(t *testing.T) {
 	dir := t.TempDir()
 	manager := filepath.Join(dir, "manager")
 	writeSourceTestExecutable(t, manager, "#!/bin/sh\nprintf '%s' \"$OMA_PACKAGE_CONFIG_DIRECTORY\" > \"$CAPTURE/temporary-path\"\nkill -TERM \"$PPID\"\n")
-	cfg := config.Config{EnvironmentPackages: deploymentSourceFixture(), EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}}
-	command := exec.CommandContext(t.Context(), "sh", "-c", buildPackageProvisionCommand(cfg))
+	cfg := config.Config{EnvironmentPackages: deploymentSourceFixture()}
+	command := exec.CommandContext(t.Context(), "sh", "-c", packageSourceCommand(cfg.EnvironmentPackages, shellQuote(manager)+" "+packageProvisionArgs))
 	command.Env = append(os.Environ(), "CAPTURE="+dir)
 	if output, err := command.CombinedOutput(); err == nil {
 		t.Fatalf("terminated provisioning succeeded: %s", output)

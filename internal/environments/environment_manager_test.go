@@ -208,7 +208,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			ContentCaptureEnabled: true,
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
-			ManagerPath:        "/opt/env manager/bin/environment-manager",
 			ClaudePath:         "/opt/claude path/bin/claude",
 			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
@@ -281,7 +280,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 
 	allCommands := environmentManagerShellCommand("cse_session with 'quote'/and/slash", cfg)
 	for _, want := range []string{
-		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
+		"environment-manager binary missing or not executable: /usr/local/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",
 		"task-run --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
 		"--session-mode resume-cached",

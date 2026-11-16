@@ -23,7 +23,7 @@ func gitHTTPSInsteadOfEntries(host string) []gitConfigEntry {
 // configuredGitSSHtoHTTPSEntries expands environment_runner.git_ssh_to_https_hosts.
 // Callers must pass Load/validate-normalized hosts (trimmed, lower-cased).
 // github.com is omitted — it stays as the literal KEY_1/KEY_2 exports in
-// buildEnvironmentManagerCommand.
+// environmentManagerShellCommand.
 func configuredGitSSHtoHTTPSEntries(hosts []string) []gitConfigEntry {
 	seen := map[string]struct{}{"github.com": {}}
 	var entries []gitConfigEntry

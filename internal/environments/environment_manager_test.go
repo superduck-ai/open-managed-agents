@@ -279,11 +279,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
 
-	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
-	if !reflect.DeepEqual(command.Payload, payload) {
-		t.Fatalf("command payload = %q, want %q", command.Payload, payload)
-	}
-	allCommands := command.ShellCommand
+	allCommands := environmentManagerShellCommand("cse_session with 'quote'/and/slash", cfg)
 	for _, want := range []string{
 		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",
@@ -571,18 +567,18 @@ func testGitRepository(raw json.RawMessage) *db.SessionResourceGitHubRepository 
 	return &repository
 }
 
-func TestBuildEnvironmentManagerCommandExportsTunnelOnlyWhenSessionPortsEnabled(t *testing.T) {
+func TestEnvironmentManagerShellCommandExportsTunnelOnlyWhenSessionPortsEnabled(t *testing.T) {
 	cfg := config.Config{}
 	cfg.EnvironmentRunner.AgentMode = "brain"
-	if command := buildEnvironmentManagerCommand("cse_disabled", cfg, nil); strings.Contains(command.ShellCommand, "TUNNEL_ENABLED") {
-		t.Fatalf("disabled session ports exported tunnel flag:\n%s", command.ShellCommand)
+	if command := environmentManagerShellCommand("cse_disabled", cfg); strings.Contains(command, "TUNNEL_ENABLED") {
+		t.Fatalf("disabled session ports exported tunnel flag:\n%s", command)
 	}
 	cfg.SessionPorts.DomainSuffix = "preview.localhost"
-	command := buildEnvironmentManagerCommand("cse_enabled", cfg, nil)
-	if !strings.Contains(command.ShellCommand, "\nexport TUNNEL_ENABLED=true\n") {
-		t.Fatalf("enabled session ports did not export tunnel flag:\n%s", command.ShellCommand)
+	command := environmentManagerShellCommand("cse_enabled", cfg)
+	if !strings.Contains(command, "\nexport TUNNEL_ENABLED=true\n") {
+		t.Fatalf("enabled session ports did not export tunnel flag:\n%s", command)
 	}
-	if strings.Index(command.ShellCommand, "TUNNEL_ENABLED") > strings.Index(command.ShellCommand, "exec ") {
+	if strings.Index(command, "TUNNEL_ENABLED") > strings.Index(command, "exec ") {
 		t.Fatal("tunnel flag exported after exec")
 	}
 }

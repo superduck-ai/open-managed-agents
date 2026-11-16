@@ -63,7 +63,7 @@ export function WorkspaceOAuthProviderDialog({
   ] as const;
   return (
     <Dialog open onOpenChange={(open) => !open && !mutation.isPending && onClose()}>
-      <DialogContent className="sm:max-w-2xl" closeButtonDisabled={mutation.isPending}>
+      <DialogContent className="sm:max-w-[560px]" closeButtonDisabled={mutation.isPending}>
         <DialogHeader>
           <DialogTitle>
             {msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider')}

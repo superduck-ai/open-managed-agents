@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { toast } from '../../../shared/ui/sonner';
 import { afterEach, expect, mock, spyOn, test } from 'bun:test';
 import { type ReactNode } from 'react';
@@ -610,4 +611,66 @@ test('MCP 凭据门禁只展示调用方允许的认证类型', async () => {
   expect(screen.queryByText('Environment variable')).toBeNull();
   expect(screen.getByRole('option', { name: 'MCP OAuth' })).toBeTruthy();
   expect(screen.getByRole('option', { name: 'Bearer token' })).toBeTruthy();
+});
+
+test('普通用户在凭据弹窗创建工作区服务方并带入默认主机', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (url, options) => {
+    expect(String(url)).toContain('workspace_id=default');
+    if (options?.method === 'POST') {
+      writes.push(options);
+      return Response.json({
+        id: 'poap_workspace',
+        provider_key: 'custom:poap_workspace',
+        name: 'Team OAuth',
+        enabled: true,
+        configured: true,
+        default_secret_name: 'TEAM_TOKEN',
+        default_allowed_hosts: ['api.example.test'],
+        client_id: 'client',
+      });
+    }
+    return Response.json([]);
+  }) as typeof fetch;
+  const submit = mock(async () => {});
+  const queries = new QueryClient();
+  render(
+    <QueryClientProvider client={queries}>
+      <AuthHarness>
+        <CredentialDialog
+          vaultId="vlt_fixture"
+          workspaceId="default"
+          orgUuid="org_fixture"
+          onClose={() => {}}
+          onSubmit={submit}
+        />
+      </AuthHarness>
+    </QueryClientProvider>,
+  );
+  const credentialDialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(credentialDialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(await within(credentialDialog).findByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Custom OAuth provider' }));
+  const register = await screen.findByRole('dialog', { name: 'Register OAuth client' });
+  fireEvent.change(within(register).getByLabelText('Name'), { target: { value: 'Team OAuth' } });
+  fireEvent.change(within(register).getByLabelText('Authorize endpoint'), {
+    target: { value: 'https://auth.example.test/authorize' },
+  });
+  fireEvent.change(within(register).getByLabelText('Token endpoint'), {
+    target: { value: 'https://auth.example.test/token' },
+  });
+  fireEvent.change(within(register).getByLabelText(/Default allowed hosts/), { target: { value: 'api.example.test' } });
+  fireEvent.click(within(register).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Register OAuth client' })).toBeNull());
+  expect(writes).toHaveLength(1);
+  expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('csrf_fixture');
+  expect(JSON.parse(String(writes[0].body)).default_allowed_hosts).toEqual(['api.example.test']);
+  expect((within(credentialDialog).getByLabelText('Allowed hosts') as HTMLTextAreaElement).value).toBe(
+    'api.example.test',
+  );
+  expect((within(credentialDialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('TEAM_TOKEN');
+  expect(submit).not.toHaveBeenCalled();
+  queries.clear();
 });

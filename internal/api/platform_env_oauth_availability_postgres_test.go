@@ -78,7 +78,7 @@ func TestEnvOAuthUnavailableProviderOnlyBlocksNewCredentialsPostgres(t *testing.
 					t.Fatalf("%s：状态=%d，预期=%d，响应=%s", test.name, response.Code, test.status, response.Body.String())
 				}
 			}
-			metadata, err := f.server.envOAuthProviders.ListProviders(t.Context())
+			metadata, err := f.server.envOAuthProviders.ListProviders(t.Context(), "")
 			if err != nil {
 				t.Fatal(err)
 			}

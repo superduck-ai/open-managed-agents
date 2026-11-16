@@ -1,3 +1,4 @@
+import type { OAuthProviderInput, OAuthProviderRecord } from '../../shared/api/platform-admin';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import {
   consoleApi,
@@ -1641,9 +1642,21 @@ export type StartEnvOAuthVaultAuthInput = {
   redirect_url: string;
 };
 
-export function listEnvOAuthProviders(orgUuid: string) {
+export function listEnvOAuthProviders(orgUuid: string, workspaceId = 'default') {
   return consoleApi<EnvOAuthProviderApiResponse[]>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers`,
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers?workspace_id=${encodeURIComponent(workspaceId)}`,
+  );
+}
+
+export function createWorkspaceOAuthProvider(
+  orgUuid: string,
+  workspaceId: string,
+  input: OAuthProviderInput,
+  csrfToken?: string,
+) {
+  return consoleApi<OAuthProviderRecord>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers?workspace_id=${encodeURIComponent(workspaceId)}`,
+    { method: 'POST', body: JSON.stringify(input), csrfToken },
   );
 }
 

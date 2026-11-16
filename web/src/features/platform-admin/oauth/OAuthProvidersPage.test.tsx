@@ -103,6 +103,7 @@ test('注册客户端提交完整字段', async () => {
     token_endpoint: 'https://auth.example.test/token',
     scope: '',
     default_secret_name: '',
+    default_allowed_hosts: [],
     client_id: 'client',
     token_endpoint_auth_method: 'client_secret_post',
     token_endpoint_encoding: 'form',
@@ -204,6 +205,7 @@ test('飞书首次配置字段可编辑并提交完整配置', async () => {
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
     default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    default_allowed_hosts: builtin.default_allowed_hosts,
     logo_url: '',
     scope: 'offline_access',
     name: builtin.name,
@@ -240,6 +242,7 @@ test('飞书保留旧密钥且更换应用时要求新密钥', async () => {
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
     default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    default_allowed_hosts: builtin.default_allowed_hosts,
     logo_url: '',
     scope: 'offline_access',
     name: builtin.name,
@@ -335,6 +338,7 @@ test('Custom 与飞书分别展示，Custom 使用独立端点首配', async () 
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
     default_secret_name: 'CUSTOM_ACCESS_TOKEN',
+    default_allowed_hosts: custom.default_allowed_hosts,
     logo_url: '',
     scope: 'read',
     name: custom.name,

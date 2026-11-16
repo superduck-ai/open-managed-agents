@@ -13,11 +13,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
+import { Textarea } from '../../../shared/ui/textarea';
 import { Input } from '../../../shared/ui/input';
 import { Field as FormField, FieldLabel, FieldDescription } from '../../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import { createOAuthProvider, updateOAuthProvider, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
-import { usePlatformAdmin } from '../context';
+import { type OAuthProviderInput, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 import type { ApiError } from '../../../shared/api/client';
 import {
@@ -29,17 +29,18 @@ import {
 
 export function OAuthProviderDialog({
   provider,
+  onSave,
   onClose,
   onSaved,
   onConflict,
 }: {
   provider?: OAuthProviderRecord;
+  onSave: (input: OAuthProviderInput) => Promise<OAuthProviderRecord>;
   onClose: () => void;
-  onSaved: () => Promise<void>;
-  onConflict: () => Promise<void>;
+  onSaved: (provider: OAuthProviderRecord) => Promise<void>;
+  onConflict?: () => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const { client } = usePlatformAdmin();
   const errorMessage = usePlatformAdminError();
   const [values, setValues] = useState<OAuthProviderFormValues>(() => initialOAuthProviderFormValues(provider));
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -50,6 +51,10 @@ export function OAuthProviderDialog({
       const editable = {
         scope: values.scope.trim(),
         default_secret_name: values.defaultSecretName.trim(),
+        default_allowed_hosts: values.defaultAllowedHostsText
+          .split(/[\n,]/)
+          .map((host) => host.trim())
+          .filter(Boolean),
         logo_url: values.logoUrl.trim(),
         ...(values.clientId.trim() ? { client_id: values.clientId.trim() } : {}),
         ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
@@ -62,19 +67,14 @@ export function OAuthProviderDialog({
         token_endpoint_auth_method: values.authMethod,
         token_endpoint_encoding: values.encoding,
       };
-      return provider
-        ? updateOAuthProvider(client, provider.id, {
-            ...input,
-            expected_version: provider.version,
-          })
-        : createOAuthProvider(client, { ...input, client_id: values.clientId.trim() });
+      return onSave(input);
     },
-    onSuccess: () => {
-      void onSaved();
+    onSuccess: (saved) => {
+      void onSaved(saved);
     },
     onError: async (submitError: unknown) => {
       setError(errorMessage(submitError));
-      if ((submitError as ApiError).code === 'oauth_provider_version_conflict') await onConflict();
+      if ((submitError as ApiError).code === 'oauth_provider_version_conflict') await onConflict?.();
     },
   });
   const canSubmit = oauthProviderFormReady(values, provider);
@@ -94,7 +94,7 @@ export function OAuthProviderDialog({
           <DialogDescription>
             {msg(
               'platformAdmin.oauthManagement.dialogDescription',
-              'Client ID is visible to platform administrators. Client secret is encrypted and never returned by the API.',
+              'Client secret is encrypted and never returned by the API.',
             )}
           </DialogDescription>
         </DialogHeader>
@@ -102,6 +102,7 @@ export function OAuthProviderDialog({
           className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-4"
           onSubmit={(event) => {
             event.preventDefault();
+            event.stopPropagation();
             if (canSubmit && !mutation.isPending) {
               setError(null);
               mutation.mutate();
@@ -170,6 +171,19 @@ export function OAuthProviderDialog({
                   value={values.defaultSecretName}
                   placeholder="ACCESS_TOKEN"
                   onChange={(event) => patch({ defaultSecretName: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="oauth-provider-default-hosts"
+                optional
+                label={msg('platformAdmin.oauthManagement.defaultAllowedHosts', 'Default allowed hosts')}
+                className="sm:col-span-2"
+              >
+                <Textarea
+                  id="oauth-provider-default-hosts"
+                  value={values.defaultAllowedHostsText}
+                  placeholder="api.example.com"
+                  onChange={(event) => patch({ defaultAllowedHostsText: event.target.value })}
                 />
               </Field>
               <Field

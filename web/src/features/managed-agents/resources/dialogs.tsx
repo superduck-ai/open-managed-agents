@@ -245,7 +245,7 @@ export function CredentialDialog({
       return;
     }
     let active = true;
-    void listEnvOAuthProviders(orgUuid)
+    void listEnvOAuthProviders(orgUuid, workspaceId)
       .then((providers) => {
         if (active) {
           setEnvOAuthProviders(providers);
@@ -266,7 +266,7 @@ export function CredentialDialog({
     return () => {
       active = false;
     };
-  }, [values.authType, orgUuid, envOAuthProvidersAttempt, msg]);
+  }, [values.authType, orgUuid, workspaceId, envOAuthProvidersAttempt, msg]);
 
   useEffect(() => {
     if (!showDirectoryPicker) {
@@ -583,6 +583,11 @@ export function CredentialDialog({
                   ) : null}
                   {values.authType === 'env_oauth' ? (
                     <EnvOAuthCredentialFields
+                      orgUuid={orgUuid}
+                      workspaceId={workspaceId}
+                      onProviderCreated={(provider) =>
+                        setEnvOAuthProviders((current) => [...(current ?? []), provider])
+                      }
                       values={values}
                       providers={envOAuthProviders ?? []}
                       providersLoading={envOAuthProviders === null}

@@ -589,8 +589,11 @@ export function CredentialDialog({
                     <EnvOAuthCredentialFields
                       orgUuid={orgUuid}
                       workspaceId={workspaceId}
-                      onProviderCreated={(provider) =>
-                        setEnvOAuthProviders((current) => [...(current ?? []), provider])
+                      onProviderSaved={(provider) =>
+                        setEnvOAuthProviders((current) => [
+                          ...(current ?? []).filter((item) => item.id !== provider.id),
+                          provider,
+                        ])
                       }
                       values={values}
                       providers={envOAuthProviders ?? []}

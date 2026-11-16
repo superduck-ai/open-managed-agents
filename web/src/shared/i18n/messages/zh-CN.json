@@ -3473,7 +3473,7 @@
   "platformAdmin.oauthManagement.changeAppHint": "修改客户端 ID 必须同时填写新密钥，已有令牌可能需要重新授权。",
   "platformAdmin.errors.oauthProviderVersionConflict": "服务方已被修改，请关闭并重新打开表单。",
   "platformAdmin.errors.oauthProviderUnavailable": "OAuth 客户端暂时无法解密，请稍后重试。",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "尚未配置客户端。可手工填写令牌；如需授权，请在创建服务方时填写客户端配置。",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "OAuth 授权需要 Client ID 和 Secret。请先配置客户端再连接，或手工填写令牌。",
   "skills.all": "全部技能",
   "skills.builtin": "系统内置",
   "skills.custom": "自定义",
@@ -3714,5 +3714,8 @@
   "llmModels.createdBy": "创建者",
   "llmModels.unavailableUser": "用户不可用",
   "llmModels.legacyCreator": "历史 / 系统配置",
-  "llmModels.manageDenied": "只有创建者或组织管理员可以管理此 Provider。"
+  "llmModels.manageDenied": "只有创建者或组织管理员可以管理此 Provider。",
+  "managedAgents.credentialVaults.credentialDialog.configureClient": "配置客户端",
+  "managedAgents.credentialVaults.credentialDialog.editProvider": "编辑 OAuth 服务方",
+  "managedAgents.credentialVaults.credentialDialog.clientConfigurationHint": "OAuth 授权需要 Client ID 和 Secret；仅手工填写令牌时可留空。"
 }

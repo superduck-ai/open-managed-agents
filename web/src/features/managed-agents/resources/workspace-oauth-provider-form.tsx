@@ -1,67 +1,79 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ComponentProps, useEffect, useRef, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { useAuth } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import { Field, FieldLabel } from '../../../shared/ui/field';
+import { Field, FieldLabel, FieldDescription } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { usePlatformAdminError } from '../../platform-admin/usePlatformAdminError';
-import { createWorkspaceOAuthProvider } from '../api';
+import { createWorkspaceOAuthProvider, getWorkspaceOAuthProvider, updateWorkspaceOAuthProvider } from '../api';
+import {
+  initialOAuthProviderFormValues,
+  oauthProviderOptionalFields,
+} from '../../platform-admin/oauth/oauthProviderForm';
 import { OptionalCredentialFields } from './optional-credential-fields';
 
 export function WorkspaceOAuthProviderForm({
   orgUuid,
   workspaceId,
   onClose,
-  onCreated,
+  onSaved,
+  provider,
   onPendingChange,
 }: {
   orgUuid: string;
   workspaceId: string;
   onPendingChange: (pending: boolean) => void;
   onClose: () => void;
-  onCreated: (provider: OAuthProviderRecord) => void;
+  onSaved: (provider: OAuthProviderRecord) => void;
+  provider?: OAuthProviderRecord;
 }) {
   const { msg } = useI18n();
   const { csrfToken } = useAuth();
   const errorMessage = usePlatformAdminError();
   const formRef = useRef<HTMLFormElement>(null);
-  const [clientOpen, setClientOpen] = useState(false);
+  const [clientOpen, setClientOpen] = useState(Boolean(provider));
   const [clientError, setClientError] = useState<'clientId' | 'clientSecret' | null>(null);
   useEffect(() => {
     if (clientError && clientOpen) formRef.current?.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus();
   }, [clientError, clientOpen]);
+  const { name, authorizeEndpoint, tokenEndpoint, scope, clientId } = initialOAuthProviderFormValues(provider);
   const [values, setValues] = useState({
-    name: '',
-    authorizeEndpoint: '',
-    tokenEndpoint: '',
-    scope: '',
-    clientId: '',
+    name,
+    authorizeEndpoint,
+    tokenEndpoint,
+    scope,
+    clientId,
     clientSecret: '',
   });
   const patch = (next: Partial<typeof values>) => setValues((current) => ({ ...current, ...next }));
   const mutation = useMutation({
-    mutationFn: () =>
-      createWorkspaceOAuthProvider(
-        orgUuid,
-        workspaceId,
-        {
-          name: values.name.trim(),
-          authorize_endpoint: values.authorizeEndpoint.trim(),
-          token_endpoint: values.tokenEndpoint.trim(),
-          scope: values.scope.trim(),
-          ...(values.clientId.trim()
-            ? { client_id: values.clientId.trim(), client_secret: values.clientSecret.trim() }
-            : {}),
-        },
-        csrfToken,
-      ),
+    mutationFn: () => {
+      const input = {
+        name: values.name.trim(),
+        authorize_endpoint: values.authorizeEndpoint.trim(),
+        token_endpoint: values.tokenEndpoint.trim(),
+        scope: values.scope.trim(),
+        ...(values.clientId.trim() ? { client_id: values.clientId.trim() } : {}),
+        ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
+      };
+      return provider
+        ? updateWorkspaceOAuthProvider(
+            orgUuid,
+            workspaceId,
+            provider.id,
+            { ...input, expected_version: provider.version },
+            csrfToken,
+          )
+        : createWorkspaceOAuthProvider(orgUuid, workspaceId, input, csrfToken);
+    },
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
-    onSuccess: onCreated,
+    onSuccess: onSaved,
   });
+  const optional = oauthProviderOptionalFields(values, provider);
   const ready = [values.name, values.authorizeEndpoint, values.tokenEndpoint].every((value) => value.trim());
   const fields = [
     {
@@ -85,16 +97,22 @@ export function WorkspaceOAuthProviderForm({
       placeholder: 'read write offline_access',
     },
   ] as const;
+  const title = provider
+    ? msg('managedAgents.credentialVaults.credentialDialog.editProvider', 'Edit OAuth provider')
+    : msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider');
   return (
     <form
       ref={formRef}
-      aria-label={msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider')}
+      aria-label={title}
       className="space-y-4 p-4"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         if (!ready || mutation.isPending) return;
-        if (Boolean(values.clientId.trim()) !== Boolean(values.clientSecret.trim())) {
+        if (
+          (!optional.clientId && !values.clientId.trim()) ||
+          (!optional.clientSecret && !values.clientSecret.trim())
+        ) {
           formRef.current?.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus();
           setClientError(values.clientId.trim() ? 'clientSecret' : 'clientId');
           setClientOpen(true);
@@ -111,7 +129,7 @@ export function WorkspaceOAuthProviderForm({
         onClick={onClose}
       >
         <ChevronLeft className="size-4" aria-hidden />
-        {msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider')}
+        {title}
       </Button>
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map((field) => (
@@ -134,6 +152,12 @@ export function WorkspaceOAuthProviderForm({
           </Field>
         ))}
       </div>
+      <FieldDescription>
+        {msg(
+          'managedAgents.credentialVaults.credentialDialog.clientConfigurationHint',
+          'Authorization requires client ID and secret. Leave both blank only when using a token supplied manually.',
+        )}
+      </FieldDescription>
       <OptionalCredentialFields
         title={msg('managedAgents.credentialVaults.credentialDialog.oauthClientConfiguration', 'Client configuration')}
         open={clientOpen}
@@ -162,6 +186,11 @@ export function WorkspaceOAuthProviderForm({
             <Input
               id="workspace-oauth-client-secret"
               type="password"
+              placeholder={
+                provider?.has_client_secret && values.clientId.trim() === provider.client_id
+                  ? msg('platformAdmin.oauthManagement.secretKeepHint', 'Leave blank to keep the current secret.')
+                  : undefined
+              }
               aria-invalid={clientError === 'clientSecret' || undefined}
               aria-describedby={clientError === 'clientSecret' ? 'workspace-oauth-client-error' : undefined}
               value={values.clientSecret}
@@ -191,9 +220,51 @@ export function WorkspaceOAuthProviderForm({
           {msg('common.cancel', 'Cancel')}
         </Button>
         <Button type="submit" disabled={!ready || mutation.isPending}>
-          {mutation.isPending ? msg('common.saving', 'Saving...') : msg('common.add', 'Add')}
+          {mutation.isPending
+            ? msg('common.saving', 'Saving...')
+            : provider
+              ? msg('common.save', 'Save')
+              : msg('common.add', 'Add')}
         </Button>
       </div>
     </form>
   );
+}
+
+export function WorkspaceOAuthProviderEditor({
+  providerId,
+  ...props
+}: Omit<ComponentProps<typeof WorkspaceOAuthProviderForm>, 'provider'> & { providerId?: string }) {
+  const { msg } = useI18n();
+  const errorMessage = usePlatformAdminError();
+  const query = useQuery({
+    queryKey: ['workspace-oauth-provider', props.orgUuid, props.workspaceId, providerId],
+    queryFn: () => getWorkspaceOAuthProvider(props.orgUuid, props.workspaceId, providerId!),
+    enabled: Boolean(providerId),
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    gcTime: 0,
+  });
+  if (providerId && !query.data)
+    return (
+      <div className="space-y-3 p-4">
+        <Button type="button" variant="ghost" onClick={props.onClose}>
+          <ChevronLeft className="size-4" aria-hidden />
+          {msg('managedAgents.credentialVaults.credentialDialog.editProvider', 'Edit OAuth provider')}
+        </Button>
+        {query.error ? (
+          <>
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage(query.error)}
+            </p>
+            <Button type="button" variant="outline" onClick={() => void query.refetch()}>
+              {msg('common.retry', 'Retry')}
+            </Button>
+          </>
+        ) : (
+          <p>{msg('common.loading', 'Loading...')}</p>
+        )}
+      </div>
+    );
+  return <WorkspaceOAuthProviderForm {...props} provider={query.data} />;
 }

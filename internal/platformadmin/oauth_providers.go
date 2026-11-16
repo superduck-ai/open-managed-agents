@@ -39,6 +39,7 @@ type OAuthProviderCreateInput struct {
 }
 
 type OAuthProviderUpdateInput struct {
+	WorkspaceUUID           string    `json:"-"`
 	DefaultAllowedHosts     *[]string `json:"default_allowed_hosts"`
 	Archived                *bool     `json:"archived"`
 	DefaultSecretName       *string   `json:"default_secret_name"`
@@ -206,6 +207,17 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	return oauthProviderView(created, clientID), nil
 }
 
+func (s *OAuthProviderService) GetWorkspace(ctx context.Context, workspaceUUID, externalID string) (OAuthProviderView, error) {
+	provider, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
+	if err != nil {
+		return OAuthProviderView{}, mapOAuthProviderError(err)
+	}
+	if provider.WorkspaceUUID != workspaceUUID {
+		return OAuthProviderView{}, ErrNotFound
+	}
+	return s.view(ctx, provider)
+}
+
 func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (view OAuthProviderView, failure error) {
 	current, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
 	defer func() {
@@ -219,7 +231,7 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 		}
 		return OAuthProviderView{}, err
 	}
-	if current.WorkspaceUUID != "" {
+	if current.WorkspaceUUID != input.WorkspaceUUID {
 		return OAuthProviderView{}, ErrNotFound
 	}
 	if input.ExpectedVersion < 1 {

@@ -12,7 +12,7 @@ import { credentialEnvHostsMissing, envOAuthProviderDefaults } from './model';
 type EnvOAuthCredentialFieldsProps = {
   orgUuid?: string;
   workspaceId?: string;
-  onProviderCreated?: (provider: EnvOAuthProviderApiResponse) => void;
+  onProviderSaved?: (provider: EnvOAuthProviderApiResponse) => void;
   values: CredentialFormValues;
   providers: EnvOAuthProviderApiResponse[];
   providersLoading: boolean;
@@ -25,7 +25,7 @@ type EnvOAuthCredentialFieldsProps = {
 export function EnvOAuthCredentialFields({
   orgUuid,
   workspaceId,
-  onProviderCreated,
+  onProviderSaved,
   values,
   providers,
   providersLoading,
@@ -59,7 +59,10 @@ export function EnvOAuthCredentialFields({
             : msg('managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider', 'Select a provider')
         }
         options={selectableOptions}
-        orgUuid={secretNameLocked ? undefined : orgUuid}
+        orgUuid={orgUuid}
+        canCreate={!secretNameLocked}
+        editableProviderId={selected?.workspace_scoped ? selected.id.slice('custom:'.length) : undefined}
+        clientConfigured={selected?.configured}
         workspaceId={workspaceId}
         onChange={(providerId) => {
           if (secretNameLocked || providerId === values.envOAuthProviderId) {
@@ -79,9 +82,10 @@ export function EnvOAuthCredentialFields({
               : {}),
           });
         }}
-        onCreated={(record) => {
+        onSaved={(record) => {
           const provider = { ...record, id: record.provider_key, workspace_scoped: true };
-          onProviderCreated?.(provider);
+          onProviderSaved?.(provider);
+          if (provider.id === values.envOAuthProviderId) return;
           const defaults = envOAuthProviderDefaults(provider);
           const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
           onChange({
@@ -105,7 +109,7 @@ export function EnvOAuthCredentialFields({
         <FieldDescription>
           {msg(
             'managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured',
-            'Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.',
+            'Authorization requires client ID and secret. Configure this provider before connecting, or supply a token manually.',
           )}
         </FieldDescription>
       ) : null}

@@ -3473,7 +3473,7 @@
   "platformAdmin.oauthManagement.changeAppHint": "Changing the client ID requires a new secret. Existing tokens may need reauthorization.",
   "platformAdmin.errors.oauthProviderVersionConflict": "The provider changed. Close and reopen this form.",
   "platformAdmin.errors.oauthProviderUnavailable": "OAuth client decryption is unavailable. Try again later.",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "Authorization requires client ID and secret. Configure this provider before connecting, or supply a token manually.",
   "skills.all": "All skills",
   "skills.builtin": "System built-in",
   "skills.custom": "Custom",
@@ -3714,5 +3714,8 @@
   "llmModels.createdBy": "Created by",
   "llmModels.unavailableUser": "Unavailable user",
   "llmModels.legacyCreator": "Legacy / system configuration",
-  "llmModels.manageDenied": "Only the creator or an organization administrator can manage this provider."
+  "llmModels.manageDenied": "Only the creator or an organization administrator can manage this provider.",
+  "managedAgents.credentialVaults.credentialDialog.configureClient": "Configure client",
+  "managedAgents.credentialVaults.credentialDialog.editProvider": "Edit OAuth provider",
+  "managedAgents.credentialVaults.credentialDialog.clientConfigurationHint": "Authorization requires client ID and secret. Leave both blank only when using a token supplied manually."
 }

@@ -339,3 +339,17 @@ func TestPlatformOAuthProviderCannotMutateWorkspaceProvider(t *testing.T) {
 		t.Fatal("工作区记录被平台管理路径修改")
 	}
 }
+
+func TestWorkspaceOAuthProviderScope(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	store.provider.WorkspaceUUID = "workspace"
+	if _, err := service.GetWorkspace(t.Context(), "other", store.provider.ExternalID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("可读取其他工作区的客户端", err)
+	}
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{WorkspaceUUID: "other", ExpectedVersion: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatal("可修改其他工作区的客户端", err)
+	}
+	if store.writes != 0 {
+		t.Fatal("跨工作区修改发生写入")
+	}
+}

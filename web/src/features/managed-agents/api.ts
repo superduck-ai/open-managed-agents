@@ -1660,6 +1660,25 @@ export function createWorkspaceOAuthProvider(
   );
 }
 
+export function getWorkspaceOAuthProvider(orgUuid: string, workspaceId: string, providerId: string) {
+  return consoleApi<OAuthProviderRecord>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers/${encodeURIComponent(providerId)}?workspace_id=${encodeURIComponent(workspaceId)}`,
+  );
+}
+
+export function updateWorkspaceOAuthProvider(
+  orgUuid: string,
+  workspaceId: string,
+  providerId: string,
+  input: OAuthProviderInput & { expected_version: number },
+  csrfToken?: string,
+) {
+  return consoleApi<OAuthProviderRecord>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers/${encodeURIComponent(providerId)}?workspace_id=${encodeURIComponent(workspaceId)}`,
+    { method: 'PATCH', body: JSON.stringify(input), csrfToken },
+  );
+}
+
 export function startEnvOAuthVaultAuth(orgUuid: string, input: StartEnvOAuthVaultAuthInput, csrfToken?: string) {
   return consoleApi<{ oauth_flow_id: string; authorize_url: string }>(
     `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/vault-auth/start`,

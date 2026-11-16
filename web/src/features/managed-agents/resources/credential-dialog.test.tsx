@@ -493,7 +493,7 @@ test.each(['Feishu', 'Custom'])('未配置服务方 %s 禁用授权但保留手�
   expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);
   expect(
     screen.getByText(
-      'Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.',
+      'Authorization requires client ID and secret. Configure this provider before connecting, or supply a token manually.',
     ),
   ).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Configure provider' })).toBeNull();
@@ -749,6 +749,104 @@ test.each([null, 'clientId', 'clientSecret'] as const)('自定义服务方焦点
     'Team OAuth (Workspace)',
   );
   expect(within(credentialDialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(!withClient);
+  expect(submit).not.toHaveBeenCalled();
+  queries.clear();
+});
+
+test('工作区服务方可补填客户端，保存后可连接且再次编辑不回显密钥', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  let record = {
+    id: 'poap_workspace_edit',
+    provider_key: 'custom:poap_workspace_edit',
+    name: 'Team OAuth',
+    enabled: true,
+    configured: false,
+    version: 1,
+    client_id: '',
+    has_client_secret: false,
+    authorize_endpoint: 'https://auth.example.test/authorize',
+    token_endpoint: 'https://auth.example.test/token',
+    scope: 'read',
+    default_secret_name: '',
+    default_allowed_hosts: [],
+  };
+  const writes: Record<string, unknown>[] = [];
+  globalThis.fetch = mock(async (url, options) => {
+    if (!String(url).includes('/env-oauth/providers')) return Response.json([]);
+    expect(String(url)).toContain('workspace_id=default');
+    if (options?.method === 'PATCH') {
+      expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf_fixture');
+      const input = JSON.parse(String(options.body));
+      expect(input.expected_version).toBe(record.version);
+      writes.push(input);
+      record = {
+        ...record,
+        client_id: input.client_id,
+        configured: true,
+        has_client_secret: true,
+        version: record.version + 1,
+      };
+      return Response.json(record);
+    }
+    return Response.json(
+      String(url).includes('/poap_workspace_edit?')
+        ? record
+        : [{ ...record, id: record.provider_key, workspace_scoped: true }],
+    );
+  }) as typeof fetch;
+  const submit = mock(async () => {});
+  const queries = new QueryClient();
+  render(
+    <QueryClientProvider client={queries}>
+      <AuthHarness>
+        <CredentialDialog
+          orgUuid="org_fixture"
+          workspaceId="default"
+          vaultId="vlt_fixture"
+          onClose={() => {}}
+          onSubmit={submit}
+        />
+      </AuthHarness>
+    </QueryClientProvider>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Team OAuth (Workspace)' }));
+  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'MY_USER_TOKEN' } });
+  fireEvent.change(within(dialog).getByLabelText('Allowed hosts'), { target: { value: 'api.example.test' } });
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Configure client' }));
+  const editor = await screen.findByRole('form', { name: 'Edit OAuth provider' });
+  expect((within(editor).getByLabelText('Name') as HTMLInputElement).value).toBe('Team OAuth');
+  expect(
+    within(editor)
+      .getByRole('button', { name: /Client configuration/ })
+      .getAttribute('aria-expanded'),
+  ).toBe('true');
+  expect(within(editor).getByText(/Authorization requires client ID and secret/)).toBeTruthy();
+  fireEvent.change(within(editor).getByLabelText('Client ID'), { target: { value: 'workspace-client' } });
+  fireEvent.change(within(editor).getByLabelText('Client secret'), { target: { value: 'workspace-secret' } });
+  fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Edit OAuth provider' })).toBeNull());
+  expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(false);
+  expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('MY_USER_TOKEN');
+  expect((within(dialog).getByLabelText('Allowed hosts') as HTMLTextAreaElement).value).toBe('api.example.test');
+  expect(writes[0]).toMatchObject({
+    client_id: 'workspace-client',
+    client_secret: 'workspace-secret',
+    expected_version: 1,
+  });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
+  const reopened = await screen.findByRole('form', { name: 'Edit OAuth provider' });
+  expect((within(reopened).getByLabelText('Client ID') as HTMLInputElement).value).toBe('workspace-client');
+  expect((within(reopened).getByLabelText('Client secret') as HTMLInputElement).value).toBe('');
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes[1].expected_version).toBe(2);
+  expect(writes[1]).not.toHaveProperty('client_secret');
   expect(submit).not.toHaveBeenCalled();
   queries.clear();
 });

@@ -1,12 +1,13 @@
 import { useId, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { useI18n } from '../../../shared/i18n';
 import { CommandItem } from '../../../shared/ui/command';
 import { Label } from '../../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import type { EntityOption } from '../types';
-import { WorkspaceOAuthProviderForm } from './workspace-oauth-provider-form';
+import { WorkspaceOAuthProviderEditor } from './workspace-oauth-provider-form';
+import { Button } from '../../../shared/ui/button';
 
 export function WorkspaceOAuthProviderPicker({
   label,
@@ -16,7 +17,10 @@ export function WorkspaceOAuthProviderPicker({
   orgUuid,
   workspaceId,
   onChange,
-  onCreated,
+  onSaved,
+  editableProviderId,
+  clientConfigured,
+  canCreate = true,
 }: {
   label: string;
   value: string;
@@ -25,18 +29,41 @@ export function WorkspaceOAuthProviderPicker({
   orgUuid?: string;
   workspaceId?: string;
   onChange: (value: string) => void;
-  onCreated: (provider: OAuthProviderRecord) => void;
+  onSaved: (provider: OAuthProviderRecord) => void;
+  editableProviderId?: string;
+  clientConfigured?: boolean;
+  canCreate?: boolean;
 }) {
   const { msg } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState<'create' | 'edit' | null>(null);
   const [pending, setPending] = useState(false);
   const selected = options.find((option) => option.id === value);
   const customLabel = msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider');
   return (
     <div>
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {editableProviderId && orgUuid && workspaceId ? (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto p-0"
+            disabled={pending}
+            onClick={() => {
+              setMode('edit');
+              setOpen(true);
+            }}
+          >
+            <Pencil className="size-3" aria-hidden />
+            {clientConfigured
+              ? msg('common.edit', 'Edit')
+              : msg('managedAgents.credentialVaults.credentialDialog.configureClient', 'Configure client')}
+          </Button>
+        ) : null}
+      </div>
       <Select
         value={value}
         items={[
@@ -53,7 +80,7 @@ export function WorkspaceOAuthProviderPicker({
             return;
           }
           setOpen(next);
-          if (!next) setCreating(false);
+          if (!next) setMode(null);
         }}
       >
         <SelectTrigger id={id} type="button" className="mt-2 h-10 w-full">
@@ -67,16 +94,18 @@ export function WorkspaceOAuthProviderPicker({
         <SelectContent
           className="overflow-y-auto"
           customContent={
-            creating && orgUuid && workspaceId ? (
-              <WorkspaceOAuthProviderForm
+            mode && orgUuid && workspaceId ? (
+              <WorkspaceOAuthProviderEditor
+                key={mode === 'edit' ? editableProviderId : 'create'}
+                providerId={mode === 'edit' ? editableProviderId : undefined}
                 orgUuid={orgUuid}
                 workspaceId={workspaceId}
                 onPendingChange={setPending}
-                onClose={() => setCreating(false)}
-                onCreated={(provider) => {
-                  onCreated(provider);
+                onClose={() => setMode(null)}
+                onSaved={(provider) => {
+                  onSaved(provider);
                   setOpen(false);
-                  setCreating(false);
+                  setMode(null);
                 }}
               />
             ) : undefined
@@ -91,8 +120,8 @@ export function WorkspaceOAuthProviderPicker({
               <span className="truncate">{option.label}</span>
             </SelectItem>
           ))}
-          {orgUuid && workspaceId ? (
-            <CommandItem value="__create_provider__" keywords={[customLabel]} onSelect={() => setCreating(true)}>
+          {canCreate && orgUuid && workspaceId ? (
+            <CommandItem value="__create_provider__" keywords={[customLabel]} onSelect={() => setMode('create')}>
               <Plus className="size-4" aria-hidden />
               {customLabel}
             </CommandItem>

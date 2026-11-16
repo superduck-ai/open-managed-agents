@@ -42,6 +42,7 @@ type environmentVariableCredentialSecret struct {
 func (environmentVariableCredentialSecret) credentialSecretVariant() {}
 
 type envOAuthCredentialSecret struct {
+	ClientSecret string             `json:"client_secret,omitempty"`
 	Type         credentialAuthType `json:"type"`
 	AccessToken  string             `json:"access_token"`
 	RefreshToken string             `json:"refresh_token,omitempty"`

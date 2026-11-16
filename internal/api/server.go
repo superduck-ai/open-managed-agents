@@ -370,9 +370,6 @@ func (s *Server) registerPlatformConsoleRoutes(
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 			r.Get("/env-oauth/providers", s.handleEnvOAuthProviders)
-			r.With(platformCSRFMiddleware).Post("/env-oauth/providers", s.handleCreateWorkspaceOAuthProvider)
-			r.Get("/env-oauth/providers/{providerID}", s.handleWorkspaceOAuthProvider)
-			r.With(platformCSRFMiddleware).Patch("/env-oauth/providers/{providerID}", s.handleWorkspaceOAuthProvider)
 			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")

@@ -156,12 +156,18 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	if secret.RefreshToken == "" {
 		return "", errors.Join(ErrEnvOAuthReauthorizationRequired, errEnvOAuthRefreshUnavailable)
 	}
-	if r.providers == nil {
-		return "", errors.Join(ErrEnvOAuthProviderUnavailable, errEnvOAuthRefreshUnavailable)
-	}
-	provider, err := r.providers.ResolveEnvOAuthProvider(ctx, publicAuth.Provider)
-	if err != nil || provider.TokenEndpoint == "" || provider.ClientID == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != current.WorkspaceUUID) {
-		return "", errors.Join(ErrEnvOAuthProviderUnavailable, err, errEnvOAuthRefreshUnavailable)
+	var provider EnvOAuthProviderSnapshot
+	if publicAuth.CustomProvider != nil {
+		definition := publicAuth.CustomProvider
+		provider = EnvOAuthProviderSnapshot{TokenEndpoint: definition.TokenEndpoint, ClientID: definition.ClientID, ClientSecret: secret.ClientSecret, TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "form"}
+	} else {
+		if r.providers == nil {
+			return "", errors.Join(ErrEnvOAuthProviderUnavailable, errEnvOAuthRefreshUnavailable)
+		}
+		provider, err = r.providers.ResolveEnvOAuthProvider(ctx, publicAuth.Provider)
+		if err != nil || provider.TokenEndpoint == "" || provider.ClientID == "" {
+			return "", errors.Join(ErrEnvOAuthProviderUnavailable, err, errEnvOAuthRefreshUnavailable)
+		}
 	}
 
 	form := url.Values{}
@@ -209,6 +215,7 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	}
 	nextAuth.HasRefreshToken = refreshToken != ""
 	nextSecret := envOAuthCredentialSecret{
+		ClientSecret: secret.ClientSecret,
 		Type:         credentialAuthTypeEnvOAuth,
 		AccessToken:  token.AccessToken,
 		RefreshToken: refreshToken,

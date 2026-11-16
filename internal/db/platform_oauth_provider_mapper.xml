@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="PlatformOAuthProviderMapper">
     <sql id="columns">
-        uuid, workspace_uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
+        uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
         client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
         created_by_platform_admin_uuid, created_at, updated_at, builtin_key, protected, enabled, archived, version, default_secret_name, default_allowed_hosts
     </sql>
 
     <insert id="Insert" result="returning" resultType="platformOAuthProviderRow">
         INSERT INTO platform_oauth_providers (
-            uuid, workspace_uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
+            uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
             client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
             created_by_platform_admin_uuid, created_at, updated_at, default_secret_name, default_allowed_hosts, enabled, archived
         ) VALUES (
-            #{params.UUID}, CAST(NULLIF(#{params.WorkspaceUUID},'') AS uuid), #{params.ExternalID}, #{params.Name}, #{params.LogoURL}, #{params.AuthorizeEndpoint},
+            #{params.UUID}, #{params.ExternalID}, #{params.Name}, #{params.LogoURL}, #{params.AuthorizeEndpoint},
             #{params.TokenEndpoint}, #{params.Scope}, #{params.ClientIDEnvelope,sensitive=true},
             #{params.ClientSecretEnvelope,sensitive=true}, #{params.TokenEndpointAuthMethod},
             #{params.TokenEndpointEncoding}, #{params.CreatedByPlatformAdminUUID},
@@ -28,16 +28,10 @@
         ORDER BY created_at DESC, id DESC
     </select>
 
-    <select id="ListAvailable" resultType="platformOAuthProviderRow">
-        SELECT <include refid="columns"/> FROM platform_oauth_providers
-        WHERE workspace_uuid IS NULL OR workspace_uuid=CAST(NULLIF(#{workspaceUUID},'') AS uuid)
-        ORDER BY created_at DESC,id DESC
-    </select>
-
     <select id="FindByExternalID" resultType="platformOAuthProviderRow">
         SELECT <include refid="columns"/>
         FROM platform_oauth_providers
-        WHERE external_id = #{externalID}
+        WHERE external_id = #{externalID} AND workspace_uuid IS NULL
     </select>
 
     <select id="FindByBuiltinKey" resultType="platformOAuthProviderRow">

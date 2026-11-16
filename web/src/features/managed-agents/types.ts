@@ -250,7 +250,6 @@ export type VaultCredentialApiResponse = {
 };
 
 export type EnvOAuthProviderApiResponse = {
-  workspace_scoped?: boolean;
   enabled: boolean;
   logo_url?: string;
   configured: boolean;
@@ -688,6 +687,15 @@ export type AgentEditConfig = z.infer<typeof agentEditConfigSchema>;
 
 export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'client_secret_basic';
 
+export type CustomOAuthProvider = {
+  name: string;
+  authorize_endpoint: string;
+  token_endpoint: string;
+  scope: string;
+  client_id?: string;
+  client_secret?: string;
+};
+
 export type CredentialFormValues = {
   displayName: string;
   /** Empty until the user picks a type in the create dialog (CMA progressive form). */
@@ -709,6 +717,8 @@ export type CredentialFormValues = {
   oauthClientId: string;
   oauthClientSecret: string;
   envOAuthProviderId: string;
+  envOAuthCustomProvider: CustomOAuthProvider | null;
+  envOAuthClientSecretSaved: boolean;
   envOAuthManualToken: string;
 };
 

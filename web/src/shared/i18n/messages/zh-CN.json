@@ -3840,6 +3840,5 @@
   "managedAgents.credentialVaults.credentialDialog.editProvider": "编辑 OAuth 服务方",
   "managedAgents.credentialVaults.credentialDialog.clientIdRequired": "自定义 OAuth 服务方授权需要填写 Client ID",
   "managedAgents.credentialVaults.credentialDialog.clientSecretRequired": "自定义 OAuth 服务方授权需要填写 Client Secret",
-  "managedAgents.common.requiredParen": "（必填）",
-  "managedAgents.credentialVaults.credentialDialog.providerVersionConflict": "服务方配置已变更。已保留你的输入，请确认后重试。"
+  "managedAgents.common.requiredParen": "（必填）"
 }

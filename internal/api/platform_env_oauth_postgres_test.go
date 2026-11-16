@@ -656,7 +656,7 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 	if err != nil || stored.Version != builtin.Version+1 || stored.UUID != builtin.UUID {
 		t.Fatal("内置行身份或 CAS 错误")
 	}
-	rows, err := f.server.envOAuthProviders.ListProviders(t.Context(), "")
+	rows, err := f.server.envOAuthProviders.ListProviders(t.Context())
 	if err != nil || len(rows) != 1 || !slices.ContainsFunc(rows, func(row vaultsapi.EnvOAuthProviderSnapshot) bool {
 		return row.ProviderKey == "builtin:feishu" && row.Configured
 	}) || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
@@ -665,7 +665,7 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 	if err := service.Delete(t.Context(), platformadmin.Actor{}, stored.ExternalID, stored.Version); err != nil {
 		t.Fatal("平台客户端删除失败", err)
 	}
-	rows, err = f.server.envOAuthProviders.ListProviders(t.Context(), "")
+	rows, err = f.server.envOAuthProviders.ListProviders(t.Context())
 	if err != nil || len(rows) != 0 {
 		t.Fatal("删除后服务方仍在目录中", err)
 	}
@@ -846,5 +846,77 @@ func TestEnvOAuthUnrestrictedHostsStoredAsArrayPostgres(t *testing.T) {
 	}
 	if saved.AllowedHosts == nil || len(saved.AllowedHosts) != 0 {
 		t.Fatalf("无限制网络主机列表不是空数组：%v", saved.AllowedHosts)
+	}
+}
+
+func TestInlineEnvOAuthCredentialPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	calls := 0
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Form.Get("client_id") != "inline-client" || r.Form.Get("client_secret") != "inline-secret" || r.Form.Get("code_verifier") == "" {
+			t.Error("授权未使用凭据客户端或缺少 PKCE")
+		}
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
+	}))
+	defer endpoint.Close()
+	before, err := f.database.ListPlatformOAuthProviders(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom := &vaultsapi.EnvOAuthCustomProvider{EnvOAuthProviderDefinition: vaultsapi.EnvOAuthProviderDefinition{Name: "Inline example", AuthorizeEndpoint: endpoint.URL + "/authorize", TokenEndpoint: endpoint.URL + "/token", Scope: "read", ClientID: "inline-client"}, ClientSecret: "inline-secret"}
+	start := func(credentialID string, input *vaultsapi.EnvOAuthCustomProvider) envOAuthVaultAuthStartResponse {
+		t.Helper()
+		body, err := json.Marshal(envOAuthVaultAuthStartRequest{ProviderID: vaultsapi.EnvOAuthProviderInline, CustomProvider: input, CredentialID: credentialID, VaultID: f.vault.ExternalID, WorkspaceID: f.workspace.ExternalID, SecretName: "INLINE_TOKEN", RedirectURL: "https://app.example.test/oauth/vault/env-success", Networking: &envOAuthNetworkingInput{Type: "unrestricted"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/env-oauth/vault-auth/start", strings.NewReader(string(body)))
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: f.workspace.ExternalID, APIKeyUUID: f.apiKey}))
+		route := chi.NewRouteContext()
+		route.URLParams.Add("orgUuid", f.organization)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, route))
+		recorder := httptest.NewRecorder()
+		f.server.handleEnvOAuthVaultAuthStart(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("发起授权: %d %s", recorder.Code, recorder.Body.String())
+		}
+		var response envOAuthVaultAuthStartResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	flow := start("", custom)
+	response := f.callback(t, flow.OAuthFlowID, "code")
+	if !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal("回调失败", response.Body.String())
+	}
+	credentials, _, err := f.database.ListVaultCredentialsPage(t.Context(), db.ListVaultCredentialsPageParams{WorkspaceUUID: f.workspace.UUID, VaultExternalID: f.vault.ExternalID, Limit: 50})
+	if err != nil || len(credentials) != 1 {
+		t.Fatal("未保存唯一凭据", err)
+	}
+	credential := credentials[0]
+	if strings.Contains(string(credential.Auth), "inline-secret") {
+		t.Fatal("公开凭据泄漏密钥")
+	}
+	stored, err := vaultsapi.OpenEnvOAuthCustomProvider(t.Context(), f.secretSvc, credential)
+	if err != nil || stored.ClientSecret != "inline-secret" || stored.Name != "Inline example" {
+		t.Fatal("凭据配置未加密保存", err)
+	}
+	completed, err := f.database.GetEnvOAuthFlow(t.Context(), flow.OAuthFlowID)
+	if err != nil || completed.ClientIDEnvelope != nil || completed.CodeVerifierEnvelope != nil {
+		t.Fatal("完成后仍保留临时授权密钥", err)
+	}
+	next := start(credential.ExternalID, nil)
+	if response := f.callback(t, next.OAuthFlowID, "code-again"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal("重新授权失败", response.Body.String())
+	}
+	after, err := f.database.ListPlatformOAuthProviders(t.Context())
+	if err != nil || len(after) != len(before) || calls != 2 {
+		t.Fatal("自定义服务方被独立持久化，或未重新授权", err)
 	}
 }

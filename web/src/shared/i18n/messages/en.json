@@ -3840,6 +3840,5 @@
   "managedAgents.credentialVaults.credentialDialog.editProvider": "Edit OAuth provider",
   "managedAgents.credentialVaults.credentialDialog.clientIdRequired": "Custom OAuth authorization requires a client ID.",
   "managedAgents.credentialVaults.credentialDialog.clientSecretRequired": "Custom OAuth authorization requires a client secret.",
-  "managedAgents.common.requiredParen": "(required)",
-  "managedAgents.credentialVaults.credentialDialog.providerVersionConflict": "The provider configuration changed. Your input is preserved; review it and try again."
+  "managedAgents.common.requiredParen": "(required)"
 }

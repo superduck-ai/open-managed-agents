@@ -45,14 +45,15 @@ type envOAuthNetworkingInput struct {
 }
 
 type envOAuthVaultAuthStartRequest struct {
-	CredentialID string                   `json:"credential_id"`
-	ProviderID   string                   `json:"provider_id"`
-	VaultID      string                   `json:"vault_id"`
-	WorkspaceID  string                   `json:"workspace_id"`
-	SecretName   string                   `json:"secret_name"`
-	DisplayName  string                   `json:"display_name"`
-	Networking   *envOAuthNetworkingInput `json:"networking"`
-	RedirectURL  string                   `json:"redirect_url"`
+	CustomProvider *vaultsapi.EnvOAuthCustomProvider `json:"custom_provider"`
+	CredentialID   string                            `json:"credential_id"`
+	ProviderID     string                            `json:"provider_id"`
+	VaultID        string                            `json:"vault_id"`
+	WorkspaceID    string                            `json:"workspace_id"`
+	SecretName     string                            `json:"secret_name"`
+	DisplayName    string                            `json:"display_name"`
+	Networking     *envOAuthNetworkingInput          `json:"networking"`
+	RedirectURL    string                            `json:"redirect_url"`
 }
 
 type envOAuthVaultAuthStartResponse struct {
@@ -61,7 +62,6 @@ type envOAuthVaultAuthStartResponse struct {
 }
 
 type envOAuthProviderResponse struct {
-	WorkspaceScoped     bool     `json:"workspace_scoped"`
 	Enabled             bool     `json:"enabled"`
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
@@ -95,11 +95,11 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	workspace, ok := s.resolveEnvOAuthWorkspace(w, r, principal, strings.TrimSpace(r.URL.Query().Get("workspace_id")))
+	_, ok = s.resolveEnvOAuthWorkspace(w, r, principal, strings.TrimSpace(r.URL.Query().Get("workspace_id")))
 	if !ok {
 		return
 	}
-	providers, err := s.envOAuthProviders.ListProviders(r.Context(), workspace.UUID)
+	providers, err := s.envOAuthProviders.ListProviders(r.Context())
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "list env oauth providers", "error", err)
 		httpapi.WriteJSON(w, http.StatusServiceUnavailable, envOAuthErrorResponse{ErrorCode: envOAuthErrorProviderUnavailable})
@@ -108,7 +108,6 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	response := make([]envOAuthProviderResponse, 0, len(providers))
 	for _, provider := range providers {
 		response = append(response, envOAuthProviderResponse{
-			WorkspaceScoped:     provider.WorkspaceUUID != "",
 			Enabled:             provider.Enabled,
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,
@@ -153,9 +152,13 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), req.ProviderID)
-	if err != nil || provider.AuthorizeEndpoint == "" || provider.TokenEndpoint == "" || provider.ClientID == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != workspace.UUID) {
-		writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
+	provider, err := s.resolveEnvOAuthStartProvider(r.Context(), req, workspace.UUID, vault.ExternalID)
+	if err != nil {
+		status, code := http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable
+		if req.ProviderID == vaultsapi.EnvOAuthProviderInline || req.CustomProvider != nil {
+			status, code = http.StatusBadRequest, envOAuthErrorInvalidRequest
+		}
+		writeEnvOAuthStartError(w, status, code, "")
 		return
 	}
 
@@ -225,7 +228,16 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !provider.Builtin {
-		envelope, err := platformoauth.SealClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), provider.ClientID)
+		client := provider.ClientID
+		if req.CustomProvider != nil {
+			encoded, marshalErr := json.Marshal(req.CustomProvider)
+			if marshalErr != nil {
+				writeEnvOAuthStartError(w, http.StatusInternalServerError, envOAuthErrorInvalidRequest, "")
+				return
+			}
+			client = string(encoded)
+		}
+		envelope, err := platformoauth.SealClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), client)
 		if err != nil {
 			writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
 			return
@@ -305,30 +317,44 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		})
 		return
 	}
-	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), flow.ProviderKey)
-	if err != nil || provider.ClientID == "" || provider.ClientSecret == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != flow.WorkspaceUUID) {
-		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_uuid", flow.UUID, "error_code", envOAuthErrorProviderUnavailable)
-		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
-		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
-			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
-			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorProviderUnavailable,
-		})
-		return
-	}
-	if flow.ProviderVersion != provider.Version || flow.ProviderVersion == 0 {
-		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorInvalidRequest, now)
-		writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest})
-		return
-	}
-	clientID := provider.ClientID
-	if !vaultsapi.IsBuiltinEnvOAuthProviderKey(flow.ProviderKey) {
-		clientID, err = platformoauth.OpenClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope)
-		if err != nil {
+	var customProvider *vaultsapi.EnvOAuthCustomProvider
+	var provider vaultsapi.EnvOAuthProviderSnapshot
+	clientID := ""
+	if flow.ProviderKey == vaultsapi.EnvOAuthProviderInline {
+		encoded, openErr := platformoauth.OpenClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope)
+		if openErr == nil {
+			openErr = json.Unmarshal([]byte(encoded), &customProvider)
+		}
+		if openErr != nil || customProvider == nil {
 			s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
 			writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorProviderUnavailable})
 			return
 		}
+		clientID = customProvider.ClientID
+		provider.ClientSecret = customProvider.ClientSecret
+	} else {
+		provider, err = s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), flow.ProviderKey)
+		if err != nil || provider.ClientID == "" || provider.ClientSecret == "" {
+			s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
+			writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorProviderUnavailable})
+			return
+		}
+		if flow.ProviderVersion != provider.Version || flow.ProviderVersion == 0 {
+			s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorInvalidRequest, now)
+			writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest})
+			return
+		}
+		clientID = provider.ClientID
+		if !vaultsapi.IsBuiltinEnvOAuthProviderKey(flow.ProviderKey) {
+			clientID, err = platformoauth.OpenClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope)
+			if err != nil {
+				s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
+				writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorProviderUnavailable})
+				return
+			}
+		}
 	}
+
 	claimed, err := s.db.ClaimEnvOAuthFlow(r.Context(), flow.ExternalID, now)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "claim env oauth flow", "flow_uuid", flow.UUID, "error", err)
@@ -355,7 +381,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		})
 		return
 	}
-	credentialID, err := s.saveEnvOAuthCredential(r.Context(), flow, token, time.Now().UTC())
+	credentialID, err := s.saveEnvOAuthCredential(r.Context(), flow, token, customProvider, time.Now().UTC())
 	if err != nil {
 		errorCode := envOAuthCredentialSaveErrorCode(err)
 		s.logger.ErrorContext(r.Context(), "save env oauth credential", "flow_uuid", flow.UUID, "error", err)
@@ -372,7 +398,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 	})
 }
 
-func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlow, token vaultsapi.OAuthTokenEndpointResult, now time.Time) (string, error) {
+func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlow, token vaultsapi.OAuthTokenEndpointResult, customProvider *vaultsapi.EnvOAuthCustomProvider, now time.Time) (string, error) {
 	credentials, _, err := s.db.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
 		WorkspaceUUID:   flow.WorkspaceUUID,
 		VaultExternalID: flow.VaultExternalID,
@@ -440,6 +466,7 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		return "", db.ErrNotFound
 	}
 	publicAuth, secretPayload, err := vaultsapi.BuildEnvOAuthCredentialPayloads(vaultsapi.EnvOAuthCredentialBuildInput{
+		CustomProvider:   customProvider,
 		Provider:         flow.ProviderKey,
 		SecretName:       flow.SecretName,
 		Placeholder:      placeholder,

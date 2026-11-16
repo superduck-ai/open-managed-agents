@@ -856,6 +856,8 @@ export function emptyCredentialFormValues(): CredentialFormValues {
     oauthClientId: '',
     oauthClientSecret: '',
     envOAuthProviderId: '',
+    envOAuthCustomProvider: null,
+    envOAuthClientSecretSaved: false,
     envOAuthManualToken: '',
   };
 }
@@ -923,6 +925,15 @@ export function credentialDisplayName(values: CredentialFormValues): string {
   return 'Credential';
 }
 
+export function credentialCustomOAuthProvider(values: CredentialFormValues) {
+  if (values.envOAuthProviderId !== 'custom:inline' || !values.envOAuthCustomProvider) return undefined;
+  return {
+    ...values.envOAuthCustomProvider,
+    client_id: values.oauthClientId.trim(),
+    client_secret: values.oauthClientSecret.trim(),
+  };
+}
+
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
   if (!credential) {
     return emptyCredentialFormValues();
@@ -932,6 +943,7 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
   const envBased = authType === 'environment_variable' || authType === 'env_oauth';
   const networking = envBased ? credentialNetworkingFromAuth(auth) : null;
   const injection = envBased ? credentialInjectionLocationFromAuth(auth) : null;
+  const customProvider = auth.custom_provider as CredentialFormValues['envOAuthCustomProvider'];
   return {
     ...emptyCredentialFormValues(),
     displayName: credential.display_name || '',
@@ -939,6 +951,9 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
     envOAuthProviderId: typeof auth.provider === 'string' ? auth.provider : '',
+    envOAuthClientSecretSaved: auth.has_client_secret === true,
+    envOAuthCustomProvider: customProvider ?? null,
+    oauthClientId: customProvider?.client_id ?? '',
     ...(networking ?? {}),
     ...(injection ?? {}),
   };
@@ -1003,6 +1018,8 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
       body.provider = values.envOAuthProviderId;
       body.secret_name = values.secretName.trim();
     }
+    const customProvider = credentialCustomOAuthProvider(values);
+    if (customProvider) body.custom_provider = customProvider;
     if (accessToken) {
       body.access_token = accessToken;
       if (mode === 'update') body.expires_at = null;
@@ -1265,11 +1282,6 @@ export function vaultOAuthStartErrorMessage(error: unknown, msg: I18nMsg): strin
 
 export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
   switch (errorCode.trim()) {
-    case 'oauth_provider_version_conflict':
-      return msg(
-        'managedAgents.credentialVaults.credentialDialog.providerVersionConflict',
-        'The provider configuration changed. Your input is preserved; review it and try again.',
-      );
     case 'already_exists':
       return msg(
         'managedAgents.credentialVaults.credentialDialog.oauthError.alreadyExists',

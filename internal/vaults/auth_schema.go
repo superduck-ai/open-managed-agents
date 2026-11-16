@@ -67,6 +67,8 @@ type environmentVariableCredentialAuth struct {
 func (*environmentVariableCredentialAuth) credentialAuthVariant() {}
 
 type envOAuthCredentialAuth struct {
+	HasClientSecret   bool                        `json:"has_client_secret"`
+	CustomProvider    *EnvOAuthProviderDefinition `json:"custom_provider,omitempty"`
 	Type              credentialAuthType          `json:"type"`
 	Provider          string                      `json:"provider"`
 	SecretName        string                      `json:"secret_name"`

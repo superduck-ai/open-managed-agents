@@ -31,6 +31,8 @@ type chatDockerProvider struct {
 	created            atomic.Int32
 	failNext           atomic.Bool
 	failMemoryMarkdown atomic.Bool
+	managerUploads     atomic.Int32
+	prepare            func(context.Context, string) error
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -49,12 +51,16 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 	args := []string{"run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run=" + os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway"}
 	args = append(args, "--entrypoint", "sleep", p.image, "infinity")
 	err := exec.CommandContext(ctx, "docker", args...).Run()
+	if err == nil && p.prepare != nil {
+		err = p.prepare(ctx, name)
+	}
 	return e2bruntime.Sandbox{ID: name}, err
 }
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
 func (p *chatDockerProvider) WriteFileFrom(ctx context.Context, sandboxID, path string, reader io.Reader) error {
+	p.managerUploads.Add(1)
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return err
@@ -115,6 +121,8 @@ func TestChatPublicStart(t *testing.T) {
 	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
 	verifyPublicManagerArtifactRejection(t, e)
+	verifyPublicManagerVersions(t)
+	configureChatModel(t, e, model.URL)
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
 	provider.failNext.Store(true)
@@ -190,7 +198,7 @@ func registerPublicSandboxCleanup(t *testing.T, e *liveEnv, f *liveSession) {
 	})
 }
 
-func startPublicRunner(t *testing.T, e *liveEnv, configure ...func(*config.Config)) (*chatDockerProvider, func()) {
+func startPublicRunner(t *testing.T, e *liveEnv, configure ...func(*config.Config, *chatDockerProvider)) (*chatDockerProvider, func()) {
 	t.Helper()
 	cfg, err := config.Load()
 	requireOK(t, err)
@@ -203,7 +211,7 @@ func startPublicRunner(t *testing.T, e *liveEnv, configure ...func(*config.Confi
 	cfg.EnvironmentRunner.Concurrency = 2
 	configurePublicManagerArtifact(t, &cfg)
 	for _, apply := range configure {
-		apply(&cfg)
+		apply(&cfg, provider)
 	}
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)

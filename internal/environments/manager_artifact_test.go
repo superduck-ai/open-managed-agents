@@ -32,6 +32,7 @@ type managerArtifactTestProvider struct {
 	activateExitCode int
 	commands         []string
 	writes           map[string][]byte
+	commandResponse  func(e2bruntime.CommandRequest) (e2bruntime.CommandResult, error)
 }
 
 func (*managerArtifactTestProvider) SetTimeout(context.Context, string, time.Duration) error {
@@ -76,6 +77,9 @@ func (p *managerArtifactTestProvider) WriteFileFrom(_ context.Context, _ string,
 
 func (p *managerArtifactTestProvider) RunCommand(_ context.Context, _ string, request e2bruntime.CommandRequest) (e2bruntime.CommandResult, error) {
 	p.commands = append(p.commands, request.Command)
+	if p.commandResponse != nil {
+		return p.commandResponse(request)
+	}
 	return e2bruntime.CommandResult{ExitCode: p.activateExitCode}, nil
 }
 
@@ -285,7 +289,7 @@ func TestManagerArtifactActivateCommandRejectsCorruptStaging(t *testing.T) {
 	if err := os.WriteFile(target+".partial", []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
 		t.Fatalf("write staging: %v", err)
 	}
-	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, strings.Repeat("c", 64))); err == nil {
+	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, strings.Repeat("c", 64), "")); err == nil {
 		t.Fatal("activation accepted corrupt staging file")
 	}
 	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
@@ -302,7 +306,7 @@ func TestManagerArtifactActivateCommandRejectsUnrunnableBinary(t *testing.T) {
 	if err := os.WriteFile(target+".partial", data, 0o644); err != nil {
 		t.Fatalf("write staging: %v", err)
 	}
-	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, testArtifactSHA256(data))); err == nil {
+	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, testArtifactSHA256(data), "")); err == nil {
 		t.Fatal("activation accepted binary whose --version fails")
 	}
 	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
@@ -463,14 +467,15 @@ func TestInstallEnvironmentManagerStreamsAndActivates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("installEnvironmentManager() error = %v", err)
 	}
-	want := "/tmp/oma/environment-manager/" + sha + "/environment-manager"
+	want := defaultEnvironmentManagerPath
+	target := "/opt/env-runner/" + sha + "/environment-manager"
 	if managerPath != want {
 		t.Fatalf("manager path = %q, want %q", managerPath, want)
 	}
-	if string(provider.writes[want+".partial"]) != "binary" {
+	if string(provider.writes[target+".partial"]) != "binary" {
 		t.Fatalf("staged writes = %v", provider.writes)
 	}
-	if len(provider.commands) != 1 || !strings.Contains(provider.commands[0], "mv -f -- '"+want+".partial' '"+want+"'") {
+	if len(provider.commands) != 2 || !strings.Contains(provider.commands[0], "mv -f -- '"+target+".partial' '"+target+"'") || provider.commands[1] != managerArtifactLinkCommand(target, want) {
 		t.Fatalf("commands = %v", provider.commands)
 	}
 	cfg := runner.environmentManagerConfig(managerPath)
@@ -491,7 +496,7 @@ func TestManagerArtifactActivateCommandInstalls(t *testing.T) {
 	if err := os.WriteFile(target+".partial", data, 0o644); err != nil {
 		t.Fatalf("write staging: %v", err)
 	}
-	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, testArtifactSHA256(data))); err != nil {
+	if err := runManagerArtifactShell(t, managerArtifactActivateCommand(target, testArtifactSHA256(data), "")); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
 	info, err := os.Stat(target)

@@ -30,7 +30,7 @@ import { Skeleton } from '../../../shared/ui/skeleton';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
-import feishuLogo from '../../../shared/icons/assets/feishu.ico';
+import feishuLogo from './feishu.ico';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
 import {

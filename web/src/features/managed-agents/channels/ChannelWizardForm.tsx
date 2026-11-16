@@ -14,7 +14,7 @@ import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import type { Channel, ChannelInput, ChannelQr } from './api';
 import { ChannelResourceFields } from './ChannelResourceFields';
 import { ChannelCredentials } from './ChannelFields';
-import feishuLogo from '../../../shared/icons/assets/feishu.ico';
+import feishuLogo from './feishu.ico';
 
 export type WizardStep = 1 | 2 | 3;
 export type ChannelTypeOption = 'feishu';

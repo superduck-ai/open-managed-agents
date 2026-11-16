@@ -1,3 +1,4 @@
+import { documentationHref } from '../../../shared/documentation';
 import { ArrowUpRight, Plus, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
@@ -16,7 +17,7 @@ export function EnvironmentPackages({
   readOnly,
   status,
 }: EnvironmentFieldsProps & { status?: ReactNode }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const [expanded, setExpanded] = useState<string[]>([]);
   const active = packageManagers.filter(
     ({ id }) => expanded.includes(id) || values.packages.some((row) => row.manager === id),
@@ -32,7 +33,7 @@ export function EnvironmentPackages({
           <p className="text-sm text-muted-foreground">
             {msg('environmentPage.noPackages', 'No packages beyond the')}{' '}
             <a
-              href="https://platform.claude.com/docs/en/managed-agents/cloud-sandboxes-reference"
+              href={documentationHref('cloud-sandboxes-reference', locale)}
               target="_blank"
               rel="noreferrer"
               className="text-foreground/75 underline underline-offset-4"

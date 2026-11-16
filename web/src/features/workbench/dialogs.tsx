@@ -1,3 +1,4 @@
+import { documentationHref } from '../../shared/documentation';
 import {
   BookOpen,
   Box,
@@ -63,20 +64,15 @@ export function CodeModal({
   revision: WorkbenchRevision;
   onClose: () => void;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const code = useMemo(() => codeForRevision(language, revision), [language, revision]);
   const selectedLanguageLabel = codeLanguageOptions.find((option) => option.value === language)?.label ?? 'Python';
-  const hlLanguage =
-    language === 'curl'
-      ? 'bash'
-      : language === 'typescript' || language === 'bedrock-typescript' || language === 'vertex-typescript'
-        ? 'typescript'
-        : 'python';
+  const hlLanguage = language === 'curl' ? 'bash' : language === 'typescript' ? 'typescript' : 'python';
   const highlighted = useMemo(() => hljs.highlight(code, { language: hlLanguage }).value, [code, hlLanguage]);
   const highlightedLines = useMemo(() => highlighted.split('\n'), [highlighted]);
 
   return (
-    <Dialog title={msg('workbench.codeTitle', 'Code for Claude API')} onClose={onClose} size="code">
+    <Dialog title={msg('workbench.codeTitle', 'Code for OMA API')} onClose={onClose} size="code">
       <div className="workbench-code-modal">
         <div className="workbench-code-controls">
           <div className="min-w-0 flex-1">
@@ -109,7 +105,9 @@ export function CodeModal({
             variant="ghost"
             size="lg"
             className="min-w-[106px]"
-            onClick={() => window.open('https://docs.anthropic.com/en/api/messages', '_blank', 'noopener,noreferrer')}
+            onClick={() =>
+              window.open(documentationHref('api/messages/create-a-message', locale), '_blank', 'noopener,noreferrer')
+            }
           >
             <BookOpen className="size-4" aria-hidden />
             {msg('workbench.viewDocs', 'View Docs')}

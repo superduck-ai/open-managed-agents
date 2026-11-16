@@ -52,10 +52,7 @@ export function oauthProviderFormReady(values: OAuthProviderFormValues, provider
   return true;
 }
 
-export function oauthProviderOptionalFields(
-  values: Pick<OAuthProviderFormValues, 'clientId' | 'clientSecret'>,
-  provider?: OAuthProviderRecord,
-) {
+export function oauthProviderOptionalFields(values: OAuthProviderFormValues, provider?: OAuthProviderRecord) {
   return {
     clientId: !provider?.configured && !values.clientSecret.trim(),
     clientSecret: provider?.configured ? values.clientId.trim() === provider.client_id : !values.clientId.trim(),

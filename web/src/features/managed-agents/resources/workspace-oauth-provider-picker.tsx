@@ -19,7 +19,6 @@ export function WorkspaceOAuthProviderPicker({
   onChange,
   onSaved,
   editableProviderId,
-  clientConfigured,
   canCreate = true,
 }: {
   label: string;
@@ -31,7 +30,6 @@ export function WorkspaceOAuthProviderPicker({
   onChange: (value: string) => void;
   onSaved: (provider: OAuthProviderRecord) => void;
   editableProviderId?: string;
-  clientConfigured?: boolean;
   canCreate?: boolean;
 }) {
   const { msg } = useI18n();
@@ -58,9 +56,7 @@ export function WorkspaceOAuthProviderPicker({
             }}
           >
             <Pencil className="size-3" aria-hidden />
-            {clientConfigured
-              ? msg('common.edit', 'Edit')
-              : msg('managedAgents.credentialVaults.credentialDialog.configureClient', 'Configure client')}
+            {msg('common.edit', 'Edit')}
           </Button>
         ) : null}
       </div>

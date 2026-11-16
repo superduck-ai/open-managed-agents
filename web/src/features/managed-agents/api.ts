@@ -1670,7 +1670,7 @@ export function updateWorkspaceOAuthProvider(
   orgUuid: string,
   workspaceId: string,
   providerId: string,
-  input: OAuthProviderInput & { expected_version: number },
+  input: Partial<OAuthProviderInput> & { expected_version: number },
   csrfToken?: string,
 ) {
   return consoleApi<OAuthProviderRecord>(

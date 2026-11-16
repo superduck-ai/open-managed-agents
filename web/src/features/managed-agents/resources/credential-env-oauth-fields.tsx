@@ -1,3 +1,6 @@
+import type { Ref } from 'react';
+import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
+import { EnvOAuthClientFields, type EnvOAuthClientFieldsHandle } from './env-oauth-client-fields';
 import { WorkspaceOAuthProviderPicker } from './workspace-oauth-provider-picker';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
@@ -12,6 +15,7 @@ import { credentialEnvHostsMissing, envOAuthProviderDefaults } from './model';
 type EnvOAuthCredentialFieldsProps = {
   orgUuid?: string;
   workspaceId?: string;
+  clientFieldsRef?: Ref<EnvOAuthClientFieldsHandle>;
   onProviderSaved?: (provider: EnvOAuthProviderApiResponse) => void;
   values: CredentialFormValues;
   providers: EnvOAuthProviderApiResponse[];
@@ -26,6 +30,7 @@ export function EnvOAuthCredentialFields({
   orgUuid,
   workspaceId,
   onProviderSaved,
+  clientFieldsRef,
   values,
   providers,
   providersLoading,
@@ -48,6 +53,18 @@ export function EnvOAuthCredentialFields({
     }));
   const selectableOptions =
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;
+  const providerSaved = (record: OAuthProviderRecord) => {
+    const provider = { ...record, id: record.provider_key, workspace_scoped: true };
+    onProviderSaved?.(provider);
+    if (provider.id === values.envOAuthProviderId) return;
+    const defaults = envOAuthProviderDefaults(provider);
+    const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
+    onChange({
+      envOAuthProviderId: provider.id,
+      allowedHostsText: defaults.allowedHostsText,
+      ...(values.secretName.trim() && values.secretName !== previousDefault ? {} : { secretName: defaults.secretName }),
+    });
+  };
   return (
     <div className="space-y-4">
       <WorkspaceOAuthProviderPicker
@@ -62,7 +79,6 @@ export function EnvOAuthCredentialFields({
         orgUuid={orgUuid}
         canCreate={!secretNameLocked}
         editableProviderId={selected?.workspace_scoped ? selected.id.slice('custom:'.length) : undefined}
-        clientConfigured={selected?.configured}
         workspaceId={workspaceId}
         onChange={(providerId) => {
           if (secretNameLocked || providerId === values.envOAuthProviderId) {
@@ -82,20 +98,7 @@ export function EnvOAuthCredentialFields({
               : {}),
           });
         }}
-        onSaved={(record) => {
-          const provider = { ...record, id: record.provider_key, workspace_scoped: true };
-          onProviderSaved?.(provider);
-          if (provider.id === values.envOAuthProviderId) return;
-          const defaults = envOAuthProviderDefaults(provider);
-          const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
-          onChange({
-            envOAuthProviderId: provider.id,
-            allowedHostsText: defaults.allowedHostsText,
-            ...(values.secretName.trim() && values.secretName !== previousDefault
-              ? {}
-              : { secretName: defaults.secretName }),
-          });
-        }}
+        onSaved={providerSaved}
       />
       {providersError ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -105,7 +108,7 @@ export function EnvOAuthCredentialFields({
           </Button>
         </div>
       ) : null}
-      {selected && !selected.configured ? (
+      {selected && !selected.configured && !selected.workspace_scoped ? (
         <FieldDescription>
           {msg(
             'managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured',
@@ -151,6 +154,17 @@ export function EnvOAuthCredentialFields({
           onChange={(envOAuthManualToken) => onChange({ envOAuthManualToken })}
         />
       </OptionalCredentialFields>
+      {selected?.workspace_scoped && orgUuid && workspaceId ? (
+        <EnvOAuthClientFields
+          key={selected.id}
+          orgUuid={orgUuid}
+          workspaceId={workspaceId}
+          providerId={selected.id.slice('custom:'.length)}
+          clientRef={clientFieldsRef}
+          manualToken={Boolean(values.envOAuthManualToken.trim())}
+          onSaved={providerSaved}
+        />
+      ) : null}
       <FieldDescription>
         {msg(
           'managedAgents.credentialVaults.credentialDialog.envOAuthHint',

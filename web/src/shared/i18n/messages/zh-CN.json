@@ -3715,7 +3715,8 @@
   "llmModels.unavailableUser": "用户不可用",
   "llmModels.legacyCreator": "历史 / 系统配置",
   "llmModels.manageDenied": "只有创建者或组织管理员可以管理此 Provider。",
-  "managedAgents.credentialVaults.credentialDialog.configureClient": "配置客户端",
   "managedAgents.credentialVaults.credentialDialog.editProvider": "编辑 OAuth 服务方",
-  "managedAgents.credentialVaults.credentialDialog.clientConfigurationHint": "OAuth 授权需要 Client ID 和 Secret；仅手工填写令牌时可留空。"
+  "managedAgents.credentialVaults.credentialDialog.clientIdRequired": "自定义 OAuth 服务方授权需要填写 Client ID",
+  "managedAgents.credentialVaults.credentialDialog.clientSecretRequired": "自定义 OAuth 服务方授权需要填写 Client Secret",
+  "managedAgents.common.requiredParen": "（必填）"
 }

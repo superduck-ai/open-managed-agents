@@ -3715,7 +3715,8 @@
   "llmModels.unavailableUser": "Unavailable user",
   "llmModels.legacyCreator": "Legacy / system configuration",
   "llmModels.manageDenied": "Only the creator or an organization administrator can manage this provider.",
-  "managedAgents.credentialVaults.credentialDialog.configureClient": "Configure client",
   "managedAgents.credentialVaults.credentialDialog.editProvider": "Edit OAuth provider",
-  "managedAgents.credentialVaults.credentialDialog.clientConfigurationHint": "Authorization requires client ID and secret. Leave both blank only when using a token supplied manually."
+  "managedAgents.credentialVaults.credentialDialog.clientIdRequired": "Custom OAuth authorization requires a client ID.",
+  "managedAgents.credentialVaults.credentialDialog.clientSecretRequired": "Custom OAuth authorization requires a client secret.",
+  "managedAgents.common.requiredParen": "(required)"
 }

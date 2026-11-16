@@ -57,7 +57,7 @@ process.exit(result.status === 0 ? 0 : 10);
 			if err := os.WriteFile(manager, []byte(managerScript), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}}
+			cfg := config.Config{}
 			if mode == "default" {
 				cfg.EnvironmentPackages.NPM.Registry = "https://example.com/npm/"
 			} else if mode == "scoped" {
@@ -65,7 +65,7 @@ process.exit(result.status === 0 ? 0 : 10);
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, "sh", "-c", buildPackageProvisionCommand(cfg))
+			command := exec.CommandContext(ctx, "sh", "-c", packageSourceCommand(cfg.EnvironmentPackages, shellQuote(manager)+" "+packageProvisionArgs))
 			for _, value := range os.Environ() {
 				key, _, _ := strings.Cut(value, "=")
 				lower := strings.ToLower(key)

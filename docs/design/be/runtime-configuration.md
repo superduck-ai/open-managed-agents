@@ -100,7 +100,8 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `BATCH_*`                                                           | `batch.*`                                                                  | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
 | `E2B_*`                                                             | `e2b.*`                                                                    | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段                |
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY`     | `environment_runner.enabled` / `concurrency`                               | 仅在覆盖代码默认值时配置                                                          |
-| `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_path` | 路径可使用 YAML 路径展开语法 |
+| `ENVIRONMENT_MANAGER_PATH` | 无 | Manager 入口固定为 `/usr/local/bin/environment-manager`，已移除路径配置 |
+| `CLAUDE_PATH` | `environment_runner.claude_path` | 路径可使用 YAML 路径展开语法 |
 | `CLAUDE_AGENT_VERSION` | 无 | 已删除；Claude Code 版本由 Environment 镜像决定 |
 | `CODE_SESSION_SANDBOX_API_BASE_URL`                                 | `code_session.sandbox_api_base_url`                                        | 必须是 sandbox 实际可达地址，不从监听地址推导                                     |
 | `CODE_SESSION_JWT_SIGNING_KEY_FILE`                                 | `code_session.jwt_signing_private_key_file`                                | 字段改名；生产环境必须指向稳定只读私钥                                            |
@@ -132,7 +133,6 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 以下 YAML 字段属于本地路径：
 
-- `environment_runner.manager_path`
 - `environment_runner.manager_artifact.path`
 - `environment_runner.claude_path`
 - `code_session.jwt_signing_private_key_file`

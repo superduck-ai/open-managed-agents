@@ -32,9 +32,9 @@ func TestRegistryProvisioningPreservesInputOutputAndCleansConfiguration(t *testi
 			if err := os.WriteFile(manager, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{Registry: "https://registry.npmjs.org/", ScopedRegistries: map[string]string{"@example": "https://registry.example.com/private;segment/"}}}}
+			cfg := config.Config{EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{Registry: "https://registry.npmjs.org/", ScopedRegistries: map[string]string{"@example": "https://registry.example.com/private;segment/"}}}}
 			manifest := []byte(`{"version":1,"packages":{"npm":["@example/demo-cli"]}}`)
-			command := exec.Command("sh", "-c", buildPackageProvisionCommand(cfg))
+			command := exec.Command("sh", "-c", packageSourceCommand(cfg.EnvironmentPackages, shellQuote(manager)+" "+packageProvisionArgs))
 			command.Env = append(os.Environ(), "NPM_CONFIG_USERCONFIG="+original, "NPM_CONFIG_REGISTRY=https://previous.example.com/")
 			command.Stdin = bytes.NewReader(manifest)
 			output, err := command.Output()
@@ -89,8 +89,8 @@ func TestRegistryProvisioningHandlesMissingHome(t *testing.T) {
 			if err := os.WriteFile(manager, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{EnvironmentRunner: config.EnvironmentRunnerConfig{ManagerPath: manager}, EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://registry.example.com/"}}}}
-			command := exec.Command("sh", "-c", buildPackageProvisionCommand(cfg))
+			cfg := config.Config{EnvironmentPackages: config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{ScopedRegistries: map[string]string{"@example": "https://registry.example.com/"}}}}
+			command := exec.Command("sh", "-c", packageSourceCommand(cfg.EnvironmentPackages, shellQuote(manager)+" "+packageProvisionArgs))
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
 				if key != "HOME" && key != "NPM_CONFIG_USERCONFIG" && key != "npm_config_userconfig" {

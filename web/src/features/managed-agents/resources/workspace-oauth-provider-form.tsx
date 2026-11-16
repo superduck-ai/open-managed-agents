@@ -56,10 +56,26 @@ export function WorkspaceOAuthProviderForm({
     [values.name, values.authorizeEndpoint, values.tokenEndpoint].every((value) => value.trim()) &&
     Boolean(values.clientId.trim()) === Boolean(values.clientSecret.trim());
   const fields = [
-    { key: 'name', label: msg('platformAdmin.oauthManagement.name', 'Name') },
-    { key: 'authorizeEndpoint', label: msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint') },
-    { key: 'tokenEndpoint', label: msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint') },
-    { key: 'scope', label: msg('platformAdmin.oauthManagement.scope', 'Scope') },
+    {
+      key: 'name',
+      label: msg('platformAdmin.oauthManagement.name', 'Name'),
+      placeholder: msg('managedAgents.common.namePlaceholder', 'Enter a name'),
+    },
+    {
+      key: 'authorizeEndpoint',
+      label: msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint'),
+      placeholder: 'https://example.com/oauth/authorize',
+    },
+    {
+      key: 'tokenEndpoint',
+      label: msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint'),
+      placeholder: 'https://example.com/oauth/token',
+    },
+    {
+      key: 'scope',
+      label: msg('platformAdmin.oauthManagement.scope', 'Scope'),
+      placeholder: 'read write offline_access',
+    },
   ] as const;
   return (
     <form
@@ -94,6 +110,7 @@ export function WorkspaceOAuthProviderForm({
             </FieldLabel>
             <Input
               id={`workspace-oauth-${field.key}`}
+              placeholder={field.placeholder}
               value={values[field.key]}
               onChange={(event) => patch({ [field.key]: event.target.value })}
             />

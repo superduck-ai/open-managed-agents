@@ -48,7 +48,7 @@ environment_runner:
     version: "0.1.1"
 ```
 
-Git 提交、构建时间和 SemVer build metadata 不决定版本大小。历史构建使用 `0.1.0`，此次配套 Rust 制品升为 `0.1.1`；之后不同提交构建出的同版本二进制仍会按本规则复用，发布需要升级的代码时必须递增包版本。要强制按制品内容替换或回滚，移除 `version`，继续使用原有 SHA-256 安装流程。版本复用刻意允许已有较新二进制与配置制品的 SHA-256 不同。
+Git 提交、构建时间和 SemVer build metadata 不决定版本大小。历史构建使用 `0.1.0`，此次配套 Rust 制品升为 `0.1.1`；之后不同提交构建出的同版本二进制仍会按本规则复用，发布需要升级的代码时必须递增包版本。对新建 Sandbox 强制按制品内容安装或回滚时，移除 `version`，继续使用原有 SHA-256 安装流程。版本复用刻意允许已有较新二进制与配置制品的 SHA-256 不同。
 
 两种模式的制品都以 `<sha256>` 命名缓存在 API 主机临时目录（`os.TempDir()` 下的 `oma-environment-manager-*`）中，而不是常驻进程内存；上传时从该文件流式写入 Sandbox（E2B envd 支持时使用 octet-stream，不在内存中整体缓冲）。新版本生效后删除旧缓存文件，已打开该文件的上传不受影响。同一进程任意时刻最多一次加载在进行，`path` 模式的重新读取同样不在锁内执行，并发启动等待同一次结果。
 
@@ -110,7 +110,44 @@ flowchart TD
 
 - 未通过版本复用时，制品安装保持 fail-closed：读取、下载、校验、上传、`--version` 冒烟、声明版本核对或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到旧版本。
 - 安装路径为 `/opt/env-runner/<sha256>/environment-manager`，按 SHA-256 区分。校验成功后通过同目录 `mv -f` 激活文件，再在入口目录创建临时软链并原子替换固定入口 `/usr/local/bin/environment-manager`。镜像原有的 `/opt/env-runner/environment-manager` 保留。不再提供入口路径配置；原入口是普通文件时也会替换为软链，目录入口会被拒绝。校验或软链切换失败时原入口不变，已经写入的 SHA 文件可留待重试。仅当声明 `version` 且版本探测满足条件时跳过上传；未声明时不做版本探测。
-- E2B 暂停后自动恢复的 Sandbox 会恢复原进程内存，正在运行的 Manager 不会被替换；新版本在该 Session 下一次创建 replacement Sandbox 时生效。
+- 配置 `manager_artifact.version` 后，新建和暂停恢复执行版本策略。持续运行的 Sandbox 通过不带 Connect 的管理接口续期，不探测版本、不安装或重启。续期后复查状态；若在查询与续期之间转为 paused，转入恢复检查，避免隐式唤醒绕过升级。未配置版本时，恢复行为保持原样，不执行原地升级。
+- 暂停恢复先通过 provider 管理接口查询状态，不通过 `Connect` 探测。聊天懒加载、旧模式输入恢复、worker 续期与端口网关统一使用 Runner 的续期入口。仅 `paused` 或数据库中有未完成恢复标记的 Sandbox 进入升级检查。恢复记录以 provider metadata 中的 `workspace_id` 和 provider ID 共同定位；元数据缺失的 paused Sandbox 明确报错，不按全局 provider ID 查询。
+- Brain claim transport 支持原地升级。旧的 Manager 内置 Claude 模式只在创建时记录的版本大于等于目标版本时直接恢复；版本较旧或未知时在唤醒前明确报错，不轮换该模式的 worker lease、不重启 Claude。历史记录没有版本时按未知处理。
+
+### 暂停恢复时升级 Manager
+
+恢复使用以下流程，保留 provider sandbox ID、Code Session、Brain worker epoch、本地文件和已有挂载，不重新挂载 Filestore、不重新执行仓库 source 准备。新 Manager 使用原工作目录、重新签发的 sandbox ingress token 和 vault placeholders；payload 仍只通过 stdin 发送。
+
+```mermaid
+flowchart TD
+    Q[查询 provider 状态与持久化恢复标记] --> R{持续运行且无恢复标记?}
+    R -->|是| E[仅续期]
+    R -->|否| G[排他认领恢复并提交 checking，阻止新工具领取]
+    G --> W[恢复 Sandbox 并延长准备期限]
+    W --> V{实际运行进程版本满足要求?}
+    V -->|是| C[清除恢复标记，正常续期]
+    V -->|否| I[校验和安装制品，保留旧进程运行]
+    I --> D[draining：等待在途调用及结果 finalizing 完成]
+    D --> K[SIGTERM 旧进程，确认退出]
+    K --> S[starting：清空旧就绪标记，启动新版]
+    S --> H[确认实际运行版本及新一轮领取就绪]
+    H --> C
+```
+
+- `environment_sandboxes.manager_resume_phase` 为 `''`、`checking`、`draining` 或 `starting`。非空时只阻止新工具领取，已有调用仍能报告 heartbeat、结果和完成 finalization。pending 调用保留排队。只有 `starting` 允许新版领取请求更新就绪标记，但仍不分发任务；确认就绪后清空标记并开放领取。
+- 用实际进程 `/proc/<pid>/exe --version` 检查运行版本，不能用入口软链的版本代替。进程必须同时匹配 Manager 可执行文件名、`task-run` 和原 Code Session 参数；发现多个匹配进程或无法识别版本时失败，不执行广泛的 `pkill`。
+- PID 与 Linux start time 一起用于退出确认；先发送 SIGTERM，最多等待约 15 秒，不强制 SIGKILL。停止前必须没有 dispatched/running/cancel_requested/finalizing 调用，避免依赖现有 Rust 外层 10 秒退出预算去排空长任务。
+- 配置版本时启动命令使用 `flock --close -n` 持有每个 Code Session 的进程锁；锁由父进程持有，避免后台开发服务继承锁描述符并阻止下一次重启。镜像必须提供 Linux `/proc`、`flock`、`awk`、`readlink`、`tr`、`sed`、`seq`。历史旧进程没有该锁时仍先确认退出，再启动新版。
+- PostgreSQL transaction advisory try-lock 按不可变 Sandbox UUID 排他处理恢复，避免多 API 实例同时重启；锁内只持有 advisory lock，不持有 sandbox/session 行锁，领取门禁由另一个短事务提交。每个 Runner 最多同时处理两个恢复，给同一连接池保留普通调用连接；争抢锁或槽位返回可重试错误。
+- 恢复检查最多 120 秒，先把 provider 超时延长到 150 秒，成功后还原调用方要求的超时。失败、取消、任务长期未完成或启动未就绪时保留恢复标记并返回错误，不销毁沙箱、不自动回滚、不开放领取。后续恢复入口即使看到 provider 已 running，也会继续未完成操作；这是对“持续运行不处理”的唯一例外。
+- 普通 idle 回收不处理正在恢复升级的 Sandbox。归档/删除仍按原流程优先终止；恢复后续写入必须匹配原租户、Sandbox UUID 与 running 状态。
+- 关闭版本配置不会自动清除未完成的恢复标记；存在标记的恢复请求会明确报错。部署升级过程中应保持该配置，先完成或人工处理失败恢复。旧服务版本不理解领取门禁，不支持混合旧服务版本滚动启用此策略；先统一部署支持版本，再配置目标版本。
+
+### 验收
+
+普通单测覆盖 provider 状态查询不恢复、持续运行直接续期、暂停前提交门禁、错误保留状态、并发恢复拒绝、旧模式拒绝、版本相同/更高跳过、升级顺序和等待超时。定向 PostgreSQL 集成覆盖门禁与结果上报并存、排队任务保留、就绪标记重置、租户隔离和跨事务 advisory lock。Linux ARM64 测试覆盖软链/文件替换后仍能识别旧进程、SIGTERM 退出和 `flock` 防重复启动。
+
+定向验收使用隔离数据库与现有本地 Worker 镜像：`TEST_MIGRATION_DATABASE_URL=... TEST_MANAGER_IMAGE=... just test-integration ./internal/db ./internal/environments -run 'TestManagerResumePostgres|TestManagerProcessLinuxRestart' -count=1 -v`。此测试不代表真实 E2B pause/resume、外部凭证服务或完整 Manager 任务恢复验证。
 - 安装日志记录 `sandbox_id`、`manager_sha256` 与大小；复用日志记录 `sandbox_id`、`manager_path`、`manager_version` 和 `required_manager_version`，不记录原始版本输出或制品 URL 中可能存在的查询参数。
 
 ## Runner 创建的临时状态

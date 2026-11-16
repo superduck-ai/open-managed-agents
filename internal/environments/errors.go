@@ -9,6 +9,18 @@ import (
 )
 
 var (
+	errManagerScopeMissing          = errors.New("paused sandbox is missing workspace metadata")
+	errManagerResumeVersionRequired = errors.New("unfinished manager resume requires manager_artifact.version")
+	errManagerTransportUnsupported  = errors.New("paused manager requires an upgrade; in-place upgrades require Brain claim transport")
+	errManagerVersionBelowRequired  = errors.New("restarted manager version is below the required version")
+	errManagerProcessResponse       = errors.New("invalid manager process response")
+	errManagerProcessIdentity       = errors.New("invalid manager process identity")
+	errManagerProcessStartTime      = errors.New("invalid manager process start time")
+	errManagerProcessVersion        = errors.New("cannot determine running manager version")
+	errManagerStateUnavailable      = errors.New("manager version checks require sandbox state lookup")
+)
+
+var (
 	errOutputsAliasCreate          = errors.New("session outputs alias creation failed")
 	errWorkerDispatchUnavailable   = errors.New("code session service does not support worker dispatch")
 	errPrebuildUnsupported         = errors.New("this provider does not support this build operation")

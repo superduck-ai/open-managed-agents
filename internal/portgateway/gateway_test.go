@@ -250,6 +250,16 @@ func TestGatewayReturnsWakingAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestGatewayPropagatesManagerResumeFailure(t *testing.T) {
+	h := newHarness(t)
+	h.sandboxes.err = errors.New("manager upgrade failed")
+	recorder := h.serve(h.request(http.MethodGet, ""))
+	assertGatewayError(t, recorder, http.StatusServiceUnavailable, codeWaking)
+	if recorder.Header().Get("Retry-After") != "5" {
+		t.Fatalf("retry-after=%q", recorder.Header().Get("Retry-After"))
+	}
+}
+
 func TestGatewayMapsTunnelFailures(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		err    error

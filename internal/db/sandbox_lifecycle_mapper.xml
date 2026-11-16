@@ -34,7 +34,7 @@
         <if test="after != ''">AND sandbox.uuid &gt; #{after}</if>
         AND ((sandbox.state = 'stopping' AND sandbox.stop_reason IN ('idle_timeout', 'session_archived', 'session_deleted'))
         <if test="reclaim">
-            OR (sandbox.state = 'running'
+            OR (sandbox.state = 'running' AND sandbox.manager_resume_phase = ''
                 AND cs.status = 'active' AND cs.deleted_at IS NULL
                 AND cs.worker_status = 'idle' AND cs.idle_since &lt;= #{cutoff}
                 AND NOT EXISTS (
@@ -83,7 +83,7 @@
             AND EXISTS (SELECT 1 FROM environment_work work JOIN environment_sandboxes sandbox
                 ON sandbox.work_uuid = work.uuid AND sandbox.organization_uuid = work.organization_uuid
                 AND sandbox.workspace_uuid = work.workspace_uuid AND sandbox.environment_uuid = work.environment_uuid
-                WHERE sandbox.uuid = #{sandboxUUID} AND sandbox.state = 'running'
+                WHERE sandbox.uuid = #{sandboxUUID} AND sandbox.state = 'running' AND sandbox.manager_resume_phase = ''
                 AND work.organization_uuid = cs.organization_uuid AND work.workspace_uuid = cs.workspace_uuid
                 AND work.environment_uuid = cs.environment_uuid AND work.session_uuid = cs.session_uuid
                 AND work.state = 'active' AND work.deleted_at IS NULL)

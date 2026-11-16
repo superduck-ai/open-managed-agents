@@ -84,6 +84,7 @@ type Runner struct {
 	skills           RuntimeSkillResolver
 	filestoreTokens  FilestoreTokenIssuer
 	managerArtifacts *managerArtifactSource
+	managerResumes   *managerResumeController
 	logger           *slog.Logger
 }
 
@@ -127,7 +128,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 	}
 
 	logger := logging.LoggerOrDefault(deps.Logger)
-	return &Runner{
+	runner := &Runner{
 		db:               deps.DB,
 		provider:         deps.Provider,
 		cfg:              deps.Config,
@@ -136,7 +137,15 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		filestoreTokens:  deps.FilestoreTokens,
 		managerArtifacts: newManagerArtifactSource(deps.Config.EnvironmentRunner.ManagerArtifact, nil, logger),
 		logger:           logger,
-	}, nil
+	}
+	if provider, ok := deps.Provider.(managerResumeProvider); ok {
+		runner.managerResumes = &managerResumeController{
+			store: deps.DB, provider: provider, required: deps.Config.EnvironmentRunner.ManagerArtifact.Version, slots: make(chan struct{}, 2), upgrade: runner.upgradeResumedManager,
+		}
+	} else if deps.Config.EnvironmentRunner.ManagerArtifact.Version != "" {
+		return nil, errManagerStateUnavailable
+	}
+	return runner, nil
 }
 
 func (r *Runner) Start(ctx context.Context) func() {
@@ -447,6 +456,12 @@ func (r *Runner) prepareSandboxManagerAndPackages(
 	if r.managerArtifacts != nil && (managed || provisionPackages) {
 		ctx = run.begin(ctx, "manager_install")
 		if err := r.installEnvironmentManager(ctx, providerSandboxID); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return false, err
+		}
+	}
+	if managed && r.managerArtifacts != nil && r.managerArtifacts.cfg.Version != "" {
+		if err := r.recordInstalledManagerVersion(ctx, providerSandboxID, record); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return false, err
 		}

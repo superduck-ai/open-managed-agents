@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ManagerResumeMapper">
+    <select id="Find" result="optional" resultType="managerResumeRow">
+        SELECT sandbox.organization_uuid, sandbox.workspace_uuid, sandbox.uuid AS sandbox_uuid,
+            s.external_id AS session_id, cs.external_id AS code_session_id, cs.work_dir,
+            COALESCE(cs.metadata #>> '{config,worker_transport}', '') AS transport,
+            sandbox.manager_resume_phase AS phase, sandbox.manager_version AS version
+        FROM environment_sandboxes sandbox
+        JOIN environment_work work ON work.uuid=sandbox.work_uuid
+            AND work.organization_uuid=sandbox.organization_uuid AND work.workspace_uuid=sandbox.workspace_uuid
+        JOIN sessions s ON s.uuid=work.session_uuid
+            AND s.organization_uuid=work.organization_uuid AND s.workspace_uuid=work.workspace_uuid
+        JOIN LATERAL (SELECT code.external_id, code.work_dir, code.metadata FROM code_sessions code
+            WHERE code.session_uuid=s.uuid AND code.organization_uuid=s.organization_uuid AND code.workspace_uuid=s.workspace_uuid
+                AND code.status='active' AND code.deleted_at IS NULL
+            ORDER BY code.id DESC LIMIT 1) cs ON true
+        WHERE sandbox.workspace_uuid=#{workspaceUUID} AND sandbox.provider_sandbox_id=#{providerID} AND sandbox.state='running'
+            AND work.state='active' AND work.deleted_at IS NULL
+            AND s.deleted_at IS NULL AND s.archived_at IS NULL AND s.status &lt;&gt; 'terminated'
+    </select>
+    <select id="TryLock" result="scalar" resultType="bool">
+        SELECT pg_try_advisory_xact_lock(hashtextextended(#{sandboxUUID}, 476109)) AS locked
+    </select>
+    <sql id="scope">
+        organization_uuid=#{target.OrganizationUUID} AND workspace_uuid=#{target.WorkspaceUUID}
+        AND uuid=#{target.SandboxUUID} AND state='running'
+    </sql>
+    <update id="SetPhase" result="rows">
+        UPDATE environment_sandboxes SET manager_resume_phase=#{phase}, updated_at=NOW()
+        <if test='phase == "starting"'>, tool_call_ready_at=NULL</if>
+        WHERE <include refid="scope"/>
+    </update>
+    <update id="RecordVersion" result="rows">
+        UPDATE environment_sandboxes SET manager_version=#{version}
+        WHERE organization_uuid=#{target.OrganizationUUID} AND workspace_uuid=#{target.WorkspaceUUID}
+            AND uuid=#{target.SandboxUUID} AND state IN ('creating','running')
+    </update>
+    <select id="IsIdle" result="scalar" resultType="bool">
+        SELECT NOT EXISTS (SELECT 1 FROM sandbox_tool_calls
+            WHERE organization_uuid=#{target.OrganizationUUID} AND workspace_uuid=#{target.WorkspaceUUID}
+                AND sandbox_uuid=#{target.SandboxUUID}
+                AND state IN ('dispatched','running','cancel_requested','finalizing')) AS idle
+    </select>
+</mapper>

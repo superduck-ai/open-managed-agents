@@ -130,6 +130,14 @@ func (d *DB) ClaimSandboxToolCalls(ctx context.Context, scope SandboxToolCallSco
 			}
 			return err
 		}
+		allowed, err := mapper.CanClaim(ctx, scope)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			_, err := mapper.MarkReady(ctx, scope)
+			return err
+		}
 		now, err := mapper.Now(ctx)
 		if err != nil {
 			return err

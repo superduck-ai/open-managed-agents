@@ -42,6 +42,7 @@ type sandboxToolCallRow struct {
 }
 
 type SandboxToolCallMapper interface {
+	CanClaim(ctx context.Context, scope SandboxToolCallScope) (bool, error)
 	LockParent(ctx context.Context, scope SandboxToolCallScope) (string, bool, error)
 	LockCode(ctx context.Context, scope SandboxToolCallScope) (string, bool, error)
 	MarkReady(ctx context.Context, scope SandboxToolCallScope) (int64, error)

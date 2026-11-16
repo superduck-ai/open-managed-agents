@@ -156,14 +156,7 @@ func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) (err error) {
 	if sandboxID == "" {
 		return nil
 	}
-	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
-	debug := p.cfg.Debug
-	opts := &e2b.SandboxApiOpts{
-		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, Debug: &debug, RequestTimeoutMs: &requestTimeoutMs,
-	}
-	if p.cfg.AccessToken != "" {
-		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
-	}
+	opts := p.sandboxAPIOptions()
 	// The SDK maps a provider 404 to (false, nil); an already absent sandbox
 	// satisfies the same deletion postcondition as a successful DELETE.
 	_, err = e2b.Kill(ctx, sandboxID, opts)
@@ -198,6 +191,22 @@ func classifySandboxError(err error) error {
 		return fmt.Errorf("%w: %v", sandboxruntime.ErrSandboxNotFound, err)
 	}
 	return err
+}
+
+type SandboxStatus struct {
+	State         string
+	WorkspaceUUID string
+}
+
+func (p *E2BProvider) GetStatus(ctx context.Context, sandboxID string) (status SandboxStatus, err error) {
+	ctx, finish := observeProviderCall(ctx, "get_state", sandboxID)
+	defer func() { finish(err) }()
+	opts := p.sandboxAPIOptions()
+	info, err := e2b.GetInfo(ctx, sandboxID, opts)
+	if err != nil {
+		return SandboxStatus{}, classifySandboxError(err)
+	}
+	return SandboxStatus{State: string(info.State), WorkspaceUUID: info.Metadata["workspace_id"]}, nil
 }
 
 func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
@@ -535,4 +544,25 @@ func mcpAllowedHostsFromWork(work *db.EnvironmentWork) ([]string, error) {
 		return nil, nil
 	}
 	return networkpolicy.ParseWorkMetadataMCPAllowedHosts(work.Metadata)
+}
+
+func (p *E2BProvider) sandboxAPIOptions() *e2b.SandboxApiOpts {
+	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	debug := p.cfg.Debug
+	opts := &e2b.SandboxApiOpts{
+		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, Debug: &debug, RequestTimeoutMs: &requestTimeoutMs,
+	}
+	if p.cfg.AccessToken != "" {
+		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
+	}
+	return opts
+}
+
+func (p *E2BProvider) RenewTimeout(ctx context.Context, sandboxID string, timeout time.Duration) (err error) {
+	ctx, finish := observeProviderCall(ctx, "renew_timeout", sandboxID)
+	defer func() { finish(err) }()
+	if timeout <= 0 {
+		timeout = p.sandboxTimeout()
+	}
+	return classifySandboxError(e2b.SetTimeout(ctx, sandboxID, int(timeout/time.Millisecond), p.sandboxAPIOptions()))
 }

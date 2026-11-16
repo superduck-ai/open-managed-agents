@@ -28,8 +28,11 @@ func (g *Gateway) connect(ctx context.Context, resolved target) (porttunnel.Tunn
 	online := make(chan error, 1)
 	go func() { online <- g.router.WaitOnline(waitCtx, codeSessionUUID) }()
 	if resolved.session.SandboxState == sandboxRunning {
-		if err := g.wake(resolved); errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
-			return nil, sandboxUnavailable(err)
+		if err := g.wake(resolved); err != nil {
+			if errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
+				return nil, sandboxUnavailable(err)
+			}
+			return nil, waking(err)
 		}
 	}
 	if err := <-online; err != nil {

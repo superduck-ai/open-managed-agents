@@ -142,7 +142,7 @@ func (r *Runner) renewSessionSandbox(ctx context.Context, sandbox db.Environment
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return r.provider.SetTimeout(ctx, *sandbox.ProviderSandboxID, timeout)
+	return r.SetTimeout(ctx, *sandbox.ProviderSandboxID, timeout)
 }
 
 type brainSandboxManagerPayload struct {

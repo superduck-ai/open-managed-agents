@@ -181,9 +181,13 @@
  LIMIT #{limit}
  FOR UPDATE SKIP LOCKED
  </select>
+ <select id="CanClaim" result="scalar" resultType="bool">
+ SELECT manager_resume_phase='' AS allowed FROM environment_sandboxes
+ WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND uuid=#{scope.SandboxUUID}
+ </select>
  <update id="MarkReady" result="rows">
  UPDATE environment_sandboxes SET tool_call_ready_at=NOW()
- WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND uuid=#{scope.SandboxUUID} AND state = 'creating' AND provider_sandbox_id IS NOT NULL AND tool_call_ready_at IS NULL
+ WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND uuid=#{scope.SandboxUUID} AND (state = 'creating' OR (state = 'running' AND manager_resume_phase = 'starting')) AND provider_sandbox_id IS NOT NULL AND tool_call_ready_at IS NULL
  </update>
  <select id="SandboxState" result="optional" resultType="string">
  SELECT state FROM environment_sandboxes

@@ -265,12 +265,16 @@ func environmentManagerShellCommand(codeSessionID string, cfg config.Config) str
 		commandParts = append(commandParts, "export TUNNEL_ENABLED=true")
 	}
 	commandParts = append(commandParts, gitConfigExportLinesFrom(environmentManagerBuiltInGitConfigCount, extraGitConfig)...)
+	executable := shellQuote(environmentManagerPath)
+	if cfg.EnvironmentRunner.ManagerArtifact.Version != "" {
+		executable = "flock --close -n " + shellQuote(path.Join(baseDir, "environment-manager.lock")) + " " + executable
+	}
 	commandParts = append(commandParts,
 		"export GIT_EDITOR=true",
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
-		"exec "+shellQuote(environmentManagerPath)+
+		"exec "+executable+
 			" task-run"+
 			" --session "+shellQuote(codeSessionID)+
 			" --session-mode resume-cached"+

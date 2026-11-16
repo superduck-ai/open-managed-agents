@@ -272,7 +272,7 @@ func run(bootstrap *slog.Logger) (err error) {
 			CodeSessionCredentials: codeRuntime.credentials,
 			BrainClaims:            codeRuntime.claims,
 			WebTools:               codeRuntime.web,
-			SandboxTimeoutExtender: sandboxProvider,
+			SandboxTimeoutExtender: environmentRunner,
 			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,

@@ -355,6 +355,8 @@ Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create
 `filestore`、`mark_running`、`code_session`、`manager_start`、`sandbox_mcp_ready`、`publish_runtime`、
 `sandbox_prewarm`、`brain_dispatch`。各触发方式实际经过的阶段见 P8.2。
 
+Manager 制品配置包含 `version` 时，`manager_install` 阶段也包含上传前的版本探测。复用已有版本会记录 Info 事件 `environment manager artifact reused`，字段为 `sandbox_id`、`manager_path`、`manager_version`、`required_manager_version`；不记录原始 stdout。未配置 `version` 时保留原制品安装行为。
+
 `oma.runner.trigger` 取值：`queue`（领取 queued Work）、`stale_recovery`（领取超时的 active/starting
 NATS Work）、`lazy_mcp`（首次工具调用触发沙箱创建）、`prewarm`（`brain_sandbox_prewarm` 开启时的预热）。
 

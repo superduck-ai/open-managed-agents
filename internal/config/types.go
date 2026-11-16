@@ -257,9 +257,10 @@ type EnvironmentRunnerConfig struct {
 }
 
 type EnvironmentManagerArtifactConfig struct {
-	Path   string `yaml:"path"`
-	URL    string `yaml:"url"`
-	SHA256 string `yaml:"sha256"`
+	Path    string `yaml:"path"`
+	URL     string `yaml:"url"`
+	SHA256  string `yaml:"sha256"`
+	Version string `yaml:"version"`
 }
 
 func (c EnvironmentManagerArtifactConfig) Enabled() bool {

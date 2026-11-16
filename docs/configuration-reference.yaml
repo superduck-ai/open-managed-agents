@@ -128,17 +128,22 @@ environment_runner:
   concurrency: 2
   package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
-  # Optional environment-manager build installed into every new or resumed sandbox
+  # Optional environment-manager build selected for each new or replacement sandbox
   # before packages and task-run, so Manager upgrades do not require a new image.
   # Set either path (file on the API host, re-read when replaced) or url (sha256 required).
   # url is preloaded in the background at startup; launches wait for that download if
   # it is still running, and a failed download is retried by the next launch.
-  # The binary is uploaded to /tmp/oma/environment-manager/<sha256>/environment-manager,
-  # verified, and used instead of manager_path. Leave both empty to use the image binary.
+  # The binary is uploaded to /opt/env-runner/<sha256>/environment-manager,
+  # verified, then manager_path is atomically replaced with a symlink to that binary.
+  # The original /opt/env-runner/environment-manager is preserved with the default manager_path.
+  # Leave both empty to use the image binary.
+  # Set version to reuse an existing Manager with an equal or newer semantic version;
+  # without version, upload the artifact on every installation.
   manager_artifact:
     path: ""
     url: ""
     sha256: ""
+    version: ""
   claude_path: /opt/claude-code/bin/claude
   agent_mode: ""
   brain_sandbox_prewarm: false

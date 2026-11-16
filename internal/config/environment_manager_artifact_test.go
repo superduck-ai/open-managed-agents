@@ -19,6 +19,11 @@ func TestValidateEnvironmentManagerArtifactFailures(t *testing.T) {
 		{name: "relative url", artifact: EnvironmentManagerArtifactConfig{URL: "/manager", SHA256: sha}, want: "absolute http"},
 		{name: "unsupported scheme", artifact: EnvironmentManagerArtifactConfig{URL: "file:///srv/manager", SHA256: sha}, want: "absolute http"},
 		{name: "embedded credentials", artifact: EnvironmentManagerArtifactConfig{URL: "https://user:pass@example.com/manager", SHA256: sha}, want: "credentials"},
+		{name: "version without source", artifact: EnvironmentManagerArtifactConfig{Version: "0.1.0"}, want: "version requires"},
+		{name: "malformed version", artifact: EnvironmentManagerArtifactConfig{Path: "/srv/manager", Version: "latest"}, want: "semantic version"},
+		{name: "short version", artifact: EnvironmentManagerArtifactConfig{Path: "/srv/manager", Version: "0.1"}, want: "semantic version"},
+		{name: "prefixed version", artifact: EnvironmentManagerArtifactConfig{Path: "/srv/manager", Version: "v0.1.0"}, want: "semantic version"},
+		{name: "invalid prerelease", artifact: EnvironmentManagerArtifactConfig{Path: "/srv/manager", Version: "0.1.0-01"}, want: "semantic version"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -37,6 +42,9 @@ func TestValidateEnvironmentManagerArtifactAccepts(t *testing.T) {
 		{Path: "/srv/manager"},
 		{Path: "/srv/manager", SHA256: sha},
 		{URL: "https://example.com/manager", SHA256: sha},
+		{Path: "/srv/manager", Version: "0.1.0"},
+		{Path: "/srv/manager", Version: "1.0.0-rc.2+build.42"},
+		{URL: "https://example.com/manager", SHA256: sha, Version: "2.1.0"},
 	} {
 		if err := validateEnvironmentManagerArtifact(artifact); err != nil {
 			t.Fatalf("validateEnvironmentManagerArtifact(%+v) error = %v", artifact, err)
@@ -45,9 +53,9 @@ func TestValidateEnvironmentManagerArtifactAccepts(t *testing.T) {
 }
 
 func TestNormalizeEnvironmentManagerArtifact(t *testing.T) {
-	artifact := EnvironmentManagerArtifactConfig{Path: " /srv/manager ", URL: " ", SHA256: " " + strings.Repeat("A", 64) + " "}
+	artifact := EnvironmentManagerArtifactConfig{Path: " /srv/manager ", URL: " ", SHA256: " " + strings.Repeat("A", 64) + " ", Version: " 0.1.0 "}
 	normalizeEnvironmentManagerArtifact(&artifact)
-	if artifact.Path != "/srv/manager" || artifact.URL != "" || artifact.SHA256 != strings.Repeat("a", 64) {
+	if artifact.Path != "/srv/manager" || artifact.URL != "" || artifact.SHA256 != strings.Repeat("a", 64) || artifact.Version != "0.1.0" {
 		t.Fatalf("normalized artifact = %+v", artifact)
 	}
 }

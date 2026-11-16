@@ -99,7 +99,7 @@ Runner 在 brain 模式下把 `metadata.config.worker_transport` 写为 `claim`�
 
 `claim` transport 的租约为 20 秒加 10 秒宽限，其他 transport 保持 60 加 10 秒；register 和 heartbeat 按 Code Session 的 transport 选择参数，领取 SQL 用同一宽限期判断租约是否失效。注册在同一事务内清除领取请求与期限；worker 事件流连接时把连续领取失败次数归零。准入失败时 DSH 调用 release：临时性失败按次数指数退避，连续 5 次领取都没有完成准入时（约 155 秒），后端发布 `session.error` 和 `session.status_idle(retries_exhausted)` 并停止重试；任务信封、会话配置或 assignment 校验失败属于永久性失败，DSH 以 `permanent` 原因 release，后端立即发布同样的事件。DSH 正常退出时先排空：停止领取，拒绝新的 Bash/Write/Edit/外部 MCP dispatch（返回 "Brain worker is shutting down; the tool was not executed." 的工具错误，不记录派发阶段），Read/Glob/Grep 在排空窗口内仍允许执行，保持原有最多重试一次的行为，且不计入副作用调用的排空等待；它们仍参与活动 keepalive，并会在随后统一取消会话时停止。排空在 `OMA_BRAIN_SHUTDOWN_DRAIN_MS`（默认 20 秒）内等待已 dispatch 的副作用调用记录结果；超时仍未完成的会话以 `{kind: "hook", reason: "oma-worker-shutdown"}` 取消本轮，由 DSH 记录中断工具结果并以失败结果结束本轮，等待至多 5 秒收尾，不把会话阻断；进程强制退出时限为排空时长加 8 秒。随后 release 准入中的领取和仍有活跃 turn 的会话，使其他进程立即接管；关闭空闲会话时以 `idle` 原因只清除租约，之后的新输入可以立即被领取；崩溃时等待租约与宽限期过去。耗尽与永久失败都推进 epoch，失败公开后旧凭据无法再注册。
 
-Brain 会话收到新输入时不再通过 sandbox 续期路径延长 worker 租约或安排 Work 恢复；沙箱由惰性沙箱网关按需准备。
+Brain 会话收到新输入时不再通过 sandbox 续期路径延长 worker 租约或安排 Work 恢复；沙箱由工具调用提交入口按需准备。
 
 ## 活跃会话输入
 
@@ -147,7 +147,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 
 系统规则按稳定性分层组装，详见 [agent-system-prompt](agent-system-prompt.md)。`append_system_prompt` 由 Go 按 Environment 的 `networking` 与 `packages` 渲染。Memory 目录来自已解析的挂载资源，通过公共 `memory_catalog_prompt` 字段单独提供给执行端，DSH 将其放在 Agent 指令之后的会话层。Skill 和子 Agent 配置在创建 Code Session 时固定，凭据恢复不重新解析，因此不会因 Agent 或 Skill 更新而漂移。
 
-DSH 在本地把公共配置转换为运行时对象，并根据 `OMA_API_URL` 构造沙箱 MCP URL；Go 不再提供 `brain.launch` 或完整 assignment 响应。`environment_runner.brain_api_base_url` 已删除。
+DSH 在本地把公共配置转换为运行时对象，并根据 OMA_API_URL 构造工具调用接口。Go 提供会话上下文。
 
 ## 惰性沙箱
 
@@ -166,11 +166,11 @@ sequenceDiagram
     DSH->>Go: 原调用 ID 关联结果
 ```
 
-DSH 内嵌 Bash、Read、Write、Edit、Grep、Glob 的模型工具定义，启动时不请求 MCP。主会话仅注册 `runtime_tools` 中的内置工具，缺失或 null 按空列表处理，非法列表拒绝启动。内联子 Agent 继承父会话白名单，固定子 Agent 使用其版本快照中的白名单。固定专家的内置工具名单不与父名单取交集，空名单保持为空；inline/self 使用自身继承的有效快照。模型可见性过滤不替代后端执行前的工具权限检查和审批。实际权限仍使用已认证的子线程上下文，不扩展父线程权限。内置工具注册必须把真实子线程 ID 传入执行器；读重试和写调用均携带该身份，由沙箱客户端设置 `X-OMA-Session-Thread-ID`。父线程不携带该头，共用沙箱客户端不得串用上次调用的线程身份。纯文本或被拒绝的工具调用不创建沙箱。审批通过后，通过 `/v2/ccr-sessions/{id}/sandbox/mcp` 初始化和调用实际 MCP server。
+DSH 内嵌 Bash、Read、Write、Edit、Grep、Glob 的工具定义，按有效白名单注册。审批通过后，以 Code Session、线程与原生 call ID 提交持久调用。根线程使用 root，子线程使用真实线程 ID。服务端重新校验权限并按需准备沙箱，Manager 主动领取。完整协议见 [沙箱工具调用领取](sandbox-tool-call-claim.md)。
 
-沙箱 Manager 的代理与 Git 签名使用绑定具体 `sandbox_uuid` 的 `role=sandbox` 凭据，生命周期独立于 Brain owner 的 worker epoch。该凭据只能调用这两个运行时入口；worker 接口仍使用当前 owner JWT 和 epoch fence。详见 [沙箱代理凭据](ccrv2/upstream-proxy-and-model-runtime.md#brain-与普通-http-出站)。
+沙箱 Manager 的代理、Git 签名与工具领取使用绑定具体 sandbox_uuid 的 role=sandbox 凭据，生命周期独立于 Brain owner epoch。工具领取和结果入口逐次校验租户及沙箱生命周期，Worker 接口要求当前 owner JWT。
 
-外部 MCP 与沙箱 MCP 分开传递。`registerWorkerTask` 将 `/v2/sessions/{id}` 返回的 `session_context.mcp_config` 原样保存在 assignment 的 `external_mcp_config`，包括连接地址、headers、工具配置和未知扩展；assignment 的 `mcp_config` 仍由 DSH 构造，只包含平台拥有的 `sandbox` endpoint。外部服务器即使名为 `sandbox`，也不会覆盖内置工具的沙箱连接。两份配置只存在于运行时边界，不新增数据库字段或公开 API 字段。
+registerWorkerTask 将服务端 session_context.mcp_config 保存为 external_mcp_config，供外部 MCP 连接使用。内置沙箱工具通过领取协议执行。
 
 Brain 宿主机上的外部 MCP 请求经现有 `/v2/ccr-sessions/{id}/mcp?mcp_url=...` 代理发送。后端校验当前 Session 身份与网络策略，并由 Vault 注入远端凭证。Brain 只向 OMA 发送当前 assignment 的 ingress token，不把该 token 发到远端 MCP。HTTP 和旧式 SSE 的每次实际请求都使用该通道，包括 SSE 返回的消息地址。已有同 Session named Tunnel 网关请求保持原路由。普通沙箱的远端连接仍使用沙箱 HTTP(S) Proxy/MITM。此适配不改写 `external_mcp_config`，不保存 Vault 秘密。
 
@@ -227,13 +227,13 @@ result 复用既有事件 ID 去重、epoch 校验和队列过滤；普通成功
 
 公开 `user.interrupt` 经后端转换为 CCRv2 `control_request/interrupt`；执行端的两种中断入口都记录取消意图。主动中断保留内部取消处理，公开 `session.status_idle.stop_reason.type` 按 CMA 契约使用 `end_turn`，允许同会话继续；保留 `user.interrupt`，不生成 `Turn cancelled` 消息。这表示当前 Agent 回合已中断，不承诺远端进程已清理完成。
 
-普通工具调用复用官方客户端与 HTTP transport，单次请求等待上限为 185 秒；Bash 按参数 `timeout`（默认 120 秒，最多计 600 秒）加 65 秒余量计算，且不低于 185 秒，避免命令仍在执行时客户端先超时并产生未知结果。Bun `fetch` 另有默认 5 分钟的套接字空闲超时（`BUN_CONFIG_HTTP_IDLE_TIMEOUT`），沙箱在命令执行期间通常不向响应写入任何字节，因此每次 `tools/call` 的 `fetch` 传 `timeout: false` 关闭该计时器，并改用该次等待时间加 15 秒的整体截止 signal 限制连接存活；Bun 1.4 之前会忽略正数 `timeout`（实测 1.3.11 在 300 秒切断），只有 `false` 在 1.3 与 1.4 上都生效。初始化等其他请求保持默认。不增加私有取消 RPC 或结果查询通道。中断与自然完成竞态以客户端实际收到的结果为准。收到完整工具结果时保留实际结果。只有执行 signal 已取消且 DSH 取消原因明确为 `kind: user` 时，缺失远端结果才转换为本地工具错误 `Tool call interrupted.`；不伪造 Bash 退出码、信号或远端 cancelled 状态。DSH 原生日志保存工具错误结果，当前轮发送非失败 CCRv2 result，由后端映射为 `idle/end_turn`，允许下一轮输入。
+内置工具通过提交、长轮询等待与显式取消接口执行。连接中断后按原身份重连。用户取消等待沙箱确认，保留部分输出或实际结果。Worker shutdown 保留未完成调用供新 owner 查询。外部 MCP 继续使用官方客户端与 HTTP transport。
 
 用户中断直接使用 DSH 原生取消，保留原生 aborted 回合及工具结果，不再追加 `oma-interruption` 消息或输入完成标记。后续模型上下文由原生日志和新用户消息构成；同一已接纳输入的重投不会重新执行。
 
-主动中断的原 call ID 在当前执行日志中不能再次批准或 dispatch；已完成输入重复投递只补发事件和 ACK，不重新执行。恢复后保留本地中断结果及未确认的远端状态，不重放旧调用。下一轮新调用可以开始，接受与远端 Bash 清理短暂重叠的窗口。网络失败、超时和 Worker 停止产生原生失败工具结果；崩溃恢复时由 DSH 为未完成调用补齐恢复错误，不自动重放。新的用户输入可以继续，执行前应核实先前调用可能已经产生的副作用。
+同一线程的原生 call ID 关联唯一持久调用。已提交调用重新等待，lost 返回未知结果并提示核实副作用。恢复读取结果后完成原输入的交付，再接受新输入。
 
-Rust 不维护 TaskManager、任务结果缓存或 TTL 回收器。Bash 正常收到取消时终止进程组并等待退出；执行 future 被丢弃时由进程组 guard 强制终止命令。grep/glob 取消时终止并等待子进程；明确请求的后台 Bash 保留原有语义。停止进程不会回滚已经发生的文件写入等副作用。
+Rust Manager 保存 started 标记与结果 ledger，重复交付重报结果。Bash、grep 与 glob 使用现有取消和进程组 guard，进程退出后提交停止确认。明确请求的后台 Bash 保留原有语义。
 
 ```mermaid
 sequenceDiagram
@@ -259,9 +259,11 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求沿用 dsh 原生流程，日志异步复制，不无条件等待远程确认；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
 
-控制输入的 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送，避免审批解除时运行状态已落库、却被后发确认回执越过。回执链独立于控制输入接收；状态或回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。
+权限确认的 `control_response` 在解除工具等待前，先同步等待 `processing` 回执。后端据此持久化并投递已处理的 `user.tool_confirmation`，再由 Brain 应用允许或拒绝决定，避免工具结果先于已处理确认落库。`processing` 不消费投递消息；失败时不解除审批、不发送最终 ACK，重投仍可重试。同一进程已处理过的控制输入不重复报告 processing。主线程和子线程遵循同一路径。
 
-带代理请求身份的文本块在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量继续实时发送，thinking 完成及无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息和结束 span，避免 Brain 的 block-end 抢存消息后，代理按更早 EndedAt 写入结束 span 导致历史与实时顺序反转。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时增量、提前落盘、终态前未发布最终文本及终态后恰一次来源正确的最终文本。
+控制输入的最终 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送。最终回执链独立于控制输入接收；状态或最终回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。`tests/ccrv2.test.ts` 覆盖处理回执失败后不放行、重试、主/子线程允许与拒绝屏障、重复投递及最终回执不阻塞中断。
+
+带代理请求身份的文本块与 thinking 状态在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量与 thinking 起始预览继续实时发送，无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息、thinking 状态和结束 span，避免 Brain 的 block-end 抢存输出后，代理按更早 EndedAt 写入结束 span，导致历史中 thinking 晚于 end。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时预览、提前落盘、终态前未发布完成块及终态后恰一次来源正确的完成块。
 
 ### 原生日志恢复与协议输出
 
@@ -294,7 +296,7 @@ sequenceDiagram
     Note over B,D: On restart, resume native log and regenerate public history
 ```
 
-恢复工具名称同时读取 assistant/message 的原生 tool-call block，覆盖尚未产生 tool/call 的调用。DSH 的 `interruptedTurnClosers` 区分模型请求但未记录开始的 `TOOL_NOT_STARTED`，以及已记录 tool/call 但没有结果的 `TOOL_OUTCOME_UNKNOWN`。未知结果的原生错误提示模型先检查外部状态或询问用户，不盲目重试。OMA 不再维护 dispatch/blocked/result 状态机，不发布 unknown_tool_outcomes，不消费 tool_outcome_reconciliation，并移除对应运维 CLI 及专用 DB 入口。恢复不会自动重放未完成的输入；它完成该输入的失败交付，然后接受新输入。公开事件重发使用同一 UUID，依赖后端幂等去重；这不是跨系统的 exactly-once 事务。
+恢复先按原调用身份查询已有 tool/call 的内置工具，恢复实际结果或服务端终态。新 epoch 查询到 404 时写 TOOL_NOT_STARTED，lost 写 TOOL_OUTCOME_UNKNOWN。尚未记录 tool/call 的请求及外部 MCP 由 SDK 原生恢复处理。公开事件使用稳定 UUID 幂等发布。
 
 OMA 同步路径的子线程名称、persona、模型和工具限制使用 DSH 原生 `subagent/descriptor` 保存；DSH 官方工具路径由原生 descriptor 保存执行信息，`plugin:oma/subagent-config` 保存 OMA 名称、inline 属性、系统指令与工具清单。Header 的 parentSession 和传输层 agent_id 保留归属关系。恢复先从本地原生列表发现子线程；每次恢复枚举远程子线程并补齐缺失本地文件，以覆盖根日志未变化而子线程在其他实例新增的情况。通过原生描述符重建配置，并查询后端归档状态。恢复期间暂存线程 idle 通知，完成主线程和子线程原生日志重放后再排入发布队列，保证修复出的工具结果先于对应 idle 通知发布，公开恢复结果确认后才更新 Worker idle；远程恢复失败时不提前发布 idle。归档状态由服务端确认结果决定，不从未发送的进程内通知恢复。已完成原生回合恢复为 end_turn，未闭合回合恢复为 interrupted。无论公开状态是否 idle，只要 DSH 判断日志存在未闭合回合，就调用原生 resume 修复该线程；不采样模型、不重放工具。初始化中断只留下 Header 且后端没有公开线程、日志未开始 turn 时忽略该孤立记录；已开始执行的线程或其他查询错误不得被静默跳过。
 
@@ -335,7 +337,7 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 Brain 在 `block-start` 生成 `event_start`，普通文本生成 `event_delta`，思考正文与签名不公开。预览经过串行检查点和 CCRv2 FIFO 上传队列。代理和 Brain 使用 code session ID、上游 message ID、原始 block index 与事件类型生成一致的事件 ID；end 保留本请求的 `event_ids`。SSE 收到完整消息或 end 后丢弃相关的迟到预览，其他并行请求和子线程的预览不受影响。
 
-Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传，并在恢复时重放完成块日志。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。该回传可能晚于 end，end 仅退休预览，不禁止随后持久化完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
+Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传。流式完成块等待模型流 end 帧后，仅在 outcome 对应的原生记录是正常提交、未标记 `interrupted` 的 `assistant/message` 时释放本次 attempt 的缓冲。取消、错误尝试、异常断流及 abandoned 不补发公开完成块。恢复时忽略带代理请求身份的 assistant-block 日志，直接从正常完成的 `assistant/message` 按原生消息块顺序重建公开输出；中断消息不投影，独立模型的块日志仍按记录顺序重放。不预扫描历史或维护成功块 ID 集合。起始预览与文本增量不等待该屏障。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 正常提交的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。成功提交的完整块回传可能晚于 end；失败或取消请求不通过该回传新增 thinking 或完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
 
 DSH 的 `compaction` 和 `session-title` 内部调用通过 `X-OMA-Model-Purpose` 声明用途。代理在请求边界读取并移除该 header，不转发给模型供应商；这些调用保留 span、usage 和计费，不生成完整消息、thinking 预览、工具投影或公开消息关联 ID。内部调用不覆盖 Brain 的业务响应 ID。普通调用不发送用途 header。
 
@@ -477,7 +479,7 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
 
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前组织的
 模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
@@ -492,7 +494,7 @@ flowchart LR
     SDK --> Transport[OMA fetch transport]
     Transport --> Proxy[Go 模型代理]
     Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
-    Proxy --> Provider[Workspace Provider]
+    Proxy --> Provider[Organization Provider]
 ```
 
 DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
@@ -580,6 +582,11 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 并发 MCP 请求通过既有 Work 事务锁及 `CreateEnvironmentSandbox` 的 pending 检查复用同一个 replacement。恢复不更换宿主机 Brain 的 Code Session 或 worker epoch。Provider 已删除的临时文件与进程无法保留，持久化事件和已提交 Filestore 内容不受影响。
 
 本地端口查询前也执行 SDK Connect，使 paused 恢复及过期错误分类与云端一致。端口查询本身返回 404 时同样识别为沙箱已删除。单测检查暂停连接、缺失分类及服务端错误保留；实际开发环境验收包含首次 Bash 调用、超过 TTL 后再次调用和环境信息查询。
+
+## 端口地址工具
+
+`launch.tools` 含 `get_port_url` 时，Brain 注册同名工具；服务端只在启用 `session_ports` 时下发它，Brain 不需要知道部署开关，经 `POST /v2/ccr-sessions/{id}/port-url` 用 ingress token 取地址，不访问沙箱，子线程调用带 `X-OMA-Session-Thread-ID`。
+该工具与 web 工具同在 host-tools 插件中注册，工具列表刷新时一起增删。端口范围在本地先校验，成功结果是纯文本 URL。工具描述说明只监听 127.0.0.1 的服务可直接访问，避免模型建议改成 0.0.0.0。合同、开启方式与错误见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。服务端启用 `session_ports` 前必须先部署包含该工具的 Brain，否则默认配置的 Agent 的 `launch.tools` 会被旧 Brain 以 `Invalid launch tools` 拒绝。
 
 ## DSH 自定义问卷工具
 

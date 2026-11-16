@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"log/slog"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -34,6 +35,7 @@ type Handler struct {
 	streams         *streamHub
 	eventBus        sessionfanout.EventBus
 	previews        *workerPreviewConverter
+	ports           *sessionports.Settings
 }
 
 type sandboxReclaimer interface {

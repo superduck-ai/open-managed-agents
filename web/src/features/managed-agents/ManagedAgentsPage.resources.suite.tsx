@@ -860,7 +860,7 @@ export function registerManagedAgentsResourceTests() {
     expect(bashToolCells[2]?.textContent).toBe('2');
     expect(bashToolCells[3]?.textContent).toBe('0');
     expect(bashToolCells[4]?.textContent).toBe('4.0s');
-    expect(inspector.textContent).toContain('10 tools, 5 used, 6 calls');
+    expect(inspector.textContent).toContain('11 tools, 5 used, 6 calls');
     expect(within(inspector).getByText('Overview')).toBeTruthy();
     expect(within(inspector).getByText('Total time in tools')).toBeTruthy();
 
@@ -1931,7 +1931,7 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
     await screen.findByText('Vault credential one');
-    expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
+    expect(screen.getByPlaceholderText('按名称或 ID 查找凭据')).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
     expect(screen.queryByText('供关联此保险库的 Agent 使用的凭据。')).toBeNull();
@@ -1949,7 +1949,7 @@ export function registerManagedAgentsResourceTests() {
     expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
     await screen.findByText('Vault credential one');
-    expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Find credential by name or ID')).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: 'Status All' })).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
@@ -2210,7 +2210,7 @@ export function registerManagedAgentsResourceTests() {
   test('removes a draft file resource before creating a session', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2245,7 +2245,7 @@ export function registerManagedAgentsResourceTests() {
   test('adds a memory store from the same resource menu as files', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2278,7 +2278,7 @@ export function registerManagedAgentsResourceTests() {
         updated_at: now,
       });
     }
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2323,7 +2323,7 @@ export function registerManagedAgentsResourceTests() {
       }
       return baseFetch(input, init);
     }) as typeof fetch;
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2348,7 +2348,7 @@ export function registerManagedAgentsResourceTests() {
       title: hidden ? 'Session beyond first page' : `Session page ${index}`,
     }));
     const remote = api.resources.sessions.at(-1)!;
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     await screen.findByText('Session one');
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent);
     expect(headers.slice(0, 7)).toEqual(['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created']);
@@ -2365,7 +2365,7 @@ export function registerManagedAgentsResourceTests() {
   test('keeps SVG controls and portaled actions out of the session row preview', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     const row = (await screen.findByText('Session one')).closest('tr')!;
     const agentIcon = row.querySelector('a[href*="/agents/"] svg')!;
     agentIcon.closest('a')!.addEventListener('click', (event) => event.preventDefault());
@@ -2389,7 +2389,7 @@ export function registerManagedAgentsResourceTests() {
   test('shows attached vaults as read-only when editing a session and omits vault_ids from the update', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     const row = (await screen.findByText('Session one')).closest('tr')!;
     fireEvent.click(within(row).getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
@@ -2429,7 +2429,7 @@ export function registerManagedAgentsResourceTests() {
       title: hidden ? 'Remote mutation session' : `Session mutation ${index}`,
     }));
     const remote = api.resources.sessions.at(-1)!;
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     await screen.findByText('Session one');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
     await screen.findByText(remote.title);
@@ -2465,7 +2465,7 @@ export function registerManagedAgentsResourceTests() {
   test('resets the session list filters from an empty search result', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     await screen.findByText('Session one');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no matching title' } });
     expect(screen.getByText('No matching sessions')).toBeTruthy();
@@ -2510,7 +2510,7 @@ export function registerManagedAgentsResourceTests() {
   test('previews a session in a sheet and opens its conversation without changing the list on preview', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
     await screen.findByText('Session one');
     fireEvent.click(screen.getAllByRole('button', { name: 'Quick view' })[0]);
     const preview = await screen.findByRole('dialog', { name: 'Session one' });
@@ -2531,7 +2531,7 @@ export function registerManagedAgentsResourceTests() {
   test('opens the created session detail after the list create succeeds', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
     expect(await screen.findByText('Session one')).toBeTruthy();
@@ -2553,7 +2553,7 @@ export function registerManagedAgentsResourceTests() {
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2636,7 +2636,7 @@ export function registerManagedAgentsResourceTests() {
   test('creates a session with CMA-style vault picker and credential summary', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2686,7 +2686,7 @@ export function registerManagedAgentsResourceTests() {
   test('resets vault authorization when the selected vault set changes', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2823,7 +2823,7 @@ export function registerManagedAgentsResourceTests() {
   test('blocks session submit when memory instructions exceed 4096 code points', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -2843,7 +2843,7 @@ export function registerManagedAgentsResourceTests() {
   test('creates a session with a read/write memory store and instructions', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
@@ -3206,7 +3206,7 @@ export function registerManagedAgentsResourceTests() {
       vault_ids: [],
     });
 
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Created All time' })).toBeTruthy();
@@ -3320,7 +3320,7 @@ export function registerManagedAgentsResourceTests() {
       title: hidden ? 'Session overflow' : `Session extra ${index}`,
       status: 'idle',
     }));
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     expect(screen.queryByText('Session overflow')).toBeNull();
@@ -3339,7 +3339,7 @@ export function registerManagedAgentsResourceTests() {
       title: hidden ? 'Session overflow' : `Session extra ${index}`,
       status: 'idle',
     }));
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -3353,7 +3353,7 @@ export function registerManagedAgentsResourceTests() {
   test('keeps a successful session delete when the refill request fails', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="sessions" />);
+    renderManagedAgentsPage('sessions');
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     api.resources.failSessionList = true;
@@ -3788,14 +3788,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByText('Deployment one')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Run deployment' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Run deployment' }));
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/deployments/dep_one123456/run?beta=true')).toBe(true),
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Pause deployment' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pause deployment' }));
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/deployments/dep_one123456/pause?beta=true')).toBe(

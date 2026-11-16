@@ -70,6 +70,7 @@ type OAuthTokenEndpointExchange struct {
 	ClientID                string
 	ClientSecret            string
 	TokenEndpointAuthMethod string
+	TokenEndpointEncoding   string
 	Form                    url.Values
 }
 
@@ -111,12 +112,16 @@ func ExchangeOAuthTokenEndpoint(ctx context.Context, client *http.Client, in OAu
 		return OAuthTokenEndpointResult{}, unsupportedTokenAuthMethod(method)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, in.TokenEndpoint, strings.NewReader(form.Encode()))
+	body, contentType, err := oauthTokenEndpointBody(form, in.TokenEndpointEncoding)
+	if err != nil {
+		return OAuthTokenEndpointResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, in.TokenEndpoint, strings.NewReader(body))
 	if err != nil {
 		return OAuthTokenEndpointResult{}, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", contentType)
 	if method == "client_secret_basic" {
 		basic := url.QueryEscape(in.ClientID) + ":" + url.QueryEscape(clientSecret)
 		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(basic)))
@@ -156,6 +161,27 @@ func ExchangeOAuthTokenEndpoint(ctx context.Context, client *http.Client, in OAu
 		Scope:        strings.TrimSpace(wire.Scope),
 		ExpiresIn:    wire.ExpiresIn,
 	}, nil
+}
+
+func oauthTokenEndpointBody(form url.Values, encoding string) (string, string, error) {
+	switch encoding {
+	case "", envOAuthTokenEndpointEncodingForm:
+		return form.Encode(), "application/x-www-form-urlencoded", nil
+	case envOAuthTokenEndpointEncodingJSON:
+		payload := make(map[string]string, len(form))
+		for key, values := range form {
+			if len(values) > 0 {
+				payload[key] = values[0]
+			}
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", "", err
+		}
+		return string(encoded), "application/json", nil
+	default:
+		return "", "", unsupportedTokenEndpointEncoding(encoding)
+	}
 }
 
 func cloneURLValues(values url.Values) url.Values {

@@ -8,9 +8,12 @@ import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
 import { configureOmaModel } from "./model-configs.ts";
+import { SandboxCalls } from "./oma-sandbox/client.ts";
+import { recoverSandboxCalls } from "./oma-sandbox/recovery.ts";
 import { WebClient } from "./web-tools/client.ts";
+import { PortUrlClient } from "./port-tools/client.ts";
+import * as HostTools from "./host-tools.ts";
 import * as Skills from "./skills/index.ts";
-import * as WebTools from "./web-tools/index.ts";
 
 /** Bind OMA credentials and launch metadata before opening the protocol bridge. */
 export function createOmaSession(
@@ -24,6 +27,7 @@ export function createOmaSession(
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
     provider,
+    recoverSandboxCalls: (id,signal,threadId,recovery) => recoverSandboxCalls(ctx,new SandboxCalls(api,assignment.session_id),id,signal,threadId,recovery),
     configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
@@ -58,7 +62,10 @@ export function createOmaSession(
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) => {
       await scope.plugin(Skills, { api, sessionId: assignment.session_id, threadId, workDir: assignment.launch.work_dir });
-      return scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions });
+      return scope.plugin(HostTools, {
+        web: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId),
+        ports: new PortUrlClient(api, assignment.session_id, threadId), bridge, tools, permissions,
+      });
     },
     subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),

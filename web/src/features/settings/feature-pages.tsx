@@ -14,7 +14,6 @@ export const settingsSections = [
   'profile',
   'appearance',
   'organization',
-  'llm',
   'members',
   'workspaces',
   'telemetry',

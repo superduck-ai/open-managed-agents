@@ -9,7 +9,9 @@ afterEach(cleanup);
 const provider: LLMProvider = {
   id: 'llmp_sample',
   type: 'llm_provider',
-  scope: 'organization',
+  created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+  can_manage: true,
+
   name: 'Research',
   slug: 'research',
   api_backend: 'messages',
@@ -37,10 +39,10 @@ function Sample() {
       <button
         onClick={() => {
           setError('');
-          setSelected({ ...provider, scope: undefined });
+          setSelected({ ...provider });
         }}
       >
-        Open workspace
+        Open provider
       </button>
       <ProviderDeleteDialog
         provider={selected}
@@ -66,9 +68,13 @@ test('blocks dismiss while deleting and preserves the error until cancellation f
   expect(within(dialog).getByText('Delete failed')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open provider' }));
   const reopened = await screen.findByRole('alertdialog');
-  expect(within(reopened).getByText('Its models will stop working immediately in this workspace.')).toBeTruthy();
+  expect(
+    within(reopened).getByText(
+      'This removes this provider for every workspace in the organization. Its models will stop working immediately.',
+    ),
+  ).toBeTruthy();
   expect(within(reopened).queryByText('Delete failed')).toBeNull();
 });
 

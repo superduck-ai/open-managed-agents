@@ -502,7 +502,7 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 		return
 	}
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
-	providers, err := e.database.ListLLMProviders(t.Context(), org, workspace)
+	providers, err := e.database.ListLLMProviders(t.Context(), org)
 	requireOK(t, err)
 	if len(providers) != 0 {
 		return
@@ -510,13 +510,13 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	service, err := secretservice.New(cfg.Vault.MasterKey)
 	requireOK(t, err)
 	now := time.Now().UTC()
-	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", Models: db.LLMModels{{ID: "claude-opus-4-6"}, {ID: "claude-sonnet-4-6"}}, CreatedAt: now, UpdatedAt: now}
+	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, SecretWorkspaceUUID: workspace, Name: "isolated worker model metadata", Slug: llmproviders.DefaultSlug, BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", Models: db.LLMModels{{ID: "claude-opus-4-6"}, {ID: "claude-sonnet-4-6"}}, CreatedAt: now, UpdatedAt: now}
 	envelope, err := service.Seal(t.Context(), llmproviders.SecretBinding(provider), []byte("isolated-fake"))
 	requireOK(t, err)
 	provider.SecretEnvelope = &envelope
 	_, err = e.database.CreateLLMProvider(t.Context(), provider)
 	requireOK(t, err)
 	t.Cleanup(func() {
-		requireOK(t, e.database.DeleteLLMProvider(context.Background(), org, workspace, provider.ExternalID))
+		requireOK(t, e.database.DeleteLLMProvider(context.Background(), org, provider.ExternalID))
 	})
 }

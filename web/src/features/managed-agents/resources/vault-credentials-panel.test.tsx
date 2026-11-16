@@ -135,3 +135,25 @@ test('refreshes the owning directory only after the saved dialog has entered and
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(refreshStates).toEqual([true]));
 });
+
+test('按名称搜索，并按认证类型组合筛选', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_example');
+  const nextCredential = {
+    ...credential,
+    id: 'cred_second_page',
+    display_name: 'Environment credential',
+    auth: { type: 'environment_variable', secret_name: 'SECOND_TOKEN' },
+  };
+  globalThis.fetch = mock(async () => Response.json({ data: [credential, nextCredential], next_page: null }));
+  render(<PanelHarness />);
+  await screen.findByText(nextCredential.display_name);
+  const search = screen.getByRole('searchbox');
+  fireEvent.change(search, { target: { value: 'Environment credential' } });
+  expect(screen.getByText(nextCredential.display_name)).toBeTruthy();
+  expect(screen.queryByText(credential.display_name)).toBeNull();
+  fireEvent.change(search, { target: { value: '' } });
+  fireEvent.click(screen.getByRole('combobox', { name: 'Auth All' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Bearer token' }));
+  expect(screen.getByText(credential.display_name)).toBeTruthy();
+  expect(screen.queryByText(nextCredential.display_name)).toBeNull();
+});

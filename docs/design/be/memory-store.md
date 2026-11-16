@@ -48,7 +48,7 @@ Agent 原始 system 保持独立。恢复优先使用持久化目录；旧 Code 
 从已有 Session attach 快照补齐。明确的空目录仍为空，不由 Agent 自报配置或新 attach 值替换。
 非法路径、权限、重复 mount 和超长 instructions 拒绝启动。
 
-Memory Read / Glob / Grep 与 Write / Edit 继续使用沙箱 MCP。目录发现与拒绝调用不分配沙箱，
+Memory Read / Glob / Grep 与 Write / Edit 使用沙箱工具调用领取协议。目录发现与拒绝调用不分配沙箱，
 首次获准的读取等待沙箱与 FUSE 就绪，后续调用复用沙箱。正文不会预载到提示词。
 Claude 的 `append_system_prompt` 与 `MEMORY.md` 合同保持不变，两种 runtime 使用相同挂载。
 本改动不新增数据库表、语义检索或沙箱外文件操作。
@@ -426,13 +426,30 @@ The external CMA memory contract, memory.md line384, supersedes the writable-par
 
 ### 2026-10-19 live file-tool Memory mutation authority
 
-The built-in sandbox MCP proxy checks current Session Memory mount authority before dispatching Write/Edit under `/mnt/memory`. A Store archived after sandbox creation is rejected with a real MCP tool error before a buffered local write can claim success. The check uses the authenticated public Session filesystem and current mount/Store state, fails closed on lookup errors or ambiguous/missing mounts, and preserves active RW mounts. Reads, Bash and unrelated namespaces retain their existing execution paths; this boundary does not claim to remount an existing sandbox or provide new Bash isolation. Filestore upload authorization remains an independent enforcement layer.
+The sandbox tool-call submission validator checks current Session Memory mount authority before enqueueing Write/Edit under `/mnt/memory`. A Store archived after sandbox creation is rejected with a persisted failed tool result before a buffered local write can claim success. The check uses the authenticated public Session filesystem and current mount/Store state, fails closed on lookup errors or ambiguous/missing mounts, and preserves active RW mounts. Reads, Bash and unrelated namespaces retain their existing execution paths; this boundary does not claim to remount an existing sandbox or provide new Bash isolation. Filestore upload authorization remains an independent enforcement layer.
 
 公开依据：Claude Managed Agents memory.md Attach a memory store to a session 声明 instructions4096characters；anthropic-sdk-go v1.76.0 betasession.go927与betasessionresource.go346同样声明Max4096chars。固定4095/4096/4097 ASCII及中文/emoji/组合字符回归验证不按UTF8字节或UTF16单元截断。
 
 
 ## Built-in Memory mutation completion
 
-Successful sandbox MCP Write/Edit results for attached Memory paths are held until the authoritative head has a new immutable version attributed to the authenticated public Session. Write additionally requires the SHA-256 of the exact requested content. The checkpoint is scoped by the live Session mount, Workspace and Store; existing permission checks still execute before the tool. A bounded 30-second wait obeys request cancellation. Upload/storage failure or expiry produces an explicit MCP tool error describing uncertain commit, rather than a successful acknowledgment. This prevents sequential Write then Edit from coalescing into one delayed VFS upload before the first mutation has a historical snapshot.
+Successful sandbox Write/Edit results for attached Memory paths are held until the authoritative head has a new immutable version attributed to the authenticated public Session. Write additionally requires the SHA-256 of the exact requested content. The checkpoint is scoped by the live Session mount, Workspace and Store; existing permission checks still execute before the tool. A bounded 30-second finalizer continues independently of the result-upload request. Upload/storage failure or expiry produces an explicit tool error describing uncertain commit. This prevents sequential Write then Edit from coalescing into one delayed VFS upload before the first mutation has a historical snapshot.
 
-Only successful matching JSON-RPC completion results are delayed. Progress notifications, failed tool results, unrelated IDs, other tools and non-Memory paths preserve their behavior. JSON and SSE completion paths share the barrier; successful payloads and SSE event bytes are preserved. Memory uses the existing writes cache so filesystem seek/append buffering and uncached reads remain unchanged. This boundary does not serialize concurrent independent filesystem writers or promise a Bash mutation barrier.
+Only successful results for registered Memory mutations enter `finalizing`. Failed tool results, other tools and non-Memory paths retain their normal completion path. Memory uses the existing writes cache so filesystem seek/append buffering and uncached reads remain unchanged. This boundary does not serialize concurrent independent filesystem writers or promise a Bash mutation barrier.
+
+## 内置工具写入与工具调用扩展点
+
+上两节的写入拦截与写入完成屏障已接入 [沙箱工具调用领取](sandbox-tool-call-claim.md) 的两个通用扩展点，调用协议本身不包含 Memory 规则：
+
+| 规则 | 扩展点 | 行为 |
+| --- | --- | --- |
+| 写入拦截 | 提交前校验 | 对目标位于 `/mnt/memory` 下的 Write / Edit，按当前 Session 挂载与 Store 状态检查写权限；拒绝时以原拒绝文案作为工具错误，调用直接为 `failed`，沙箱不会领取 |
+| 写入完成屏障 | 提交前校验登记、结果后处理执行 | 提交时记录 Store、Memory 路径、写入前版本 ID，Write 另记期望 SHA-256，写入 `finalizer_state`；成功结果进入 `finalizing`，以 100 毫秒间隔轮询，确认出现本 Session 创建且哈希匹配的新版本后写 `succeeded`；30 秒截止或查询失败时改写为现有的“commit could not be confirmed”工具错误 |
+
+`finalizer_state` 的 schema 由 `internal/codesessions/tool_call_memory.go` 定义并在读取时解析，DB 调用协议不读取其字段。Memory 策略与提交确认复用 `sandbox_memory_mutation.go` 和 `sandbox_memory_commit.go`，HTTP 调用服务只负责在扩展点调用它们。
+
+写入完成屏障仍然保证同一线程中先后的 Write 与 Edit 各自生成历史版本：DSH 在调用到达终态前不会开始下一次工具调用，而 `finalizing` 对 DSH 是非终态。与现状一致，该屏障不串行化并发的独立写入方，也不覆盖 Bash 对 Memory 路径的修改。
+
+验收沿用 `chat brain-memory` 的只读挂载拒写，并补充：Store 在沙箱创建后归档时 Write 直接为 `failed` 且沙箱文件不变；可写挂载的 Write 经 `finalizing` 变为 `succeeded`；版本未落库时到期变为 `failed` 并返回原文案；接收实例在 `finalizing` 期间退出时由扫描器完成；连续 Write 与 Edit 产生两个版本。
+
+后续评估：若 Manager 对 `/mnt/memory` 下的写入等待 rclone 上传完成后再返回结果，工具结果本身即可反映是否已持久化，已归档 Store 的写入由 Filestore 上传鉴权拒绝，上述两个接入可以移除。该方向依赖挂载层支持逐次同步上传并保持每次写入一个版本的语义，需单独设计，不属于工具调用协议的迁移范围。

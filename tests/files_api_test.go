@@ -1279,7 +1279,7 @@ func seedTestLLMProviderForWorkspace(
 	if err != nil {
 		t.Fatalf("generate test LLM provider ID: %v", err)
 	}
-	existing, err := app.db.ListOrganizationLLMProviders(context.Background(), organizationUUID)
+	existing, err := app.db.ListLLMProviders(context.Background(), organizationUUID)
 	if err != nil {
 		t.Fatalf("list test LLM providers: %v", err)
 	}
@@ -1289,17 +1289,17 @@ func seedTestLLMProviderForWorkspace(
 	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
-		UUID:             uuid.NewV4().String(),
-		ExternalID:       externalID,
-		OrganizationUUID: organizationUUID,
-		WorkspaceUUID:    workspaceUUID,
-		Name:             name,
-		Slug:             llmproviders.NextDefaultSlug(slugs),
-		BaseURL:          baseURL,
-		APIKeyLast4:      apiKey[len(apiKey)-4:],
-		Models:           db.LLMModels{}.WithIDs(modelIDs),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          externalID,
+		OrganizationUUID:    organizationUUID,
+		SecretWorkspaceUUID: workspaceUUID,
+		Name:                name,
+		Slug:                llmproviders.NextDefaultSlug(slugs),
+		BaseURL:             baseURL,
+		APIKeyLast4:         apiKey[len(apiKey)-4:],
+		Models:              db.LLMModels{}.WithIDs(modelIDs),
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	plaintext := []byte(apiKey)
 	envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), plaintext)
@@ -1318,24 +1318,15 @@ func seedTestLLMProviderForWorkspace(
 func clearTestLLMProviders(t *testing.T, app *testApp) {
 	t.Helper()
 	ids := getDefaultDBIDs(t, app.pool)
-	providers, err := app.db.ListLLMProviders(context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID)
+	providers, err := app.db.ListLLMProviders(context.Background(), ids.OrganizationUUID)
 	if err != nil {
 		t.Fatalf("list test LLM providers: %v", err)
 	}
 	for _, provider := range providers {
 		if err := app.db.DeleteLLMProvider(
-			context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID, provider.ExternalID,
+			context.Background(), ids.OrganizationUUID, provider.ExternalID,
 		); err != nil {
 			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
-		}
-	}
-	organizations, err := app.db.ListLLMProviders(t.Context(), ids.OrganizationUUID, "")
-	if err != nil {
-		t.Fatalf("list organization LLM providers: %v", err)
-	}
-	for _, organization := range organizations {
-		if err := app.db.DeleteLLMProvider(t.Context(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
-			t.Fatalf("delete organization LLM provider: %v", err)
 		}
 	}
 

@@ -566,3 +566,19 @@ func testGitRepository(raw json.RawMessage) *db.SessionResourceGitHubRepository 
 	repository.Checkout = fields.Checkout
 	return &repository
 }
+
+func TestEnvironmentManagerShellCommandExportsTunnelOnlyWhenSessionPortsEnabled(t *testing.T) {
+	cfg := config.Config{}
+	cfg.EnvironmentRunner.AgentMode = "brain"
+	if command := environmentManagerShellCommand("cse_disabled", cfg); strings.Contains(command, "TUNNEL_ENABLED") {
+		t.Fatalf("disabled session ports exported tunnel flag:\n%s", command)
+	}
+	cfg.SessionPorts.DomainSuffix = "preview.localhost"
+	command := environmentManagerShellCommand("cse_enabled", cfg)
+	if !strings.Contains(command, "\nexport TUNNEL_ENABLED=true\n") {
+		t.Fatalf("enabled session ports did not export tunnel flag:\n%s", command)
+	}
+	if strings.Index(command, "TUNNEL_ENABLED") > strings.Index(command, "exec ") {
+		t.Fatal("tunnel flag exported after exec")
+	}
+}

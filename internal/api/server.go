@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/nats-io/nats.go"
 	"github.com/riverqueue/river"
 	"log/slog"
 	"net/http"
@@ -37,9 +38,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
+	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -69,6 +73,7 @@ type Server struct {
 	platformAuth         *platformauth.EmailProvider
 	filestoreCredentials *filestoreapi.TokenCredentials
 	vaultSecrets         *secrets.Service
+	envOAuthProviders    *platformoauth.Resolver
 	admin                *adminapi.Handler
 	agents               *agents.Handler
 	batch                *batches.Handler
@@ -91,6 +96,7 @@ type Server struct {
 	tunnelBroker         *tunnelsapi.Broker
 	vaults               *vaultsapi.Handler
 	webhooks             *webhooksapi.Handler
+	sessionPortTunnel    *porttunnel.Handler
 }
 
 // ServerDeps 汇总组装 HTTP API Server 所需依赖。
@@ -98,6 +104,8 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	ToolCallNotifications  *nats.Conn
+	ToolCallContext        context.Context
 	InvitationJobs         *river.Client[*sql.Tx]
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
@@ -124,6 +132,9 @@ type ServerDeps struct {
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
+	SessionPorts           *sessionports.Settings
+	SessionPortRegistry    *porttunnel.Registry
+	SessionPortRouter      porttunnel.Router
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -178,8 +189,10 @@ func NewServer(deps ServerDeps) *Server {
 		}
 		oauthRefreshLease = lease
 	}
+	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, componentLogger("env_oauth_providers"))
 	s := &Server{
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
+		envOAuthProviders:    envOAuthProviders,
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -196,7 +209,7 @@ func NewServer(deps ServerDeps) *Server {
 		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
 		workspaceChannels: workspaceChannels,
 		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
+		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
 		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
 		deploymentRuns:    deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
@@ -219,6 +232,10 @@ func NewServer(deps ServerDeps) *Server {
 	router.Use(s.requestIDMiddleware)
 	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
+	if gateway := s.configureSessionPorts(deps, codeSessionService, componentLogger("session_port_tunnel"), componentLogger("session_port_gateway")); gateway != nil {
+		router.Use(gateway.Middleware)
+		router.Get(porttunnel.Path, s.sessionPortTunnel.ServeHTTP)
+	}
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -233,6 +250,9 @@ func NewServer(deps ServerDeps) *Server {
 	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
 	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
+	if deps.ToolCallContext != nil {
+		go s.codeSessions.RunToolCallMaintenance(deps.ToolCallContext)
+	}
 	s.router = router
 	return s
 }
@@ -331,6 +351,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
+	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
@@ -345,6 +366,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
+			r.Get("/env-oauth/providers", s.handleEnvOAuthProviders)
+			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
 				// 配置校验保证 enabled 时 backend 只会是受支持的值。
@@ -443,6 +466,9 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if abort, ok := recovered.(error); ok && errors.Is(abort, http.ErrAbortHandler) {
+					panic(recovered)
+				}
 				requestID := httpapi.RequestID(r.Context())
 				s.logger.ErrorContext(
 					r.Context(),

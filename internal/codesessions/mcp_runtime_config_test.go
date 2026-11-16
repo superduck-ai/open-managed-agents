@@ -105,7 +105,7 @@ func TestSessionContextBuildsMCPFromSourceWithCurrentIdentity(t *testing.T) {
 	for _, token := range []string{"first-epoch-token", "recovered-epoch-token"} {
 		identity := runtimeMCPTestIdentity()
 		identity.SessionIngressToken = token
-		context, err := sessionContextFromCodeSession(record, identity, config.Config{Tunnel: runtimeMCPTestConfig()})
+		context, err := sessionContextFromCodeSession(record, identity, config.Config{Tunnel: runtimeMCPTestConfig()}, builtinToolCatalog{})
 		if err != nil {
 			t.Fatal(err)
 		}

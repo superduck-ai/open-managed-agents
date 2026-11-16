@@ -118,7 +118,7 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 
 1. workspace API key、platform `sessionKey` cookie 按原鉴权链处理；lifecycle-bound code-session token 只在此 `POST` 路径被接受。
 2. code-session token 按 hash 查询，且 code session 必须 active、public session 未 terminated、`worker_lease_expires_at > now()`；失败返回 `401 authentication_error`。
-3. 请求体通过 `http.MaxBytesReader` 限制为 32 MiB；只偷看顶层 `model` 后按当前 workspace 精确解析 Provider，剩余请求体继续流式转发。模型未配置返回 `400`，workspace 无 Provider 返回 `503`。
+3. 请求体通过 `http.MaxBytesReader` 限制为 32 MiB；只偷看顶层 `model` 后按当前组织模型目录精确解析 Provider，剩余请求体继续流式转发。模型未配置返回 `400`，组织无 Provider 返回 `503`。
 4. 目标为该 Provider 的 `{base_url}/v1/messages`；请求 body 原样转发，不改写模型 ID。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
 6. 解密 Provider Key，并设置为上游 `X-Api-Key`；Key 不进入 sandbox。
@@ -325,7 +325,7 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 Brain 的 sandbox 启动请求携带独立的 sandbox session-ingress JWT、use_code_sessions、会话 ID 和 relay 开关。该 JWT 使用 `role=sandbox`、`sandbox_uuid` 和签名的 Code Session/租户身份，不携带 worker epoch。懒启动和预热均在具体 Sandbox 记录建立后签发，不旋转已有 Brain owner 的凭据。认证只经 Manager stdin 传递，不进入命令行或文件。
 
-Brain owner 领取会推进 worker epoch，而沙箱、relay 与文件系统可以跨 owner 复用，因此沙箱凭据绑定沙箱生命周期。代理握手和 Git commit 签名逐次通过 Yourbatis 校验 Code Session active、公共 Session 未删除/终止、Work active、租户及父子 UUID 一致、transport 为 `claim`，且指定 Sandbox 有 provider ID、处于 creating/running。creating 仅用于 Manager 初始化期间的 source 出站。Sandbox 进入 stopping/stopped/failed 后，新请求立即拒绝；替换沙箱获得不同 UUID，不能复用旧凭据。普通 worker 的 ingress JWT 验证不校验 epoch，执行授权仍校验当前 epoch；sandbox JWT 不可用于 worker 注册、心跳、事件投递、沙箱 MCP 网关或模型接口。
+Brain owner 领取会推进 worker epoch，而沙箱、relay 与文件系统可以跨 owner 复用，因此沙箱凭据绑定沙箱生命周期。代理握手和 Git commit 签名逐次通过 Yourbatis 校验 Code Session active、公共 Session 未删除/终止、Work active、租户及父子 UUID 一致、transport 为 `claim`，且指定 Sandbox 有 provider ID、处于 creating/running。creating 用于 Manager 初始化期间的 source 出站和工具领取就绪登记。工具领取、事件与结果入口也使用 sandbox JWT，实际领取要求 running。Sandbox 进入 stopping/stopped/failed 后，新请求立即拒绝；替换沙箱获得不同 UUID，不能复用旧凭据。普通 worker 的 ingress JWT 验证不校验 epoch，执行授权仍校验当前 epoch；sandbox JWT 不可用于 worker 注册、心跳、事件投递或模型接口。
 
 升级前已存活的 Brain Manager 仍持有旧 worker JWT，需要重启 Manager 并经 stdin 注入该沙箱的新凭据一次；之后 Brain owner 变更不需要重新签发或重启 relay。Claude 模式继续使用与其进程生命周期一致的 worker JWT。
 

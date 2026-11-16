@@ -46,3 +46,27 @@ func readyEnvCredential(secretName, placeholder string) db.VaultCredential {
 	})
 	return db.VaultCredential{AuthType: "environment_variable", Auth: auth}
 }
+
+func TestPrepareEnvCredentialMountMergesEnvOAuth(t *testing.T) {
+	t.Parallel()
+
+	got, err := PrepareEnvCredentialMount(true, []db.VaultCredential{
+		readyEnvCredential("SHARED", "oma_ph_env"),
+		envOAuthCredentialRow("SHARED", "oma_ph_oauth"),
+		envOAuthCredentialRow("LARKSUITE_CLI_USER_ACCESS_TOKEN", "oma_ph_feishu"),
+	})
+	if err != nil {
+		t.Fatalf("PrepareEnvCredentialMount: %v", err)
+	}
+	if got["SHARED"] != "oma_ph_env" {
+		t.Fatalf("SHARED = %q, want environment_variable priority", got["SHARED"])
+	}
+	if got["LARKSUITE_CLI_USER_ACCESS_TOKEN"] != "oma_ph_feishu" {
+		t.Fatalf("LARKSUITE_CLI_USER_ACCESS_TOKEN = %q", got["LARKSUITE_CLI_USER_ACCESS_TOKEN"])
+	}
+
+	_, err = PrepareEnvCredentialMount(false, []db.VaultCredential{envOAuthCredentialRow("TOKEN", "oma_ph_oauth")})
+	if !errors.Is(err, ErrMITMRequiredForEnvCredentials) {
+		t.Fatalf("error = %v, want ErrMITMRequiredForEnvCredentials", err)
+	}
+}

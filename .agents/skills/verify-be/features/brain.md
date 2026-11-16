@@ -11,20 +11,19 @@ just verify-be chat doctor brain-skills --worker-image oma/managed-agent-sandbox
 just verify-be chat brain-skills --worker-image oma/managed-agent-sandbox:latest
 ```
 
-Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须有
-`/usr/local/bin/mcp-server`。新增的公开懒启动阶段需要 FUSE，仍不使用镜像中的 Claude 循环。
+Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须有包含工具领取循环的 `/usr/local/bin/environment-manager`。新增的公开懒启动阶段需要 FUSE，仍不使用镜像中的 Claude 循环。
 
-`brain_fencing` 使用 CCRv2 worker/register 验证跨租户拒绝和领取实例冲突，使用 sandbox/mcp 验证旧 epoch 凭据拒绝。
+`brain_fencing` 使用 CCRv2 worker/register 验证跨租户拒绝和领取实例冲突，使用 threads/root/tool-calls 验证旧 epoch 凭据拒绝。
 `brain_roundtrip` 同时启动两个 dsh 节点，实际消费 JetStream，核对公开 SSE preview、最终消息、
 历史及单次模型请求。固定上游包含 thinking 和文本；SSE 与历史都必须只出现一次
 `span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致；thinking 仅保留状态，不得包含正文。
-`brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
+`brain_mcp_loop` 让真实原生循环请求 sandbox tool claims Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
-`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `subagent`、`send_message`、`list_agents`、`interrupt_agent`。
-每次模型响应使用独立 message ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
+`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`skill`、`web_search`、`web_fetch`。此 fixture 未配置子 Agent，不暴露子 Agent 控制工具。
+每次模型响应使用独立 message ID，每个新工具调用使用独立 call ID，避免不同回合被当作重复事件或幂等重提。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
 processed 回执通过 CCRv2 delivery 接口确认。
 `brain_takeover` 杀掉节点，先投递待恢复输入，再等待真实租约过期，重新派发任务并启动新节点，检查 epoch 增长、旧节点
-MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史可继续对话。
+工具提交请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史可继续对话。
 旧 `/internal/brain/` 接口不再参与验证；不需要 `OMA_BRAIN_TOKEN`。
 执行权使用既有 Code Session 的 worker epoch、binding 和 60 秒租约，无独立 Brain 表。
 `brain_retirement` 终止 Code Session，确认尚未过期的 owner 无法启动沙箱或调用 MCP。
@@ -32,23 +31,23 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 `brain_lazy_denied` 通过公开 API 创建禁用工具的会话，核对工具拒绝后沙箱创建次数为零。
 `brain_lazy_text` 通过公开 API 创建纯文本会话，核对回复与历史、沙箱创建次数为零。
 `brain_lazy_tool` 在两个 Go Runner 与两个 dsh 节点下，核对首次获准工具只创建一个沙箱、
-真实挂载和 MCP 写入，以及后续工具复用。随后删除原沙箱模拟 Provider 过期，核对再次 Write 创建且仅创建一个 replacement，并在新沙箱验证文件字节。
+真实挂载和 工具领取写入，以及后续工具复用。随后删除原沙箱模拟 Provider 过期，核对再次 Write 创建且仅创建一个 replacement，并在新沙箱验证文件字节。
 `brain_lazy_cleanup` 检查公开删除后，包含从未创建沙箱的会话在内的逻辑 Work 均为 stopped。
 
-整个场景使用真实 Go 后端、PostgreSQL、Redis、三节点 NATS 和 Docker MCP；只模拟上游 LLM。
+整个场景使用真实 Go 后端、PostgreSQL、Redis、三节点 NATS 和 Docker Manager；只模拟上游 LLM。
 退出时终止所有 run-owned Brain 进程并删除 MCP 容器；源码保持不变。
 不覆盖网络分区、云端 TTL、长 Bash、自动工具对账、真实模型或生产性能。
 
 `chat brain-memory` 从旧 Crush 方案迁入 Memory 目录与加载回归。首次模型请求必须看到
 已 attach store 的名称、路径、权限、description 和 instructions，但不包含正文。
-拒绝 Read 和纯文本均不创建沙箱；首次获准 Read 经真实 MCP/FUSE 返回正文，后续调用复用。
+拒绝 Read 和纯文本均不创建沙箱；首次获准 Read 经真实 工具领取/FUSE 返回正文，后续调用复用。
 公开历史关联、只读拒写及源字节保持都通过后产生 `brain_memory_loaded`。
 六个基础 Memory 场景另见 [Memory](memory.md)。
 
 `chat brain-skills` 使用公开 Skills API 上传 SKILL.md 和 reference，绑定 Agent 的 latest 引用，
 启动两个 Runner、两个真实 Brain 节点。`brain_skills_catalog` 检查分层 system、Agent 原文、
 名称/描述/固定版本和沙箱路径，并确认无 archive 正文、无沙箱创建。
-随后上传新版本，旧会话通过真实 MCP Read 读取原版本 SKILL.md 和 reference，形成
+随后上传新版本，旧会话通过真实 工具领取 Read 读取原版本 SKILL.md 和 reference，形成
 `brain_skills_read`；实际只读 FUSE 挂载拒绝写入且原字节保持，形成 `brain_skills_readonly`。
 新会话解析 latest 并读到新版本，形成 `brain_skills_snapshot`；公开删除与 Work 停止、
 run-owned 节点和容器清理形成 `brain_skills_cleanup`。
@@ -56,7 +55,7 @@ run-owned 节点和容器清理形成 `brain_skills_cleanup`。
 
 ## 压缩通知与恢复
 
-`chat doctor brain-compaction` / `chat brain-compaction` 使用真实 DSH 可执行文件、公开 API、Runner、PostgreSQL、Redis、JetStream、MinIO 和沙箱 MCP。上游模型仍由 Go HTTP 服务提供固定响应，不验证真实摘要质量。
+`chat doctor brain-compaction` / `chat brain-compaction` 使用真实 DSH 可执行文件、公开 API、Runner、PostgreSQL、Redis、JetStream、MinIO 和沙箱工具领取。上游模型仍由 Go HTTP 服务提供固定响应，不验证真实摘要质量。
 
 根会话与预定义子 Agent 分别运行：模型目录固定测试窗口 128000、输出上限 8192，先用长用户输入形成已提交历史，再在下一轮触发原生压力摘要，所有实际模型请求的输出预算必须不超过模型上限。子 Agent 场景的根模型使用大窗口以验证通知隔离；子实例通过真实 Write 写入文件并核对字节。
 
@@ -73,3 +72,11 @@ run-owned 节点和容器清理形成 `brain_skills_cleanup`。
 使用公开 Session、生产 Runner、真实 DSH 进程、Docker Worker、FUSE 与隔离依赖。验证共享 fixture 的 CodeSession Service 也按生产组装注入附件 Filestore。不覆盖视觉准确率基准、计费、所有模型后端、跨实例恢复或云端沙箱。报告不能把此场景描述为脚本模型。临时配置、Brain 与 Worker/Compose 清理沿用现有 verify-be。
 
 Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声明 `--claude-agent-version` 与 `--claude-path`。旧测试镜像缺少这两个启动参数时提前拒绝，不能用 FUSE preflight 成功代替 Manager 启动兼容性。
+
+## 真实模型的六个内置工具
+
+`chat doctor brain-tools` / `chat brain-tools` 使用显式的 `VERIFY_BE_MODEL_PROVIDERS` 私有 model-providers.yaml 路径、`VERIFY_BE_MODEL` 和 `OMA_BRAIN_BINARY`，不读取开发环境的默认模型凭据。模型只启用文本输入，适用于 Anthropic Messages 兼容模型。
+
+场景通过公开 API 创建 Agent 与 Session，由真实 DSH 请求模型依次使用 Write、Edit、Read、Grep、Glob 和 Bash。生产 Runner 启动镜像内的 Linux Manager，工具通过持久化领取协议执行。必须同时观察六种公开工具事件、实际文件的 `beta-marker\n` 字节、只有一个沙箱，以及数据库中至少六条 succeeded 调用。对应阶段为 `real_model_six_tools`、`real_sandbox_bytes`、`real_claims_persisted`。随后直接通过生产协议向同一个真实 Manager 提交调用，检查相同身份重提只写入一个字节、大结果经 MinIO 还原、用户取消与 deadline 均确认 Bash 退出并保留部分输出，形成 `live_claim_replay_and_object` 和 `live_claim_cancel_and_deadline`。任一缺失都失败，不能只依据模型回答通过。
+
+该场景是一次真实模型 smoke，不覆盖模型质量基准、云端分配、停止确认丢失、崩溃窗口或性能。凭据只写入隔离 workspace 的加密 provider 记录，证据报告不记录 API key。`chat brain` 另用固定模型验证多节点与恢复，`chat roundtrip` 保留为聊天烟测。

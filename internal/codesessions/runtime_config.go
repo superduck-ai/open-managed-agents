@@ -82,19 +82,6 @@ func runtimeRootToolsets(agentSnapshot json.RawMessage) ([]toolPermissionToolset
 	return snapshot.Tools, nil
 }
 
-func runtimeToolPolicies(tools []toolPermissionToolset) map[string]string {
-	policies := make(map[string]string, len(sandboxToolNames))
-	for _, name := range sandboxToolNames {
-		remoteName := managedAgentToolName(name)
-		permission := resolveAgentToolPermission(tools, remoteName)
-		if permission == resolvedToolPermissionAuto {
-			permission = resolvedToolPermissionAsk
-		}
-		policies[remoteName] = string(permission)
-	}
-	return policies
-}
-
 func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.CodeSession, threadID string) (map[string]string, error) {
 	if record.SessionExternalID == "" {
 		return nil, nil
@@ -123,5 +110,5 @@ func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.Code
 	if err != nil {
 		return nil, err
 	}
-	return runtimeToolPolicies(tools), nil
+	return s.builtinTools().toolPolicies(tools), nil
 }

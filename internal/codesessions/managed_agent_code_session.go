@@ -242,7 +242,8 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 	if err != nil {
 		return nil, err
 	}
-	subagents, err := resolveRuntimeSubagents(ctx, s.db, session)
+	catalog := s.builtinTools()
+	subagents, err := resolveRuntimeSubagents(ctx, s.db, session, catalog)
 	if err != nil {
 		return nil, err
 	}
@@ -251,8 +252,8 @@ func (s *Service) managedAgentRuntimeConfig(ctx context.Context, session db.Sess
 	if err != nil {
 		return nil, err
 	}
-	config.RuntimeTools = enabledSandboxTools(tools)
-	config.RuntimeToolPolicies = runtimeToolPolicies(tools)
+	config.RuntimeTools = catalog.enabledSandboxTools(tools)
+	config.RuntimeToolPolicies = catalog.toolPolicies(tools)
 	return config.encode()
 }
 

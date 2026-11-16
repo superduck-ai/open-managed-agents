@@ -21,6 +21,7 @@ const (
 	PreconditionFailed
 	RequestTooLarge
 	Unavailable
+	Gone
 )
 
 // Error carries an application error's public contract and private cause.

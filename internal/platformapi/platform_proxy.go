@@ -64,7 +64,6 @@ func handleProxyModel(database *db.DB, secretService *secrets.Service, client *h
 			database,
 			secretService,
 			principal.OrganizationUUID,
-			principal.WorkspaceUUID,
 			modelID,
 		)
 		if err != nil {

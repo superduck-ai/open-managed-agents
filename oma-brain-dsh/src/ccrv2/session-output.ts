@@ -65,7 +65,7 @@ export function sessionEventOutput(sessionId: string, inputId: string, event: Se
   if (record) {
     if (record.type !== "plugin:oma/assistant-block") return [];
     const { output } = record.data as { output: AssistantBlockOutput };
-    return [output];
+    return output.model_request_start_id ? [] : [output];
   }
   const prefix = threadId ? `${sessionId}_${threadId}` : inputId;
   if (!prefix) return [];

@@ -39,12 +39,12 @@ func TestOrganizationLLMProviderMigrationFromMain(t *testing.T) {
 	var nullable string
 	if err := database.QueryRowContext(ctx, `
 		select is_nullable from information_schema.columns
-		where table_schema = current_schema() and table_name = 'llm_providers' and column_name = 'workspace_uuid'
+		where table_schema = current_schema() and table_name = 'llm_providers' and column_name = 'secret_workspace_uuid'
 	`).Scan(&nullable); err != nil {
 		t.Fatal(err)
 	}
 	if nullable != "YES" {
-		t.Fatal("organization providers require a nullable workspace_uuid")
+		t.Fatal("provider encryption origin must remain nullable after organization ownership migration")
 	}
 	var indexExists bool
 	if err := database.QueryRowContext(ctx, `

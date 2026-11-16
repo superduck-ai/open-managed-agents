@@ -126,7 +126,7 @@ test.each([
   { record: undefined, method: 'client_secret_post', encoding: 'form' },
   { record: { ...builtin, token_endpoint_encoding: 'json' }, method: 'client_secret_post', encoding: 'json' },
   {
-    record: { ...builtin, name: 'Friday', token_endpoint_auth_method: 'client_secret_basic' },
+    record: { ...builtin, name: 'Custom', token_endpoint_auth_method: 'client_secret_basic' },
     method: 'client_secret_basic',
     encoding: 'form',
   },
@@ -290,15 +290,17 @@ test('所有平台客户端统一提供更多操作', async () => {
   expect(screen.getAllByRole('button', { name: /的更多操作$/ })).toHaveLength(2);
 });
 
-test('Friday 与飞书分别展示，Friday 使用独立端点首配', async () => {
-  const friday = {
+test('Custom 与飞书分别展示，Custom 使用独立端点首配', async () => {
+  const custom = {
     ...builtin,
-    id: 'poap_FridayBuiltinOAuthClient',
-    provider_key: 'builtin:friday',
-    name: 'Friday',
-    default_secret_name: 'FRIDAY_4A_TOKEN',
-    authorize_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/authorize',
-    token_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/token',
+    id: 'poap_example',
+    provider_key: 'custom:poap_example',
+    builtin: false,
+    protected: false,
+    name: 'Custom',
+    default_secret_name: 'CUSTOM_ACCESS_TOKEN',
+    authorize_endpoint: 'https://oauth.example.test/open/api/oauth/authorize',
+    token_endpoint: 'https://oauth.example.test/open/api/oauth/token',
     token_endpoint_auth_method: 'client_secret_basic',
     token_endpoint_encoding: 'form',
     scope: 'read',
@@ -310,21 +312,21 @@ test('Friday 与飞书分别展示，Friday 使用独立端点首配', async () 
   const writes: RequestInit[] = [];
   globalThis.fetch = mock(async (input, options) => {
     if (options?.method === 'PATCH') {
-      expect(String(input)).toContain(friday.id);
+      expect(String(input)).toContain(custom.id);
       writes.push(options);
-      return Response.json({ ...friday, configured: true });
+      return Response.json({ ...custom, configured: true });
     }
-    return Response.json([builtin, friday]);
+    return Response.json([builtin, custom]);
   }) as typeof fetch;
   mount();
   expect(await screen.findByText('飞书')).toBeTruthy();
-  fireEvent.click(await screen.findByText('Friday'));
-  expect(((await screen.findByLabelText('名称')) as HTMLInputElement).value).toBe('Friday');
-  expect((screen.getByLabelText('授权端点') as HTMLInputElement).value).toBe(friday.authorize_endpoint);
+  fireEvent.click(await screen.findByText('Custom'));
+  expect(((await screen.findByLabelText('名称')) as HTMLInputElement).value).toBe('Custom');
+  expect((screen.getByLabelText('授权端点') as HTMLInputElement).value).toBe(custom.authorize_endpoint);
   expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(false);
   expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
-  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'synthetic-friday-id' } });
-  fireEvent.change(screen.getByLabelText(/^客户端密钥/), { target: { value: 'synthetic-friday-secret' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'synthetic-custom-id' } });
+  fireEvent.change(screen.getByLabelText(/^客户端密钥/), { target: { value: 'synthetic-custom-secret' } });
   fireEvent.change(screen.getByLabelText(/^Scope/), { target: { value: 'offline_access' } });
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false);
   fireEvent.change(screen.getByLabelText(/^Scope/), { target: { value: 'read' } });
@@ -332,16 +334,16 @@ test('Friday 与飞书分别展示，Friday 使用独立端点首配', async () 
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
-    default_secret_name: 'FRIDAY_4A_TOKEN',
+    default_secret_name: 'CUSTOM_ACCESS_TOKEN',
     logo_url: '',
     scope: 'read',
-    name: friday.name,
-    authorize_endpoint: friday.authorize_endpoint,
-    token_endpoint: friday.token_endpoint,
-    token_endpoint_auth_method: friday.token_endpoint_auth_method,
-    token_endpoint_encoding: friday.token_endpoint_encoding,
-    client_id: 'synthetic-friday-id',
-    client_secret: 'synthetic-friday-secret',
+    name: custom.name,
+    authorize_endpoint: custom.authorize_endpoint,
+    token_endpoint: custom.token_endpoint,
+    token_endpoint_auth_method: custom.token_endpoint_auth_method,
+    token_endpoint_encoding: custom.token_endpoint_encoding,
+    client_id: 'synthetic-custom-id',
+    client_secret: 'synthetic-custom-secret',
   });
 });
 

@@ -130,7 +130,7 @@ test('shows the provider loading error and retries', () => {
 
 test.each([
   ['builtin:feishu', 'Feishu', 'LARKSUITE_CLI_USER_ACCESS_TOKEN'],
-  ['builtin:friday', 'Friday', 'FRIDAY_4A_TOKEN'],
+  ['custom:poap_example', 'Custom', 'CUSTOM_ACCESS_TOKEN'],
   ['custom:example', 'Example', ''],
 ])('未选服务方时提示通用变量名，选择 %s 后使用对应默认值', (id, name, secretName) => {
   const onChange = mock(() => {});
@@ -139,7 +139,13 @@ test.each([
       values={{ ...values, envOAuthProviderId: '', secretName: '' }}
       providers={[
         ...providers,
-        { ...providers[0], id: 'builtin:friday', name: 'Friday', default_secret_name: 'FRIDAY_4A_TOKEN' },
+        {
+          ...providers[0],
+          id: 'custom:poap_example',
+          builtin: false,
+          name: 'Custom',
+          default_secret_name: 'CUSTOM_ACCESS_TOKEN',
+        },
       ]}
       providersLoading={false}
       providersError={null}

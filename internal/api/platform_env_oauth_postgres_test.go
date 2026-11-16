@@ -437,7 +437,7 @@ func TestPlatformOAuthProviderServicePostgres(t *testing.T) {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	providers, err := service.List(t.Context())
-	if err != nil || len(providers) != 3 {
+	if err != nil || len(providers) != 2 {
 		t.Fatalf("list = %+v: %v", providers, err)
 	}
 	scope := "read write"
@@ -657,7 +657,7 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 		t.Fatal("内置行身份或 CAS 错误")
 	}
 	rows, err := f.server.envOAuthProviders.ListProviders(t.Context())
-	if err != nil || len(rows) != 2 || !slices.ContainsFunc(rows, func(row vaultsapi.EnvOAuthProviderSnapshot) bool {
+	if err != nil || len(rows) != 1 || !slices.ContainsFunc(rows, func(row vaultsapi.EnvOAuthProviderSnapshot) bool {
 		return row.ProviderKey == "builtin:feishu" && row.Configured
 	}) || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
 		t.Fatal("组织元数据泄漏客户端或重复 seed")
@@ -666,11 +666,11 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 		t.Fatal("平台客户端删除失败", err)
 	}
 	rows, err = f.server.envOAuthProviders.ListProviders(t.Context())
-	if err != nil || len(rows) != 1 {
-		t.Fatal("删除后其他服务方不可用", err)
+	if err != nil || len(rows) != 0 {
+		t.Fatal("删除后服务方仍在目录中", err)
 	}
 	views, err := service.List(t.Context())
-	if err != nil || len(views) != 1 {
+	if err != nil || len(views) != 0 {
 		t.Fatal("删除后管理列表不可用", err)
 	}
 }

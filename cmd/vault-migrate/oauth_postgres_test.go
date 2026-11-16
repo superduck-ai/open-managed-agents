@@ -26,13 +26,7 @@ import (
 )
 
 func TestOAuthCrossProviderMigrationPostgres(t *testing.T) {
-	for _, builtinKey := range []string{"feishu", "friday"} {
-		t.Run(builtinKey, func(t *testing.T) { testOAuthCrossProviderMigrationPostgres(t, builtinKey) })
-	}
-}
-
-func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
-	t.Helper()
+	const builtinKey = "feishu"
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if address == "" {
 		t.Skip("需要隔离 PostgreSQL，跳过不代表通过")
@@ -80,7 +74,7 @@ func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
 		t.Fatal(err)
 	}
 	rows, err := database.ListSecretMigrationPage(t.Context(), "platform_oauth_providers", "")
-	if err != nil || len(rows) != 2 {
+	if err != nil || len(rows) != 1 {
 		t.Fatal(err)
 	}
 	var stale db.SecretMigrationRecord
@@ -108,7 +102,7 @@ func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
 	if err != nil || current.Version != provider.Version+1 || current.ClientIDEnvelope.KeyProvider != "hashicorp_vault" || current.ClientSecretEnvelope.KeyProvider != "hashicorp_vault" || !bytes.Equal(current.ClientIDEnvelope.Ciphertext, provider.ClientIDEnvelope.Ciphertext) {
 		t.Fatal("双信封跨提供方迁移失败")
 	}
-	testFridayVerifierRotation(t, database, oldService, service)
+	testCustomVerifierRotation(t, database, oldService, service)
 	resolver := platformoauth.NewResolver(database, service, slog.New(slog.DiscardHandler))
 	snapshot, err := resolver.ResolveEnvOAuthProvider(t.Context(), "builtin:"+builtinKey)
 	if err != nil {
@@ -120,13 +114,7 @@ func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
 			ClientSecret string `json:"client_secret"`
 			GrantType    string `json:"grant_type"`
 		}
-		if builtinKey == "friday" {
-			if err := r.ParseForm(); err != nil {
-				t.Error(err)
-			}
-			input.ClientID, input.ClientSecret, _ = r.BasicAuth()
-			input.GrantType = r.Form.Get("grant_type")
-		} else if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
 		}
 		if input.ClientID != "rotation-client" || input.ClientSecret != "rotation-secret" || input.GrantType != "refresh_token" {
@@ -140,9 +128,9 @@ func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
 	}
 }
 
-func testFridayVerifierRotation(t *testing.T, database *db.DB, original, target *secrets.Service) {
+func testCustomVerifierRotation(t *testing.T, database *db.DB, original, target *secrets.Service) {
 	t.Helper()
-	flow := db.EnvOAuthFlow{UUID: uuid.NewV4().String(), ExternalID: uuid.NewV4().String(), OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), VaultUUID: uuid.NewV4().String(), VaultExternalID: "vlt_friday", ProviderKey: "builtin:friday", SecretName: "FRIDAY_TOKEN", RedirectURL: "https://app.test/callback", AuthorizeEndpoint: "https://friday.test/authorize", TokenEndpoint: "https://friday.test/token", Scope: "read", TokenEndpointAuthMethod: "client_secret_basic", TokenEndpointEncoding: "form", NetworkingType: "unrestricted", Status: "pending", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Minute)}
+	flow := db.EnvOAuthFlow{UUID: uuid.NewV4().String(), ExternalID: uuid.NewV4().String(), OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), VaultUUID: uuid.NewV4().String(), VaultExternalID: "vlt_custom", ProviderKey: "builtin:feishu", SecretName: "CUSTOM_TOKEN", RedirectURL: "https://app.test/callback", AuthorizeEndpoint: "https://custom.test/authorize", TokenEndpoint: "https://custom.test/token", Scope: "read", TokenEndpointAuthMethod: "client_secret_basic", TokenEndpointEncoding: "form", NetworkingType: "unrestricted", Status: "pending", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Minute)}
 	envelope, err := platformoauth.SealClientField(t.Context(), original, platformoauth.FlowCodeVerifierBinding(flow), "synthetic-verifier")
 	if err != nil {
 		t.Fatal(err)
@@ -153,24 +141,24 @@ func testFridayVerifierRotation(t *testing.T, database *db.DB, original, target 
 	}
 	rows, err := database.ListSecretMigrationPage(t.Context(), "env_oauth_flows", "")
 	if err != nil || len(rows) != 1 {
-		t.Fatal("Friday verifier 没有进入轮换扫描", err)
+		t.Fatal("Custom verifier 没有进入轮换扫描", err)
 	}
 	next, count, err := migrateOAuthDocument(t.Context(), target, "env_oauth_flows", rows[0], "local", true)
 	if err != nil || count != 1 {
-		t.Fatal("Friday verifier 轮换失败", err)
+		t.Fatal("Custom verifier 轮换失败", err)
 	}
 	if err := database.SaveMigratedSecret(t.Context(), "env_oauth_flows", rows[0], next); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.SaveMigratedSecret(t.Context(), "env_oauth_flows", rows[0], next); !errors.Is(err, db.ErrVersionConflict) {
-		t.Fatal("Friday verifier 轮换未校验 CAS")
+		t.Fatal("Custom verifier 轮换未校验 CAS")
 	}
 	stored, err := database.GetEnvOAuthFlow(t.Context(), flow.ExternalID)
 	if err != nil || stored.ClientIDEnvelope != nil || stored.CodeVerifierEnvelope.KeyProvider != "hashicorp_vault" {
-		t.Fatal("Friday verifier 扫描/NULL 错误", err)
+		t.Fatal("Custom verifier 扫描/NULL 错误", err)
 	}
 	verifier, err := platformoauth.OpenClientField(t.Context(), target, platformoauth.FlowCodeVerifierBinding(stored), stored.CodeVerifierEnvelope)
 	if err != nil || verifier != "synthetic-verifier" {
-		t.Fatal("Friday verifier 轮换不可解密", err)
+		t.Fatal("Custom verifier 轮换不可解密", err)
 	}
 }

@@ -256,7 +256,7 @@ function OAuthProvidersTable({
           <DataTableRow key={provider.id} clickable onClick={() => onEdit(provider)}>
             <DataTableCell edge="start" className="font-medium">
               <span className="flex items-center gap-2">
-                <OAuthProviderAvatar providerKey={provider.provider_key} logoUrl={provider.logo_url} />
+                <OAuthProviderAvatar logoUrl={provider.logo_url} />
                 <span>{provider.name}</span>
               </span>
             </DataTableCell>

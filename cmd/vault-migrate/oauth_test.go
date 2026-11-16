@@ -29,7 +29,7 @@ func (k *oauthWrappingKey) WrapDEK(ctx context.Context, dek []byte) (secrets.Wra
 }
 
 func TestOAuthCrossProviderMigrationAndAtomicFailure(t *testing.T) {
-	for _, externalID := range []string{"poap_fixture", "poap_FridayBuiltinOAuthClient"} {
+	for _, externalID := range []string{"poap_fixture", "poap_FeishuBuiltinOAuthClient"} {
 		t.Run(externalID, func(t *testing.T) { testOAuthCrossProviderMigration(t, externalID) })
 	}
 }

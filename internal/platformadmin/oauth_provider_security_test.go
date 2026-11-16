@@ -21,7 +21,7 @@ type oauthProviderStoreStub struct {
 }
 
 func (s *oauthProviderStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
-	other := "friday"
+	other := "custom"
 	if s.provider.BuiltinKey == other {
 		other = "feishu"
 	}
@@ -160,27 +160,27 @@ func TestOAuthProviderListDoesNotCacheOrExposeSecret(t *testing.T) {
 	}
 }
 
-func TestOAuthProviderFridayConfiguration(t *testing.T) {
+func TestOAuthProviderCustomConfiguration(t *testing.T) {
 	service, store, records := oauthServiceFixture(t)
-	store.provider.ExternalID, store.provider.BuiltinKey, store.provider.Name = "poap_FridayBuiltinOAuthClient", "friday", "Friday"
+	store.provider.ExternalID, store.provider.BuiltinKey, store.provider.Name = "poap_example", "", "Custom"
 	store.provider.Scope, store.provider.TokenEndpointAuthMethod, store.provider.TokenEndpointEncoding = "read", "client_secret_basic", "form"
-	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, ClientID: new("synthetic-friday-client"), ClientSecret: new("synthetic-friday-secret")})
-	if err != nil || view.ProviderKey != "builtin:friday" || !view.Configured {
-		t.Fatal("Friday 首配失败", err)
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, ClientID: new("synthetic-custom-client"), ClientSecret: new("synthetic-custom-secret")})
+	if err != nil || view.ProviderKey != "custom:poap_example" || !view.Configured {
+		t.Fatal("Custom 首配失败", err)
 	}
 	original := bytes.Clone(store.provider.ClientIDEnvelope.Ciphertext)
 	view, err = service.Update(t.Context(), Actor{}, view.ID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, ClientSecret: new("synthetic-rotated-secret")})
 	if err != nil || !bytes.Equal(original, store.provider.ClientIDEnvelope.Ciphertext) {
-		t.Fatal("Friday 轮换破坏客户端 ID", err)
+		t.Fatal("Custom 轮换破坏客户端 ID", err)
 	}
 	encoded, err := json.Marshal(view)
 	if err != nil || bytes.Contains(encoded, []byte("synthetic-rotated-secret")) {
-		t.Fatal("Friday 响应泄漏秘密")
+		t.Fatal("Custom 响应泄漏秘密")
 	}
 	for _, record := range *records {
 		record.Attrs(func(attr slog.Attr) bool {
-			if attr.Key == "provider_key" && attr.Value.String() != "builtin:friday" {
-				t.Error("Friday 审计身份错误")
+			if attr.Key == "provider_key" && attr.Value.String() != "custom:poap_example" {
+				t.Error("Custom 审计身份错误")
 			}
 			return true
 		})

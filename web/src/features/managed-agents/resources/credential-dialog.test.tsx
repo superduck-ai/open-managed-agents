@@ -454,18 +454,18 @@ test('选择无默认域名的自定义 OAuth 服务方并使用无限制网络'
   });
 });
 
-test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工令牌保存', async (name) => {
+test.each(['Feishu', 'Custom'])('未配置服务方 %s 禁用授权但保留手工令牌保存', async (name) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
   globalThis.fetch = mock(async () =>
     Response.json([
       {
-        id: `builtin:${name.toLowerCase()}`,
+        id: name === 'Feishu' ? 'builtin:feishu' : 'custom:poap_example',
         name,
-        builtin: true,
+        builtin: name === 'Feishu',
         enabled: true,
         configured: false,
         default_secret_name: 'TOKEN',
-        default_allowed_hosts: [name === 'Friday' ? 'friday-tx.seewo.com' : 'open.feishu.cn'],
+        default_allowed_hosts: [name === 'Custom' ? 'oauth.example.test' : 'open.feishu.cn'],
       },
     ]),
   ) as typeof fetch;
@@ -486,7 +486,7 @@ test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工�
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
   fireEvent.click(await screen.findByText(name));
-  if (name === 'Friday')
+  if (name === 'Custom')
     expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).placeholder).toBe('ACCESS_TOKEN');
   fireEvent.click(within(dialog).getByRole('checkbox'));
   expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);

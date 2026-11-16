@@ -91,9 +91,6 @@ func auditOAuthRewrap(ctx context.Context, logger *slog.Logger, row db.SecretMig
 	if document.ExternalID == "poap_FeishuBuiltinOAuthClient" {
 		key = "builtin:feishu"
 	}
-	if document.ExternalID == "poap_FridayBuiltinOAuthClient" {
-		key = "builtin:friday"
-	}
 	code := ""
 	if result == "failure" {
 		code = "oauth_rewrap_failed"

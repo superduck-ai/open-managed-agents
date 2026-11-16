@@ -3462,7 +3462,6 @@
   "nav.modelsAndAccess": "Models and access",
   "nav.usageAndOperations": "Usage and operations",
   "platformAdmin.oauthManagement.feishu": "Feishu",
-  "platformAdmin.oauthManagement.friday": "Friday",
   "platformAdmin.oauthManagement.configured": "Configured",
   "platformAdmin.oauthManagement.unconfigured": "Not configured",
   "platformAdmin.oauthManagement.configure": "Configure provider",

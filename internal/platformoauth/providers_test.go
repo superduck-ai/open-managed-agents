@@ -28,7 +28,7 @@ func (s providerStoreStub) GetPlatformOAuthProviderByExternalID(context.Context,
 	return s.provider, s.err
 }
 func (s providerStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
-	return []db.PlatformOAuthProvider{s.provider, {BuiltinKey: "friday"}}, s.err
+	return []db.PlatformOAuthProvider{s.provider, {ExternalID: "poap_example"}}, s.err
 }
 
 func providerFixture(t *testing.T) (*secrets.Service, db.PlatformOAuthProvider) {
@@ -149,28 +149,28 @@ func TestProviderDefaultsRejectInvalidDomains(t *testing.T) {
 	}
 }
 
-func TestResolverFridayUsesIndependentDatabaseRow(t *testing.T) {
+func TestResolverCustomUsesIndependentDatabaseRow(t *testing.T) {
 	service, provider := providerFixture(t)
-	provider.ExternalID, provider.BuiltinKey, provider.Name = "poap_FridayBuiltinOAuthClient", "friday", "Friday"
-	provider.AuthorizeEndpoint, provider.TokenEndpoint, provider.Scope = "https://friday.test/open/api/oauth/authorize", "https://friday.test/open/api/oauth/token", "read"
+	provider.ExternalID, provider.BuiltinKey, provider.Name = "poap_example", "", "Custom"
+	provider.AuthorizeEndpoint, provider.TokenEndpoint, provider.Scope = "https://custom.test/open/api/oauth/authorize", "https://custom.test/open/api/oauth/token", "read"
 	provider.TokenEndpointAuthMethod, provider.TokenEndpointEncoding = "client_secret_basic", "form"
 	lookup := ""
 	resolver := NewResolver(providerStoreStub{provider: provider, builtinLookup: &lookup}, service, nil)
-	if _, err := resolver.ResolveEnvOAuthProvider(t.Context(), "builtin:friday"); err == nil {
-		t.Fatal("Friday 接受飞书密文")
+	if _, err := resolver.ResolveEnvOAuthProvider(t.Context(), "custom:poap_example"); err == nil {
+		t.Fatal("Custom 接受飞书密文")
 	}
 	var err error
-	provider.ClientIDEnvelope, err = SealClientField(t.Context(), service, ProviderClientIDBinding(provider.ExternalID), "friday-client")
+	provider.ClientIDEnvelope, err = SealClientField(t.Context(), service, ProviderClientIDBinding(provider.ExternalID), "custom-client")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider.ClientSecretEnvelope, err = SealClientField(t.Context(), service, ProviderSecretBinding(provider.ExternalID), "friday-secret")
+	provider.ClientSecretEnvelope, err = SealClientField(t.Context(), service, ProviderSecretBinding(provider.ExternalID), "custom-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := NewResolver(providerStoreStub{provider: provider, builtinLookup: &lookup}, service, nil).ResolveEnvOAuthProvider(t.Context(), "builtin:friday")
-	if err != nil || lookup != "friday" || snapshot.ProviderKey != "builtin:friday" || snapshot.Scope != "read" || snapshot.AuthorizeEndpoint != provider.AuthorizeEndpoint || snapshot.TokenEndpoint != provider.TokenEndpoint || snapshot.TokenEndpointAuthMethod != "client_secret_basic" || snapshot.TokenEndpointEncoding != "form" {
-		t.Fatal("Friday 数据库解析错误", err)
+	snapshot, err := NewResolver(providerStoreStub{provider: provider, builtinLookup: &lookup}, service, nil).ResolveEnvOAuthProvider(t.Context(), "custom:poap_example")
+	if err != nil || snapshot.ProviderKey != "custom:poap_example" || snapshot.Scope != "read" || snapshot.AuthorizeEndpoint != provider.AuthorizeEndpoint || snapshot.TokenEndpoint != provider.TokenEndpoint || snapshot.TokenEndpointAuthMethod != "client_secret_basic" || snapshot.TokenEndpointEncoding != "form" {
+		t.Fatal("Custom 数据库解析错误", err)
 	}
 
 }

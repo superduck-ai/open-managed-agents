@@ -39,7 +39,7 @@ export function EnvOAuthCredentialFields({
     .map((provider) => ({
       id: provider.id,
       label: provider.name,
-      icon: <OAuthProviderAvatar providerKey={provider.id} logoUrl={provider.logo_url} />,
+      icon: <OAuthProviderAvatar logoUrl={provider.logo_url} />,
     }));
   const selectableOptions =
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;

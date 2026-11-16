@@ -13,9 +13,6 @@ import (
 )
 
 func (s *Server) prepareEnvOAuthPKCE(ctx context.Context, flow *db.EnvOAuthFlow, authorizeURL string) (string, error) {
-	if flow.ProviderKey != vaultsapi.EnvOAuthProviderBuiltinFriday {
-		return authorizeURL, nil
-	}
 	verifier := rand.Text() + rand.Text()
 	envelope, err := platformoauth.SealClientField(ctx, s.vaultSecrets, platformoauth.FlowCodeVerifierBinding(*flow), verifier)
 	if err != nil {
@@ -36,7 +33,7 @@ func (s *Server) prepareEnvOAuthPKCE(ctx context.Context, flow *db.EnvOAuthFlow,
 
 func (s *Server) exchangeEnvOAuthFlowCode(ctx context.Context, flow db.EnvOAuthFlow, code, clientID, clientSecret string) (vaultsapi.OAuthTokenEndpointResult, error) {
 	verifier := ""
-	if flow.ProviderKey == vaultsapi.EnvOAuthProviderBuiltinFriday {
+	if flow.CodeVerifierEnvelope != nil {
 		var err error
 		verifier, err = platformoauth.OpenClientField(ctx, s.vaultSecrets, platformoauth.FlowCodeVerifierBinding(flow), flow.CodeVerifierEnvelope)
 		if err != nil {

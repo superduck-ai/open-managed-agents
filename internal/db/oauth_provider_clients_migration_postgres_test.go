@@ -18,41 +18,17 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 	ctx := t.Context()
 	database := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, address)
 	provider := newMigrationTestProvider(t, database)
-	if _, err := provider.UpTo(ctx, 123); err != nil {
-		t.Fatal(err)
-	}
 	const envelope = `{"ciphertext":"Yw==","nonce":"bg==","wrapped_dek":"aw==","format_version":1,"key_provider":"local","key_version":1}`
 	const insert = `INSERT INTO platform_oauth_providers (
 		external_id, name, authorize_endpoint, token_endpoint, created_by_platform_admin_uuid,
 		client_id_envelope, client_secret_envelope
 	) VALUES ($1, $1, 'https://provider.test/authorize', 'https://provider.test/token',
 		'11111111-1111-4111-8111-111111111111', $2, $3)`
-	for _, fixture := range []struct {
-		id       string
-		envelope *string
-	}{
-		{"poap_legacy_invalid", nil},
-		{"poap_legacy_valid", new(envelope)},
-	} {
-		if _, err := database.ExecContext(ctx, insert, fixture.id, fixture.envelope, fixture.envelope); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, err := provider.UpTo(ctx, 124)
-	assertOAuthClientConstraintViolation(t, err, "platform_oauth_providers_clients_check")
-	version, err := provider.GetDBVersion(ctx)
-	if err != nil || version != 123 {
-		t.Fatalf("失败迁移未保留版本 123：版本=%d，错误=%v", version, err)
-	}
-	if _, err := database.ExecContext(ctx, `UPDATE platform_oauth_providers SET client_id_envelope=$1, client_secret_envelope=$1 WHERE external_id='poap_legacy_invalid'`, envelope); err != nil {
+	if _, err := provider.UpTo(ctx, 126); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 124); err != nil {
+	if _, err := database.ExecContext(ctx, insert, "poap_existing", nil, nil); err != nil {
 		t.Fatal(err)
-	}
-	var preserved int
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM platform_oauth_providers WHERE external_id IN ('poap_legacy_valid','poap_legacy_invalid') AND client_id_envelope=$1 AND client_secret_envelope=$1 AND version=1`, envelope).Scan(&preserved); err != nil || preserved != 2 {
-		t.Fatalf("迁移未保留既有凭据：行数=%d，错误=%v", preserved, err)
 	}
 	for _, state := range []struct {
 		name       string
@@ -65,7 +41,7 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 		{"缺少secret", new(envelope), nil, false},
 		{"双有效", new(envelope), new(envelope), true},
 	} {
-		for _, key := range []string{"custom", "feishu", "friday"} {
+		for _, key := range []string{"custom", "feishu"} {
 			for _, operation := range []string{"插入", "更新"} {
 				t.Run(key+"/"+state.name+"/"+operation, func(t *testing.T) {
 					tx, err := database.BeginTx(t.Context(), nil)
@@ -83,9 +59,9 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 							client_id_envelope, client_secret_envelope
 						) SELECT external_id, builtin_key, protected, name, authorize_endpoint, token_endpoint, $2, $3 FROM removed`, key, state.clientID, state.secret)
 					} else {
-						_, err = tx.ExecContext(t.Context(), `UPDATE platform_oauth_providers SET client_id_envelope=$2, client_secret_envelope=$3 WHERE (builtin_key=$1 OR ($1='custom' AND external_id='poap_legacy_valid'))`, key, state.clientID, state.secret)
+						_, err = tx.ExecContext(t.Context(), `UPDATE platform_oauth_providers SET client_id_envelope=$2, client_secret_envelope=$3 WHERE (builtin_key=$1 OR ($1='custom' AND external_id='poap_existing'))`, key, state.clientID, state.secret)
 					}
-					allowed := state.configured || (key != "custom" && state.clientID == nil && state.secret == nil)
+					allowed := state.configured || (state.clientID == nil && state.secret == nil)
 					if !allowed {
 						assertOAuthClientConstraintViolation(t, err, "platform_oauth_providers_clients_check")
 					} else if err != nil {
@@ -115,13 +91,10 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 			assertOAuthClientConstraintViolation(t, err, invalid.constraint)
 		})
 	}
-	if _, err := provider.UpTo(ctx, 126); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := database.ExecContext(ctx, insert, "poap_optional_client", nil, nil); err != nil {
 		t.Fatalf("新迁移不允许未配置客户端：%v", err)
 	}
-	_, err = database.ExecContext(ctx, `UPDATE platform_oauth_providers SET client_id_envelope=$1 WHERE external_id='poap_optional_client'`, envelope)
+	_, err := database.ExecContext(ctx, `UPDATE platform_oauth_providers SET client_id_envelope=$1 WHERE external_id='poap_optional_client'`, envelope)
 	assertOAuthClientConstraintViolation(t, err, "platform_oauth_providers_clients_check")
 	var logoURL string
 	if err := database.QueryRowContext(ctx, `SELECT logo_url FROM platform_oauth_providers WHERE external_id='poap_optional_client'`).Scan(&logoURL); err != nil || logoURL != "" {

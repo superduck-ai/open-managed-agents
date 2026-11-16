@@ -135,7 +135,7 @@ func TestEnvOAuthSecretNameRequiresExplicitReauthorization(t *testing.T) {
 		{"重复变量", "TOKEN", "builtin:feishu", "", false},
 		{"重新授权", "TOKEN", "builtin:feishu", "vcrd_existing", true},
 		{"错误凭证", "TOKEN", "builtin:feishu", "vcrd_other", false},
-		{"错误服务方", "TOKEN", "builtin:friday", "vcrd_existing", false},
+		{"错误服务方", "TOKEN", "custom:poap_example", "vcrd_existing", false},
 		{"目标不存在", "NEW_TOKEN", "builtin:feishu", "vcrd_missing", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

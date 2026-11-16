@@ -164,6 +164,7 @@ export class SessionRuntime {
       signal: this.abort.signal,
     };
     await this.ctx.get("ccrReplication")?.ensure(this.config.id);
+ await this.config.recoverSandboxCalls?.(this.config.id, this.abort.signal, this.parent ? this.config.id : undefined);
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({
@@ -248,8 +249,8 @@ export class SessionRuntime {
   }
 
   stop(): void {
-    this.abort.abort();
-    this.handle?.agent.cancel({ kind: "disposed" });
+    this.cancelForShutdown();
+    this.abort.abort(SHUTDOWN_CANCEL);
   }
 
   async close(): Promise<void> {

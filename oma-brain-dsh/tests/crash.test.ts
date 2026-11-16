@@ -34,6 +34,7 @@ for (const publication of ["reply", "completion"]) test(`SIGKILL after unproxied
     child.kill("SIGKILL");
     await exited;
     backend.failPublicType = undefined;
+    backend.loseToolCalls();
     backend.a.worker_epoch++;
     ctx = new Context();
     const api = new OmaApi(backend.url);
@@ -97,6 +98,7 @@ test("SIGKILL during sandbox execution restores logs, never replays and continue
     await eventually(() => backend.executions.length === 1);
     child.kill("SIGKILL");
     await exited;
+    backend.loseToolCalls();
     backend.a.worker_epoch++;
     ctx = new Context();
     const api = new OmaApi(backend.url);
@@ -187,7 +189,8 @@ for (const duringDispatch of [true, false]) {
       const alphaId = created().find((event) => event.agent_name === "alpha")!.session_thread_id;
       const betaId = created().find((event) => event.agent_name === "beta")!.session_thread_id;
       child.kill("SIGKILL"); await exited;
-      backend.a.worker_epoch++;
+      backend.loseToolCalls();
+    backend.a.worker_epoch++;
       ctx = new Context();
       const api = new OmaApi(backend.url);
       await mountOma(ctx, api);
@@ -236,7 +239,7 @@ for (const duringDispatch of [true, false]) {
         expect(backend.executions).toHaveLength(duringDispatch ? 2 : 0);
         expect(resumed.subagents.threads.find(thread => thread.id === alphaId)?.status).toBe("idle");
         const request = backend.requests.findLast(request => modelSystemText(request).includes("You are subagent alpha."))!;
-        expect(JSON.stringify(request.messages)).toContain("Do not retry blindly");
+        expect(JSON.stringify(request.messages)).toContain(duringDispatch ? "Do not retry blindly" : "not submitted before");
         expect(JSON.stringify(request.messages)).toContain("Inspect the existing outcome");
         expect([...backend.publicLog.values()].some(event => event.type === "agent.thread_message_received" && event.from_session_thread_id === alphaId)).toBe(true);
       }

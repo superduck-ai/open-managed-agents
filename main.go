@@ -255,6 +255,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			ToolCallNotifications:  natsConnection,
+			ToolCallContext:        ctx,
 			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,

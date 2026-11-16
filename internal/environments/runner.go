@@ -441,14 +441,26 @@ func (r *Runner) markBrainSandboxRunning(ctx context.Context, run *runnerRun, re
 	if r.cfg.EnvironmentRunner.AgentMode != "brain" {
 		return nil
 	}
-	ctx = run.begin(ctx, "sandbox_mcp_ready")
-	endpoint, err := r.sandboxMCPEndpoint(ctx, providerSandboxID)
-	if err != nil {
-		return err
+	ctx = run.begin(ctx, "sandbox_tool_calls_ready")
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready, err := r.db.IsSandboxToolCallReady(readyCtx, record.OrganizationUUID, record.WorkspaceUUID, record.UUID)
+		if err != nil {
+			return err
+		}
+		if ready {
+			break
+		}
+		select {
+		case <-readyCtx.Done():
+			return readyCtx.Err()
+		case <-ticker.C:
+		}
 	}
-	if err := waitSandboxMCPReady(ctx, endpoint); err != nil {
-		return err
-	}
+
 	return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "running", &providerSandboxID, nil, nil)
 }
 

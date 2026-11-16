@@ -1,12 +1,7 @@
 package environments
 
 import (
-	"context"
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -48,53 +43,6 @@ func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	}
 	if payload.StartupContext.APIBaseURL != "http://sandbox.example" || payload.Environment.Type != "anthropic" || payload.Environment.CWD != "/workspace/project" {
 		t.Fatalf("unexpected manager payload: %+v", payload)
-	}
-}
-
-func TestProbeSandboxMCPReady(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		status    int
-		body      string
-		wantError bool
-	}{
-		{name: "rejects unsupported version", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2025-11-25"],"capabilities":{"tools":{}}}}` + "\n\n", wantError: true},
-		{name: "rejects missing tools", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{}}}` + "\n\n", wantError: true},
-		{name: "rejects failed discovery", status: http.StatusNotFound, body: `{"error":"missing"}`, wantError: true},
-		{name: "accepts Rust SSE discovery", status: http.StatusOK, body: `data: {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}` + "\n\n"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/mcp" || r.Header.Get("Mcp-Protocol-Version") != "2026-07-28" || r.Header.Get("Mcp-Method") != "server/discover" {
-					t.Errorf("unexpected request: %s %s, version=%q, method=%q", r.Method, r.URL.Path, r.Header.Get("Mcp-Protocol-Version"), r.Header.Get("Mcp-Method"))
-				}
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-				}
-				if !strings.Contains(string(body), `"io.modelcontextprotocol/clientCapabilities":{}`) {
-					t.Errorf("missing client capabilities: %s", body)
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.WriteHeader(test.status)
-				_, _ = io.WriteString(w, test.body)
-			}))
-			defer server.Close()
-			err := probeSandboxMCPReady(context.Background(), server.URL+"/mcp")
-			if (err != nil) != test.wantError {
-				t.Fatalf("probeSandboxMCPReady() error = %v, want error %v", err, test.wantError)
-			}
-		})
-	}
-}
-
-func TestProbeSandboxMCPReadyAgainstRustServer(t *testing.T) {
-	endpoint := os.Getenv("OMA_RUST_MCP_URL")
-	if endpoint == "" {
-		t.Skip("OMA_RUST_MCP_URL is not set")
-	}
-	if err := probeSandboxMCPReady(t.Context(), endpoint); err != nil {
-		t.Fatal(err)
 	}
 }
 

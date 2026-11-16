@@ -116,6 +116,7 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 		}
 	}
 	duplicate := providers.Providers[0]
+	testProviderModelMetadata(t, database, vault, state, providers)
 	duplicate.Slug = "duplicate-name"
 	if _, err := createProvider(t.Context(), database, vault, state.Organization.UUID, duplicate); err != nil {
 		t.Fatal(err)
@@ -137,5 +138,29 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 	}
 	if _, err := database.GetLLMProvider(t.Context(), state.Organization.UUID, registered.ExternalID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("deleted provider was recreated: %v", err)
+	}
+}
+
+func testProviderModelMetadata(t *testing.T, database *db.DB, vault *secrets.Service, state *State, providers ModelProvidersSpec) {
+	t.Helper()
+	providers.Providers = append([]ProviderSpec(nil), providers.Providers...)
+	models := db.LLMModels{{ID: "shared-model", ContextWindow: new(262144), MaxOutputTokens: new(32768), InputModalities: []string{"text", "image"}, ImageInput: &db.LLMImageInput{MaxImages: 8}}}
+	providers.Providers[0].Models = models
+	if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{}); err == nil {
+		t.Fatal("metadata-only difference applied without --update")
+	}
+	for range 2 {
+		if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{Update: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := database.ListLLMProviders(t.Context(), state.Organization.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Name == "first" && !reflect.DeepEqual(item.Models, models) {
+			t.Fatal("metadata was not persisted")
+		}
 	}
 }

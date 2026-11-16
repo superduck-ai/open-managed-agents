@@ -235,7 +235,7 @@ test("shutdown drains an in-flight Bash dispatch before handing the session back
   }
 });
 
-test("shutdown past the drain deadline interrupts Bash without blocking the session", async () => {
+test("shutdown past the drain deadline leaves Bash for the next owner", async () => {
   const cancelled = Promise.withResolvers<void>();
   const run = await runShutdownDuringBash("200", async (backend, started) => {
     backend.onCancel = async () => { cancelled.resolve(); };
@@ -250,8 +250,7 @@ test("shutdown past the drain deadline interrupts Bash without blocking the sess
     await run.toolStarted;
     run.child.kill("SIGTERM");
     expect(await run.child.exited).toBe(0);
-    expect(run.nativeResults()).toHaveLength(1);
-    expect(run.nativeResults()[0]).toMatchObject({ toolCallId: "call_1", isError: true });
+    expect(run.nativeResults()).toHaveLength(0);
     const published = [...run.backend.publicLog.values()];
     expect(published.some((p) => p.type === "result" && p.is_error === true)).toBe(true);
     expect(JSON.stringify(published)).toContain("The Brain worker shut down during this turn");

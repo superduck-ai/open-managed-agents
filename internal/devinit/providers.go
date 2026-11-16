@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 
@@ -105,7 +106,7 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 		Slug:             spec.Slug,
 		APIBackend:       spec.APIBackend,
 		BaseURL:          spec.BaseURL,
-		Models:           db.LLMModels{}.WithIDs(spec.ModelIDs),
+		Models:           configuredProviderModels(nil, spec),
 	}
 	envelope, err := vaultSecrets.Seal(ctx, llmproviders.SecretBinding(provider), []byte(spec.APIKey))
 	if err != nil {
@@ -120,7 +121,8 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 }
 
 func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, existing db.LLMProvider, spec ProviderSpec, opts Options) (ProviderState, error) {
-	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !equalStrings(existing.Models.IDs(), spec.ModelIDs)
+	models := configuredProviderModels(existing.Models, spec)
+	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !reflect.DeepEqual(existing.Models, models)
 	keyChanged, err := providerKeyChanged(ctx, vaultSecrets, existing, spec.APIKey)
 	if err != nil {
 		return ProviderState{}, err
@@ -134,7 +136,7 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	}
 	existing.BaseURL = spec.BaseURL
 	existing.APIBackend = spec.APIBackend
-	existing.Models = existing.Models.WithIDs(spec.ModelIDs)
+	existing.Models = models
 	if keyChanged {
 		envelope, err := vaultSecrets.Seal(ctx, llmproviders.SecretBinding(existing), []byte(spec.APIKey))
 		if err != nil {
@@ -158,16 +160,4 @@ func providerKeyChanged(ctx context.Context, vaultSecrets *secrets.Service, exis
 		return false, fmt.Errorf("decrypt registered provider key: %w", err)
 	}
 	return subtle.ConstantTimeCompare(plaintext, []byte(apiKey)) != 1, nil
-}
-
-func equalStrings(first, second []string) bool {
-	if len(first) != len(second) {
-		return false
-	}
-	for i := range first {
-		if first[i] != second[i] {
-			return false
-		}
-	}
-	return true
 }

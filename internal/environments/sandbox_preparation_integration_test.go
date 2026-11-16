@@ -298,7 +298,7 @@ func TestSandboxPreparationExpiredAttemptIsRetired(t *testing.T) {
 	}
 	provider := &preparationTestProvider{ttl: time.Minute, expires: time.Now().Add(time.Minute)}
 	runner := &Runner{db: database, provider: provider, logger: logging.LoggerOrDefault(nil)}
-	_, _, err := runner.EnsureSessionSandbox(t.Context(), db.CodeSession{ExternalID: "cse_preparation", OrganizationUUID: work.OrganizationUUID, WorkspaceUUID: work.WorkspaceUUID, EnvironmentExternalID: work.EnvironmentExternalID, SessionUUID: work.SessionUUID})
+	_, err := runner.EnsureSessionSandbox(t.Context(), db.CodeSession{ExternalID: "cse_preparation", OrganizationUUID: work.OrganizationUUID, WorkspaceUUID: work.WorkspaceUUID, EnvironmentExternalID: work.EnvironmentExternalID, SessionUUID: work.SessionUUID})
 	if !errors.Is(err, db.ErrInvalidState) {
 		t.Fatalf("expired attempt: %v", err)
 	}

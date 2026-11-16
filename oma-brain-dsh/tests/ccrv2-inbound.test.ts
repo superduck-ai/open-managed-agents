@@ -288,7 +288,7 @@ test("delivery processing gates model work without blocking controls", async () 
       ]));
     for (const inputId of ["orphan", "decision", "interrupt"])
       expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === inputId)
-        .map((entry) => entry.status)).toEqual(["received", "processed"]);
+        .map((entry) => entry.status)).toEqual(inputId === "interrupt" ? ["received", "processed"] : ["received", "processing", "processed"]);
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "input")
       .map((entry) => entry.status)).toEqual(["received", "processing", "processed"]);
     const completed = b.timeline.findIndex(entry => entry.type === "private.persist" && entry.payload.data?.type === "turn/end");
@@ -335,7 +335,9 @@ test("SSE reconnect services approvals during an active turn and preserves nativ
     expect(b.processed).toContain("decision");
     expect(b.processed).not.toContain("42");
     expect(b.timeline.filter((entry) => entry.type === "input.delivery" && entry.inputId === "decision")
-      .map((entry) => entry.status)).toEqual(["received", "processed"]);
+      .map((entry) => entry.status)).toEqual(["received", "processing", "processed"]);
+    expect(b.timeline.findIndex(entry => entry.type === "input.delivery" && entry.inputId === "decision" && entry.status === "processing"))
+      .toBeLessThan(b.timeline.findIndex(entry => entry.type === "tool.dispatch"));
     const first = (fn: (entry: any) => boolean) => b.timeline.findIndex(fn);
     expect(first((e) => e.type === "private.persist" && e.payload.data?.type === "user/message"))
       .toBeLessThan(first((e) => e.type === "input.ack"));

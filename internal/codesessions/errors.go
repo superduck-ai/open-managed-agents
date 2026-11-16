@@ -27,8 +27,6 @@ var errRuntimeCredentialUnavailable = errors.New("runtime credential validation 
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
-const maxSandboxMCPRequestBytes = 1 << 20
-
 func invalidWebToolRequest() error {
 	return apperr.New(apperr.InvalidArgument, "Invalid web tool request", nil)
 }
@@ -70,16 +68,6 @@ func sessionPortBlocked(port int) error {
 	return apperr.New(apperr.InvalidArgument, fmt.Sprintf("port %d is reserved by the sandbox and has no session port URL", port), nil)
 }
 
-func sandboxInvalidRequest(cause error) error {
-	return apperr.New(apperr.InvalidArgument, "Invalid sandbox MCP request", cause)
-}
-func sandboxRequestReadError(cause error) error {
-	var tooLarge *http.MaxBytesError
-	if errors.As(cause, &tooLarge) {
-		return apperr.New(apperr.InvalidArgument, "Sandbox MCP request exceeds 1 MiB; split large file writes into smaller edits", cause)
-	}
-	return sandboxInvalidRequest(cause)
-}
 func sandboxToolDenied() error {
 	return apperr.New(apperr.PermissionDenied, "Sandbox tool is not permitted for this session", nil)
 }
@@ -230,6 +218,38 @@ func runtimeSkillsFailure(cause error) error {
 	}
 	return internalError("Could not load session skills", cause)
 }
+
+func toolCallInputError(cause error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(cause, &tooLarge) {
+		return apperr.New(apperr.RequestTooLarge, "Tool call exceeds the request size limit", cause)
+	}
+	return apperr.New(apperr.InvalidArgument, "Invalid sandbox tool call", cause)
+}
+
+func toolCallAuthenticationError(cause error) error {
+	return apperr.New(apperr.Unauthenticated, "Invalid sandbox credential", cause)
+}
+
+func toolCallOperationError(cause error) error {
+	if errors.Is(cause, db.ErrToolCallConflict) {
+		return apperr.New(apperr.Conflict, "Tool call conflicts with persisted state", cause)
+	}
+	if errors.Is(cause, db.ErrNotFound) {
+		return apperr.New(apperr.NotFound, "Tool call not found", cause)
+	}
+	if errors.Is(cause, db.ErrWorkerEpochMismatch) {
+		return apperr.New(apperr.Conflict, "Worker epoch has changed", cause)
+	}
+	if errors.Is(cause, db.ErrToolCallSandboxRetired) {
+		return apperr.New(apperr.Gone, "Sandbox no longer accepts tool calls", cause)
+	}
+	return apperr.New(apperr.Internal, "Sandbox tool call operation failed", cause)
+}
+
+var errToolCallResult = errors.New("invalid tool call result body or digest")
+
+var errToolCallTrailingData = errors.New("request must contain one JSON value")
 
 func tunnelCredentialFailure(cause error) error {
 	if errors.Is(cause, errRuntimeCredentialInvalid) || errors.Is(cause, errSessionIngressIdentity) ||

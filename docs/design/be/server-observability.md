@@ -3,6 +3,12 @@
 本文记录 OMA 服务端 OpenTelemetry 的传播、指标、日志与 OpenObserve 查询契约。
 第 1–7 节说明模型与配置，P0–P9 按功能给出职责、实现入口和验证边界；实现细节以代码为准。
 
+## 沙箱工具协议迁移
+
+内置工具已改为 [持久化领取协议](sandbox-tool-call-claim.md)。本文中 `oma.sandbox_mcp.call`、`oma.sandbox_mcp.duration`、`sandbox_mcp_ready` 和同步 MCP 网关的时序说明仅适用于旧版本的历史数据，新版本不再产生这些 span / histogram。`sandbox_tool_calls` 是调用状态的事实来源；HTTP 路由指标、DSH 原生工具日志及公开事件继续生效，Runner 就绪阶段使用 `sandbox_tool_calls_ready`。`lazy_mcp` 保留为现有 Runner 触发类型的遥测标签。
+
+随仓库提供的 OpenObserve 看板中依赖旧 MCP span 的工具次数、失败率和耗时面板仍只展示历史数据，不能用于新协议的调用统计。当前未新增跨进程工具执行 span 或持久调用专属指标。
+
 ## 0. 维护约束
 
 - 保持 API、状态机、事务、重试与超时合同；遥测不得改变业务结果。

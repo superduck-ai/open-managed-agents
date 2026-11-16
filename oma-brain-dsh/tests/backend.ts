@@ -95,6 +95,8 @@ export class Backend {
   imageStatus?: number;
   imageReads = 0;
   readonly timeline: Payload[] = [];
+  loseToolCalls(): void {for(const call of this.toolCallResults.values()) if(call.state==="running") call.state="lost";}
+  readonly toolCallResults = new Map<string, { state: string; result?: Payload; promise?: Promise<Payload> }>();
   readonly executions: Payload[] = [];
   readonly mcpMethods: string[] = [];
   readonly delivered = new Map<string, Payload>();
@@ -279,6 +281,30 @@ export class Backend {
           .join(""),
         { headers: { "Content-Type": "text/event-stream" } },
       );
+    }
+    const toolCallPath = path.match(/\/threads\/([^/]+)\/tool-calls(?:\/([^/]+))?(\/cancel)?$/);
+    if (toolCallPath) {
+      const threadId=decodeURIComponent(toolCallPath[1]!);
+      const callId=decodeURIComponent(toolCallPath[2] ?? body.call_id);
+      const key=threadId+"/"+callId;
+      if (request.method==="POST" && !toolCallPath[2]) {
+        if (!this.toolCallResults.has(key)) {
+          const params={name:body.tool,arguments:body.input};
+          if (this.rejectTool?.(params)) return json({error:{message:"tool rejected"}},413);
+          if (!this.sandboxCount) {this.sandboxCount++;this.timeline.push({type:"sandbox.prepare"});}
+          this.executions.push(params);this.timeline.push({type:"tool.dispatch",...params});
+          const call:{state:string;result?:Payload;promise?:Promise<Payload>}={state:"running"};
+          this.toolCallResults.set(key,call);
+          if (!this.hangTool) call.promise=Promise.resolve<Payload>(this.onTool ? this.onTool(params):{content:[{type:"text",text:"actual stdout\n"}]}).then(result=>{if(call.state!=="cancelled"){call.result=result;call.state=result.isError?"failed":"succeeded";}return result;}).catch(()=>{call.state="lost";return {isError:true,content:[{type:"text",text:"sandbox lost"}]};});
+        }
+        return json(this.toolCallResults.get(key));
+      }
+      const call=this.toolCallResults.get(key);
+      if (!call) return json({error:{message:"missing call"}},404);
+      if (toolCallPath[3]) {await this.onCancel?.({requestId:callId});call.state="cancelled";return json(call);}
+      if (call.promise && call.state==="running") await Promise.race([call.promise,new Promise(resolve=>setTimeout(resolve,20))]);
+      else if (call.state==="running") await new Promise(resolve=>setTimeout(resolve,20));
+      return json(call);
     }
     if (path === "/sandbox/mcp" || path === `/v2/ccr-sessions/${this.a.session_id}/sandbox/mcp`) {
       if (request.method === "GET") return new Response(null, { status: 405 });

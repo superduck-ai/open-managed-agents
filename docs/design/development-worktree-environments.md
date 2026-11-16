@@ -327,6 +327,21 @@ providers:
 - 旧状态中的多个 workspace 登记按每条 external ID 继续管理，同一文件定义的全部登记在 `--update` 时一起更新。重新保存的 provider 状态只包含名称、external ID 和 input_slug。历史密钥绑定随原记录保留。
 - provider 密钥经现有 secrets 服务加密后写入当前环境数据库。
 - 模型列表以文件为准，初始化时不自动访问上游同步模型。
+- Provider 输入支持二选一的 `model_ids` 和 `models`，不能同时提供。`models` 为带 `id` 的对象列表，可配置 `name`、`context_window`、`max_output_tokens`、`input_modalities` 和 `image_input`。嵌套字段继续严格校验，未知字段、null、重复模型、非法能力或容量会在资源协调前拒绝。能力校验与 Console 使用同一实现。
+- `model_ids` 更新保留仍存在模型的已有元数据；显式 `models` 是该模型列表及其元数据的完整声明，省略的可选能力使用默认语义。元数据单独变化也必须指定 `--update`，重复应用保持幂等，不改变 Provider 身份。部署输入应写全需要固定的容量和图片限制。
+
+模型能力声明示例，替代同一 Provider 下的 `model_ids`：
+
+```yaml
+models:
+  - id: deepseek-flash
+    input_modalities: [text, image]
+    context_window: 262144
+    max_output_tokens: 32768
+    image_input:
+      max_images: 20
+      max_long_edge: 2048
+```
 - 保留现有 URL 校验和模型数量限制；不同 provider 可使用相同上游模型 ID，通过 `<slug>/<model_id>` 区分。
 - 显式 `slug` 遵守现有格式校验且在文件内唯一。
 - 文件中的 provider 名称作为所属组织内的初始化引用；修改名称视为新增，旧记录不自动删除。

@@ -62,6 +62,16 @@ func TestSandboxLifecycleMapperDisabledSweepStillRepairsCommittedDeletion(t *tes
 	}
 }
 
+func TestSandboxLifecycleMapperIdleSweepUsesWorkTenantScope(t *testing.T) {
+	bound := buildSandboxLifecycleMapperListCandidates(yourbatis.DialectPostgres, time.Now(), "sandbox-cursor", 100, true)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sandboxLifecycleMapperListCandidatesStatement, bound: bound,
+		wantID: "SandboxLifecycleMapper.ListCandidates", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"after", "cutoff", "cutoff", "limit"},
+		wantSQLFragments:  []string{"sandbox.uuid > $1", "cs.idle_since <= $2", "tc.organization_uuid = work.organization_uuid", "tc.workspace_uuid = work.workspace_uuid", "tc.code_session_uuid = cs.uuid", "cs.port_last_access_at IS NULL OR cs.port_last_access_at <= $3", "LIMIT $4"},
+	})
+}
+
 func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *testing.T) {
 	bound := buildEnvironmentSandboxMapperScheduleRecoveryForCodeSession(yourbatis.DialectPostgres, environmentSandboxRecoveryParams{
 		CodeSessionExternalID: "code-session", LastError: "reclaimed",

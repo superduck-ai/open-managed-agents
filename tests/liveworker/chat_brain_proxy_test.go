@@ -62,8 +62,8 @@ func TestChatBrainProxyTakeover(t *testing.T) {
 	e.request(t, "GET", "/v2/sessions/"+before.ExternalID, oldToken, nil, http.StatusOK)
 	t.Logf("old token identity accepted after owner replacement: previous_epoch=%d current_epoch=%d http_status=200", before.CurrentWorkerEpoch, after.CurrentWorkerEpoch)
 	chatProof(t, started, "brain_proxy_old_token_identity")
-	e.request(t, "POST", "/v2/ccr-sessions/"+before.ExternalID+"/sandbox/mcp", oldToken,
-		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusConflict)
+	e.request(t, "POST", "/v2/ccr-sessions/"+before.ExternalID+"/threads/root/tool-calls", oldToken,
+		map[string]any{"call_id": "stale-owner-probe", "tool": "bash", "input": map[string]string{"command": "true"}}, http.StatusConflict)
 	chatProof(t, started, "brain_proxy_old_worker_rejected")
 	reused, err := e.database.GetResumableEnvironmentSandboxForCodeSession(t.Context(), before.ExternalID)
 	requireOK(t, err)

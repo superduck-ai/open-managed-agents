@@ -68,7 +68,7 @@ for (const policy of ["ask", "deny"] as const) {
     const delta = followup.find((event) => event.type === "content_block_delta")!;
     followup.find(event => event.type === "content_block_start")!.content_block.name = "send_message";
     delta.delta.partial_json = JSON.stringify({ agent_id: threadId, message: "Run second" });
-    subagentScripts(f.b, [followup, textEvents("parent done")], [toolEvents("echo second"), textEvents("child done")]);
+    subagentScripts(f.b, [followup, textEvents("parent done")], [toolEvents("echo second", "second_call"), textEvents("child done")]);
     const approvals: Payload[] = [];
     f.b.onApproval = async (request) => { approvals.push(request); };
     const turn = f.session.receive("second-turn", { content: "Follow up" });
@@ -179,14 +179,7 @@ test("an unknown child outcome stays in the native log while a sibling can finis
   scriptedChildren(f.b);
   const requests: Payload[] = [];
   f.b.onApproval = async (request) => { requests.push(request); };
-  const baseRoute = f.b.route.bind(f.b);
-  f.b.route = async (request) => {
-    if (request.method === "POST" && new URL(request.url).pathname.endsWith("/mcp")) {
-      const body = await request.clone().json();
-      if (body.method === "tools/call") return new Response(null, { status: 500 });
-    }
-    return baseRoute(request);
-  };
+  f.b.onTool=async()=>{throw new Error("sandbox lost before reporting a result");};
   const turn = f.session.receive("unknown-parallel", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {

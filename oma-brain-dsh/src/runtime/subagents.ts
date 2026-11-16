@@ -102,7 +102,7 @@ export class Subagents {
       throw new Error("Unknown or archived subagent thread");
     this.dsh?.interrupt(id);
   }
-  cancelForShutdown(): void { this.dsh?.interrupt(); }
-  stop(): void { this.dsh?.interrupt(); }
+  cancelForShutdown(): void { this.dsh?.interrupt(undefined, true); }
+  stop(): void { this.cancelForShutdown(); }
   async close(): Promise<void> { await this.dsh?.close(); }
 }

@@ -12,6 +12,7 @@ import (
 )
 
 type PlatformOAuthProvider struct {
+	WorkspaceUUID              string
 	UUID                       string
 	ExternalID                 string
 	Name                       string
@@ -57,15 +58,7 @@ func (d *DB) ListPlatformOAuthProviders(ctx context.Context) ([]PlatformOAuthPro
 	if err != nil {
 		return nil, err
 	}
-	providers := make([]PlatformOAuthProvider, 0, len(rows))
-	for _, row := range rows {
-		provider, err := row.provider()
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, provider)
-	}
-	return providers, nil
+	return decodePlatformOAuthProviders(rows)
 }
 
 func (d *DB) GetPlatformOAuthProviderByExternalID(ctx context.Context, externalID string) (PlatformOAuthProvider, error) {
@@ -127,7 +120,12 @@ func platformOAuthProviderUpsertParams(provider PlatformOAuthProvider) (upsertPl
 	if err != nil {
 		return upsertPlatformOAuthProviderParams{}, err
 	}
+	hosts, err := json.Marshal(append([]string{}, provider.DefaultAllowedHosts...))
+	if err != nil {
+		return upsertPlatformOAuthProviderParams{}, err
+	}
 	return upsertPlatformOAuthProviderParams{
+		WorkspaceUUID: provider.WorkspaceUUID, DefaultAllowedHosts: string(hosts),
 		UUID:                       provider.UUID,
 		ExternalID:                 provider.ExternalID,
 		Name:                       provider.Name,
@@ -151,6 +149,7 @@ func platformOAuthProviderUpsertParams(provider PlatformOAuthProvider) (upsertPl
 
 func (r platformOAuthProviderRow) provider() (PlatformOAuthProvider, error) {
 	provider := PlatformOAuthProvider{
+		WorkspaceUUID:              r.WorkspaceUUID.String,
 		UUID:                       r.UUID,
 		ExternalID:                 r.ExternalID,
 		Name:                       r.Name,
@@ -211,4 +210,24 @@ func decodeOAuthEnvelope(value sql.NullString) (*secrets.Envelope, error) {
 		return nil, err
 	}
 	return &envelope, nil
+}
+
+func (d *DB) ListWorkspaceOAuthProviders(ctx context.Context, workspaceUUID string) ([]PlatformOAuthProvider, error) {
+	rows, err := NewPlatformOAuthProviderMapper(d.mapperDB).ListAvailable(ctx, workspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	return decodePlatformOAuthProviders(rows)
+}
+
+func decodePlatformOAuthProviders(rows []platformOAuthProviderRow) ([]PlatformOAuthProvider, error) {
+	providers := make([]PlatformOAuthProvider, 0, len(rows))
+	for _, row := range rows {
+		provider, err := row.provider()
+		if err != nil {
+			return nil, err
+		}
+		providers = append(providers, provider)
+	}
+	return providers, nil
 }

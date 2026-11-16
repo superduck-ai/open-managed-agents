@@ -426,7 +426,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return internalError("Could not load OAuth provider", err)
 		}
-		if !provider.Enabled || provider.Archived {
+		if !provider.Enabled || provider.Archived || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != principal.WorkspaceUUID) {
 			return disabledOAuthProvider()
 		}
 	}

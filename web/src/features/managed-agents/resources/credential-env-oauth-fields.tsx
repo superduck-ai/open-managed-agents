@@ -1,4 +1,7 @@
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
+import { Plus } from 'lucide-react';
+import { OAuthProviderDialog } from '../../platform-admin/oauth/OAuthProviderDialog';
+import { createWorkspaceOAuthProvider } from '../api';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
@@ -12,6 +15,9 @@ import { OptionalCredentialFields } from './optional-credential-fields';
 import { credentialEnvHostsMissing, envOAuthProviderDefaults } from './model';
 
 type EnvOAuthCredentialFieldsProps = {
+  orgUuid?: string;
+  workspaceId?: string;
+  onProviderCreated?: (provider: EnvOAuthProviderApiResponse) => void;
   values: CredentialFormValues;
   providers: EnvOAuthProviderApiResponse[];
   providersLoading: boolean;
@@ -22,6 +28,9 @@ type EnvOAuthCredentialFieldsProps = {
 };
 
 export function EnvOAuthCredentialFields({
+  orgUuid,
+  workspaceId,
+  onProviderCreated,
   values,
   providers,
   providersLoading,
@@ -31,7 +40,9 @@ export function EnvOAuthCredentialFields({
   onChange,
 }: EnvOAuthCredentialFieldsProps) {
   const { msg } = useI18n();
-  const platformAccess = useContext(AuthContext)?.platformAccess;
+  const auth = useContext(AuthContext);
+  const platformAccess = auth?.platformAccess;
+  const [creating, setCreating] = useState(false);
   const selected = providers.find((provider) => provider.id === values.envOAuthProviderId);
   const hostsMissing = credentialEnvHostsMissing(values);
   const options = providers
@@ -53,8 +64,23 @@ export function EnvOAuthCredentialFields({
             ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoading', 'Loading providers...')
             : msg('managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider', 'Select a provider')
         }
-        options={selectableOptions}
+        options={
+          orgUuid && workspaceId && !secretNameLocked
+            ? [
+                ...selectableOptions,
+                {
+                  id: '__create_provider__',
+                  label: msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider'),
+                  icon: <Plus className="size-4" aria-hidden />,
+                },
+              ]
+            : selectableOptions
+        }
         onChange={(providerId) => {
+          if (providerId === '__create_provider__') {
+            setCreating(true);
+            return;
+          }
           if (secretNameLocked || providerId === values.envOAuthProviderId) {
             return;
           }
@@ -73,6 +99,26 @@ export function EnvOAuthCredentialFields({
           });
         }}
       />
+      {creating && orgUuid && workspaceId ? (
+        <OAuthProviderDialog
+          onClose={() => setCreating(false)}
+          onSave={(input) => createWorkspaceOAuthProvider(orgUuid, workspaceId, input, auth?.csrfToken)}
+          onSaved={async (record) => {
+            const provider = { ...record, id: record.provider_key };
+            onProviderCreated?.(provider);
+            const defaults = envOAuthProviderDefaults(provider);
+            const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
+            onChange({
+              envOAuthProviderId: provider.id,
+              allowedHostsText: defaults.allowedHostsText,
+              ...(values.secretName.trim() && values.secretName !== previousDefault
+                ? {}
+                : { secretName: defaults.secretName }),
+            });
+            setCreating(false);
+          }}
+        />
+      ) : null}
       {providersError ? (
         <div className="flex flex-wrap items-center gap-2">
           <FieldDescription className="text-destructive">{providersError}</FieldDescription>

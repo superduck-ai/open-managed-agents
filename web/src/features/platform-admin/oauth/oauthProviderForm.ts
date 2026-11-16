@@ -3,6 +3,7 @@ import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 export type OAuthProviderFormValues = {
   name: string;
   defaultSecretName: string;
+  defaultAllowedHostsText: string;
   logoUrl: string;
   authorizeEndpoint: string;
   tokenEndpoint: string;
@@ -13,18 +14,19 @@ export type OAuthProviderFormValues = {
   encoding: string;
 };
 
-export function initialOAuthProviderFormValues(provider?: OAuthProviderRecord): OAuthProviderFormValues {
+export function initialOAuthProviderFormValues(provider: Partial<OAuthProviderRecord> = {}): OAuthProviderFormValues {
   return {
-    name: provider?.name ?? '',
-    defaultSecretName: provider?.default_secret_name ?? '',
-    logoUrl: provider?.logo_url ?? '',
-    authorizeEndpoint: provider?.authorize_endpoint ?? '',
-    tokenEndpoint: provider?.token_endpoint ?? '',
-    scope: provider?.scope ?? '',
-    clientId: provider?.client_id ?? '',
+    name: provider.name ?? '',
+    defaultSecretName: provider.default_secret_name ?? '',
+    defaultAllowedHostsText: provider.default_allowed_hosts?.join('\n') ?? '',
+    logoUrl: provider.logo_url ?? '',
+    authorizeEndpoint: provider.authorize_endpoint ?? '',
+    tokenEndpoint: provider.token_endpoint ?? '',
+    scope: provider.scope ?? '',
+    clientId: provider.client_id ?? '',
     clientSecret: '',
-    authMethod: provider?.token_endpoint_auth_method ?? 'client_secret_post',
-    encoding: provider?.token_endpoint_encoding ?? 'form',
+    authMethod: provider.token_endpoint_auth_method ?? 'client_secret_post',
+    encoding: provider.token_endpoint_encoding ?? 'form',
   };
 }
 

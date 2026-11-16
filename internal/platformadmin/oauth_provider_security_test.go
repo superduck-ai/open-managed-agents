@@ -308,3 +308,20 @@ func TestOAuthProviderArchiveAndRestorePreserveConfiguration(t *testing.T) {
 		t.Fatal("恢复归档配置失败", err)
 	}
 }
+
+func TestOAuthProviderDefaultHostsUpdate(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	hosts := []string{" api.example.test "}
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: store.provider.Version, DefaultAllowedHosts: &hosts})
+	if err != nil || len(view.DefaultAllowedHosts) != 1 || view.DefaultAllowedHosts[0] != "api.example.test" {
+		t.Fatal("默认允许主机未保存", err)
+	}
+	invalidHosts := []string{"https://api.example.test/path"}
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, DefaultAllowedHosts: &invalidHosts}); err == nil {
+		t.Fatal("默认主机允许了 URL")
+	}
+	cleared, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, DefaultAllowedHosts: new([]string{})})
+	if err != nil || len(cleared.DefaultAllowedHosts) != 0 {
+		t.Fatal("默认允许主机无法清空", err)
+	}
+}

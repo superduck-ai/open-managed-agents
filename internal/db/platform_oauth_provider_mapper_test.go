@@ -24,10 +24,10 @@ func TestPlatformOAuthProviderMapperBuilders(t *testing.T) {
 		wantID:    "PlatformOAuthProviderMapper.Insert",
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
-			"params.UUID", "params.ExternalID", "params.Name", "params.LogoURL", "params.AuthorizeEndpoint",
+			"params.UUID", "params.WorkspaceUUID", "params.ExternalID", "params.Name", "params.LogoURL", "params.AuthorizeEndpoint",
 			"params.TokenEndpoint", "params.Scope", "params.ClientIDEnvelope", "params.ClientSecretEnvelope",
 			"params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
-			"params.CreatedByPlatformAdminUUID", "params.CreatedAt", "params.UpdatedAt", "params.DefaultSecretName", "params.Enabled", "params.Archived",
+			"params.CreatedByPlatformAdminUUID", "params.CreatedAt", "params.UpdatedAt", "params.DefaultSecretName", "params.DefaultAllowedHosts", "params.Enabled", "params.Archived",
 		},
 		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope", "params.ClientSecretEnvelope"},
 		wantSQLFragments:           []string{"INSERT INTO platform_oauth_providers", "RETURNING"},
@@ -57,7 +57,7 @@ func TestPlatformOAuthProviderMapperBuilders(t *testing.T) {
 		wantID:    "PlatformOAuthProviderMapper.UpdateByUUID",
 		wantKind:  yourbatis.StatementUpdate,
 		wantArgumentNames: []string{
-			"params.Name", "params.LogoURL", "params.AuthorizeEndpoint", "params.TokenEndpoint", "params.Scope", "params.DefaultSecretName", "params.Enabled", "params.Archived",
+			"params.Name", "params.LogoURL", "params.AuthorizeEndpoint", "params.TokenEndpoint", "params.Scope", "params.DefaultSecretName", "params.DefaultAllowedHosts", "params.Enabled", "params.Archived",
 			"params.ClientIDEnvelope", "params.ClientSecretEnvelope", "params.TokenEndpointAuthMethod",
 			"params.TokenEndpointEncoding", "params.UpdatedAt", "params.UUID", "params.Version",
 		},

@@ -32,7 +32,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
-import { deleteOAuthProvider, listOAuthProviders, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
+import {
+  createOAuthProvider,
+  updateOAuthProvider,
+  deleteOAuthProvider,
+  listOAuthProviders,
+  type OAuthProviderRecord,
+} from '../../../shared/api/platform-admin';
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 import { OAuthProviderDialog } from './OAuthProviderDialog';
@@ -150,6 +156,11 @@ export function OAuthProvidersPage() {
       {editing !== undefined ? (
         <OAuthProviderDialog
           provider={editing ?? undefined}
+          onSave={(input) =>
+            editing
+              ? updateOAuthProvider(client, editing.id, { ...input, expected_version: editing.version })
+              : createOAuthProvider(client, { ...input, client_id: input.client_id ?? '' })
+          }
           onClose={() => setEditing(undefined)}
           onSaved={reload}
           onConflict={() => queryClient.invalidateQueries({ queryKey: oauthProvidersKey })}

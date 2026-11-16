@@ -160,7 +160,7 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 		return "", errors.Join(ErrEnvOAuthProviderUnavailable, errEnvOAuthRefreshUnavailable)
 	}
 	provider, err := r.providers.ResolveEnvOAuthProvider(ctx, publicAuth.Provider)
-	if err != nil || provider.TokenEndpoint == "" || provider.ClientID == "" {
+	if err != nil || provider.TokenEndpoint == "" || provider.ClientID == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != current.WorkspaceUUID) {
 		return "", errors.Join(ErrEnvOAuthProviderUnavailable, err, errEnvOAuthRefreshUnavailable)
 	}
 

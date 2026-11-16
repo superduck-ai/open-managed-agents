@@ -142,3 +142,31 @@ func TestNormalizeEnvironmentVariableForUpdateRejectsLegacy(t *testing.T) {
 		t.Fatalf("error = %v, want missing placeholder", err)
 	}
 }
+
+func TestUniqueEnvOAuthCredentials(t *testing.T) {
+	t.Parallel()
+
+	has, bound, err := uniqueEnvOAuthCredentials([]db.VaultCredential{
+		envOAuthCredentialRow("SHARED", "oma_ph_first"),
+		envOAuthCredentialRow("SHARED", "oma_ph_second"),
+		envOAuthCredentialRow("ANTHROPIC_API_KEY", "oma_ph_reserved"),
+	})
+	if err != nil {
+		t.Fatalf("uniqueEnvOAuthCredentials: %v", err)
+	}
+	if !has || len(bound) != 1 || bound[0].value.Placeholder != "oma_ph_first" {
+		t.Fatalf("unexpected bound: %t %+v", has, bound)
+	}
+}
+
+func envOAuthCredentialRow(secretName, placeholder string) db.VaultCredential {
+	auth, _ := json.Marshal(map[string]any{
+		"type":               "env_oauth",
+		"provider":           EnvOAuthProviderBuiltinFeishu,
+		"secret_name":        secretName,
+		"placeholder":        placeholder,
+		"networking":         map[string]any{"type": "unrestricted"},
+		"injection_location": map[string]any{"header": true, "body": false},
+	})
+	return db.VaultCredential{AuthType: "env_oauth", Auth: auth}
+}

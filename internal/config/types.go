@@ -34,6 +34,7 @@ type Config struct {
 	Storage                StorageConfig              `yaml:"storage"`
 	Batch                  BatchConfig                `yaml:"batch"`
 	SandboxLifecycle       SandboxLifecycleConfig     `yaml:"sandbox_lifecycle"`
+	SessionPorts           SessionPortsConfig         `yaml:"session_ports"`
 	E2B                    E2BConfig                  `yaml:"e2b"`
 	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
 	CodeSession            CodeSessionConfig          `yaml:"code_session"`

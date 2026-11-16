@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SessionPortMapper">
+    <select id="FindTarget" result="optional" resultType="sessionPortTargetRow">
+        SELECT s.uuid AS session_uuid, s.external_id AS session_external_id,
+            s.organization_uuid, s.workspace_uuid,
+            (s.archived_at IS NOT NULL OR s.deleted_at IS NOT NULL) AS removed,
+            COALESCE(CAST(cs.uuid AS text), '') AS code_session_uuid,
+            COALESCE(cs.external_id, '') AS code_session_external_id,
+            COALESCE(sandbox.provider_sandbox_id, '') AS provider_sandbox_id,
+            COALESCE(sandbox.state, '') AS sandbox_state
+        FROM sessions s
+        LEFT JOIN LATERAL (
+            SELECT code.uuid, code.external_id
+            FROM code_sessions code
+            WHERE code.organization_uuid = s.organization_uuid AND code.workspace_uuid = s.workspace_uuid
+                AND code.session_uuid = s.uuid AND code.status = 'active' AND code.deleted_at IS NULL
+            ORDER BY code.created_at DESC, code.uuid DESC LIMIT 1
+        ) cs ON true
+        LEFT JOIN LATERAL (
+            SELECT sb.provider_sandbox_id, sb.state
+            FROM environment_work work
+            JOIN environment_sandboxes sb ON sb.work_uuid = work.uuid
+                AND sb.organization_uuid = work.organization_uuid AND sb.workspace_uuid = work.workspace_uuid
+                AND sb.environment_uuid = work.environment_uuid
+            WHERE work.organization_uuid = s.organization_uuid AND work.workspace_uuid = s.workspace_uuid
+                AND work.session_uuid = s.uuid AND work.state = 'active' AND work.deleted_at IS NULL
+                AND sb.provider_sandbox_id IS NOT NULL
+            ORDER BY sb.created_at DESC, sb.uuid DESC LIMIT 1
+        ) sandbox ON true
+        WHERE s.uuid = #{sessionUUID}
+    </select>
+    <update id="TouchPortLastAccess" result="exec">
+        UPDATE code_sessions SET port_last_access_at = #{params.Now}
+        WHERE organization_uuid = #{params.OrganizationUUID} AND workspace_uuid = #{params.WorkspaceUUID}
+            AND uuid = #{params.CodeSessionUUID}
+            AND (port_last_access_at IS NULL OR port_last_access_at &lt; #{params.Threshold})
+    </update>
+</mapper>

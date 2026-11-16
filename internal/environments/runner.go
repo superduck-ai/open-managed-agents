@@ -347,7 +347,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	r.persistPackageSources(ctx, providerSandboxID, preinstalled)
+	r.persistPackageSources(ctx, providerSandboxID)
 	if provision && !preinstalled {
 		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
 		if err != nil {

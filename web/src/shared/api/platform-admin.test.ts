@@ -8,6 +8,16 @@ afterEach(() => {
   setConsoleRequestContext({});
 });
 
+test('删除接口接受204空响应，200空响应仍作为异常', async () => {
+  const client = new PlatformAdminClient(() => {});
+  globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as typeof fetch;
+  await expect(client.request('/skills/demo', { method: 'DELETE' })).rejects.toMatchObject({
+    code: 'invalid_response',
+  });
+  globalThis.fetch = mock(async () => new Response(null, { status: 204 })) as typeof fetch;
+  expect(await client.request<void>('/skills/demo', { method: 'DELETE' })).toBeUndefined();
+});
+
 test('无法解析的403不误判授权，401通知全局登出', async () => {
   const globalFailures: number[] = [];
   const dispose = onApiAuthFailure((status) => globalFailures.push(status));

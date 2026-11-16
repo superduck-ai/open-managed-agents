@@ -19,6 +19,16 @@ var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; r
 // longer be used. It remains active to keep matching requests fail-closed.
 var ErrMCPOAuthReauthorizationRequired = errors.New("MCP OAuth credentials require reauthorization")
 
+// ErrEnvOAuthReauthorizationRequired indicates that the stored env_oauth grant
+// can no longer be refreshed; matching requests stay fail-closed.
+var ErrEnvOAuthReauthorizationRequired = errors.New("environment OAuth credentials require reauthorization")
+
+// ErrEnvOAuthProviderUnavailable indicates that the provider referenced by an
+// env_oauth credential cannot be resolved (deleted, disabled, or unconfigured).
+var ErrEnvOAuthProviderUnavailable = errors.New("environment OAuth provider is unavailable")
+
+var errEnvOAuthInjectionLocation = errors.New("auth.injection_location must enable header and disable body")
+
 // InjectionPublicMessage exposes the recovery action without leaking private causes.
 func InjectionPublicMessage(err error) string {
 	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
@@ -133,6 +143,10 @@ func unsupportedTokenAuthMethod(method string) error {
 	return fmt.Errorf("unsupported token auth method %q", method)
 }
 
+func unsupportedTokenEndpointEncoding(encoding string) error {
+	return fmt.Errorf("unsupported token endpoint encoding %q", encoding)
+}
+
 type oauthTokenEndpointError struct{ status int }
 
 func (e oauthTokenEndpointError) Error() string {
@@ -235,4 +249,8 @@ func immutableCredentialServerURL() error {
 
 func invalidVaultCreateMetadata() error {
 	return errors.New("metadata must be an object with string values")
+}
+
+func disabledOAuthProvider() error {
+	return apperr.New(apperr.InvalidArgument, "OAuth provider is disabled for new credentials", nil)
 }

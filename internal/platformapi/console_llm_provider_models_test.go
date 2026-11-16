@@ -50,7 +50,7 @@ func TestProviderEmptyModelsResponse(t *testing.T) {
 		if !ok {
 			t.Fatal(response.Body.String())
 		}
-		writeJSON(response, http.StatusOK, formatLLMProvider(db.LLMProvider{Models: models}))
+		writeJSON(response, http.StatusOK, formatLLMProvider(db.LLMProvider{Models: models}, consoleLLMProviderActor{}))
 		var encoded struct {
 			Models json.RawMessage `json:"models"`
 		}

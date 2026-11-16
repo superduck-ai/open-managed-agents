@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -41,7 +42,7 @@ func printFailureReasons(out io.Writer, reasons map[string]int) {
 	}
 }
 
-func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, to string, apply bool, out io.Writer) error {
+func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, to string, apply bool, out io.Writer, logger *slog.Logger) error {
 	reasons := make(map[string]int)
 	var failedRecords []string
 	defer func() {
@@ -65,11 +66,11 @@ func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, 
 	if !apply {
 		fmt.Fprintln(out, "Read-only: verifies source DEKs; no target calls or database changes.")
 	}
-	fmt.Fprintln(out, "Counts are database records; each Deployment is processed as one record.")
+	fmt.Fprintln(out, "Counts are database rows; each platform OAuth row may contain two envelopes.")
 	fmt.Fprintf(out, "\n%-28s %10s %10s %10s\n", "Storage", success, "Skipped", "Failed")
 	total := migrationCounts{}
 	for _, kind := range db.SecretMigrationKinds() {
-		count, err := migrateKind(ctx, store, service, kind, from, apply, reportFailure)
+		count, err := migrateKind(ctx, store, service, kind, from, apply, reportFailure, logger)
 		printMigrationCounts(out, kind, count)
 		total.add(count)
 		if err != nil {
@@ -93,7 +94,7 @@ func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, 
 	return nil
 }
 
-func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, kind, from string, apply bool, reportFailure func(string, string, error)) (migrationCounts, error) {
+func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, kind, from string, apply bool, reportFailure func(string, string, error), logger *slog.Logger) (migrationCounts, error) {
 	total := migrationCounts{}
 	after := ""
 	for {
@@ -113,11 +114,17 @@ func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, ki
 			if err == nil && apply && count > 0 {
 				err = store.SaveMigratedSecret(ctx, kind, row, next)
 				fatal = err != nil && !errors.Is(err, db.ErrVersionConflict)
+				if err == nil && kind == "platform_oauth_providers" {
+					auditOAuthRewrap(ctx, logger, row, "success")
+				}
 			}
 			after = row.UUID
 			if err != nil {
 				total.failed++
 				reportFailure(kind, row.UUID, err)
+				if kind == "platform_oauth_providers" {
+					auditOAuthRewrap(ctx, logger, row, "failure")
+				}
 				if fatal || ctx.Err() != nil {
 					return total, err
 				}
@@ -136,6 +143,8 @@ func migrateDocument(ctx context.Context, service *secrets.Service, kind string,
 		return raw, 0, nil
 	}
 	switch kind {
+	case "platform_oauth_providers", "env_oauth_flows":
+		return migrateOAuthDocument(ctx, service, kind, row, from, apply)
 	case "session_resources":
 		return migrateGitToken(ctx, service, raw, from, apply)
 	case "deployments":

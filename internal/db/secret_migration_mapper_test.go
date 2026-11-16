@@ -22,7 +22,7 @@ func TestSecretMigrationMapper(t *testing.T) {
 				})
 			}
 			bound := buildSecretMigrationMapperReplace(yourbatis.DialectPostgres, kind, SecretMigrationRecord{}, nil)
-			if !strings.Contains(bound.SQL, "organization_uuid") || !strings.Contains(bound.SQL, "workspace_uuid") || !strings.Contains(bound.SQL, "m.uuid =") {
+			if kind != "platform_oauth_providers" && (!strings.Contains(bound.SQL, "organization_uuid") || !strings.Contains(bound.SQL, "workspace_uuid") || !strings.Contains(bound.SQL, "m.uuid =")) {
 				t.Fatal("update lost tenant scope")
 			}
 			sensitive := 0
@@ -46,5 +46,27 @@ func TestSecretMigrationMapper(t *testing.T) {
 				t.Fatal("OAuth CAS version not incremented")
 			}
 		})
+	}
+}
+
+func TestLLMProviderSecretMigrationBindings(t *testing.T) {
+	for _, binding := range []string{"organization", "00000000-0000-4000-8000-000000000002"} {
+		expected := SecretMigrationRecord{OrganizationUUID: "00000000-0000-4000-8000-000000000001", WorkspaceUUID: binding}
+		bound := buildSecretMigrationMapperReplace(yourbatis.DialectPostgres, "llm_providers", expected, nil)
+		if !strings.Contains(bound.SQL, "COALESCE(CAST(m.secret_workspace_uuid AS text), 'organization')") {
+			t.Fatal("missing immutable encryption binding")
+		}
+		found := false
+		for _, arg := range bound.Args {
+			if arg.Name == "expected.WorkspaceUUID" {
+				found = true
+				if arg.Value != binding {
+					t.Fatalf("binding = %v", arg.Value)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("binding not compared")
+		}
 	}
 }

@@ -118,7 +118,7 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 
 1. workspace API key、platform `sessionKey` cookie 按原鉴权链处理；lifecycle-bound code-session token 只在此 `POST` 路径被接受。
 2. code-session token 按 hash 查询，且 code session 必须 active、public session 未 terminated、`worker_lease_expires_at > now()`；失败返回 `401 authentication_error`。
-3. 请求体通过 `http.MaxBytesReader` 限制为 32 MiB；只偷看顶层 `model` 后按当前 workspace 精确解析 Provider，剩余请求体继续流式转发。模型未配置返回 `400`，workspace 无 Provider 返回 `503`。
+3. 请求体通过 `http.MaxBytesReader` 限制为 32 MiB；只偷看顶层 `model` 后按当前组织模型目录精确解析 Provider，剩余请求体继续流式转发。模型未配置返回 `400`，组织无 Provider 返回 `503`。
 4. 目标为该 Provider 的 `{base_url}/v1/messages`；请求 body 原样转发，不改写模型 ID。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
 6. 解密 Provider Key，并设置为上游 `X-Api-Key`；Key 不进入 sandbox。

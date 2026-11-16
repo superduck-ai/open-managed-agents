@@ -25,6 +25,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 
 	"github.com/go-chi/chi/v5"
@@ -829,7 +830,7 @@ func (h *Handler) normalizeConfiguredModel(
 	if err != nil {
 		return normalizedAgentModel{}, err
 	}
-	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, workspaceUUID, model.ID)
+	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, model.ID)
 	if errors.Is(err, llmproviders.ErrModelNotConfigured) {
 		return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
 	}
@@ -1058,7 +1059,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 	}
 	allowed := map[string]struct{}{
 		"ask_user_question": {}, "bash": {}, "edit": {}, "glob": {}, "grep": {},
-		"read": {}, "web_fetch": {}, "web_search": {}, "write": {},
+		"read": {}, "web_fetch": {}, "web_search": {}, "write": {}, sessionports.ToolName: {},
 	}
 	normalized := make([]map[string]any, 0, len(configs))
 	seen := map[string]struct{}{}

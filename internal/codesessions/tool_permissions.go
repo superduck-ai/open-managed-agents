@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 )
 
 type resolvedToolPermission string
@@ -130,6 +131,9 @@ func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, 
 }
 
 func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string, threadID string) (resolvedToolPermission, toolIdentity, error) {
+	if !s.builtinTools().available(claudeToolName) {
+		return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
+	}
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
@@ -271,6 +275,8 @@ func managedAgentToolName(claudeToolName string) string {
 		return "web_fetch"
 	case "websearch", "web_search":
 		return "web_search"
+	case sessionports.ToolName:
+		return sessionports.ToolName
 	default:
 		return ""
 	}
@@ -305,15 +311,19 @@ func resolveAgentToolPermission(tools []toolPermissionToolset, toolName string) 
 		if config, ok := findToolConfig(toolset.Configs, toolName); ok {
 			return permissionFromToolConfig(config, "always_allow")
 		}
-		if toolName == "ask_user_question" {
+		if explicitOnlyAgentTool(toolName) {
 			return resolvedToolPermissionDeny
 		}
 		return permissionFromToolConfig(toolset.DefaultConfig, "always_allow")
 	}
-	if toolName == "ask_user_question" {
+	if explicitOnlyAgentTool(toolName) {
 		return resolvedToolPermissionDeny
 	}
 	return resolvedToolPermissionAllow
+}
+
+func explicitOnlyAgentTool(toolName string) bool {
+	return toolName == "ask_user_question"
 }
 
 func permissionFromToolConfig(config mcpToolDeclaration, fallbackPolicy string) resolvedToolPermission {

@@ -8,6 +8,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper SkillMapper -sql ./skill_mapper.xml -out ./skill_mapper.sqlmap.gen.go -dialect postgres
 
 type skillRow struct {
+	IconKey             string     `db:"icon_key"`
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
@@ -21,6 +22,7 @@ type skillRow struct {
 }
 
 type insertSkillParams struct {
+	IconKey             string
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
@@ -31,18 +33,26 @@ type insertSkillParams struct {
 }
 
 type updateSkillLatestVersionParams struct {
+	IconKey       *string
 	WorkspaceUUID string
 	ExternalID    string
 	LatestVersion string
 	UpdatedAt     time.Time
 }
 
+type skillReferencingAgentRow struct {
+	ExternalID string `db:"external_id"`
+	Name       string `db:"name"`
+}
+
 type SkillMapper interface {
+	UpdateIcon(ctx context.Context, workspaceUUID, externalID, iconKey string) (skillRow, error)
 	LockWorkspace(ctx context.Context, workspaceUUID string) error
 	FindExternalIDByDisplayTitle(ctx context.Context, workspaceUUID, displayTitle string) (string, bool, error)
 	Insert(ctx context.Context, params insertSkillParams) (skillRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
 	FindForUpdateByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
+	ListReferencingActiveAgents(ctx context.Context, workspaceUUID, externalID string) ([]skillReferencingAgentRow, error)
 	ListPage(ctx context.Context, workspaceUUID string, limit, offset int, onlyVersioned bool) ([]skillRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	UpdateLatestVersionByExternalID(ctx context.Context, params updateSkillLatestVersionParams) (skillRow, error)

@@ -11,8 +11,9 @@ import { configureOmaModel } from "./model-configs.ts";
 import { SandboxCalls } from "./oma-sandbox/client.ts";
 import { recoverSandboxCalls } from "./oma-sandbox/recovery.ts";
 import { WebClient } from "./web-tools/client.ts";
+import { PortUrlClient } from "./port-tools/client.ts";
+import * as HostTools from "./host-tools.ts";
 import * as Skills from "./skills/index.ts";
-import * as WebTools from "./web-tools/index.ts";
 
 /** Bind OMA credentials and launch metadata before opening the protocol bridge. */
 export function createOmaSession(
@@ -61,7 +62,10 @@ export function createOmaSession(
     },
     setupTools: async (scope, bridge, tools, threadId, permissions) => {
       await scope.plugin(Skills, { api, sessionId: assignment.session_id, threadId, workDir: assignment.launch.work_dir });
-      return scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions });
+      return scope.plugin(HostTools, {
+        web: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId),
+        ports: new PortUrlClient(api, assignment.session_id, threadId), bridge, tools, permissions,
+      });
     },
     subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),

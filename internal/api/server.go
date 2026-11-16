@@ -38,9 +38,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
+	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -70,6 +73,7 @@ type Server struct {
 	platformAuth         *platformauth.EmailProvider
 	filestoreCredentials *filestoreapi.TokenCredentials
 	vaultSecrets         *secrets.Service
+	envOAuthProviders    *platformoauth.Resolver
 	admin                *adminapi.Handler
 	agents               *agents.Handler
 	batch                *batches.Handler
@@ -86,11 +90,13 @@ type Server struct {
 	models               *modelsapi.Handler
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
+	workspaceChannels    http.Handler
 	tunnels              *tunnelsapi.Handler
 	tunnelIngress        *tunnelsapi.IngressHandler
 	tunnelBroker         *tunnelsapi.Broker
 	vaults               *vaultsapi.Handler
 	webhooks             *webhooksapi.Handler
+	sessionPortTunnel    *porttunnel.Handler
 }
 
 // ServerDeps 汇总组装 HTTP API Server 所需依赖。
@@ -126,6 +132,9 @@ type ServerDeps struct {
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
+	SessionPorts           *sessionports.Settings
+	SessionPortRegistry    *porttunnel.Registry
+	SessionPortRouter      porttunnel.Router
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -169,6 +178,9 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
 	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
+	channelLogger := componentLogger("channels")
+	agentChannels := channels.NewHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
+	workspaceChannels := channels.NewWorkspaceHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
 		lease, err := vaultsapi.NewRedisOAuthRefreshLease(deps.Redis)
@@ -177,8 +189,10 @@ func NewServer(deps ServerDeps) *Server {
 		}
 		oauthRefreshLease = lease
 	}
+	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, componentLogger("env_oauth_providers"))
 	s := &Server{
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
+		envOAuthProviders:    envOAuthProviders,
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -192,22 +206,23 @@ func NewServer(deps ServerDeps) *Server {
 			telemetrydestinations.NewService(deps.DB, deps.VaultSecrets, telemetryexport.NewTester(deps.VaultSecrets, telemetryexport.Config{AllowInsecure: deps.Config.TelemetryExport.AllowInsecure, Timeout: deps.Config.TelemetryExport.Timeout}), deps.Config.TelemetryExport.AllowInsecure),
 			componentLogger("telemetry_destinations"),
 		)),
-		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"), deps.VaultSecrets)),
-		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
-		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
-		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
-		files:          files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
-		filestore:      filestoreHandler,
-		memory:         memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:       messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
-		models:         modelsapi.NewHandler(deps.DB),
-		sessions:       sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
-		skills:         skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:         vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
-		webhooks:       webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
-		tunnelBroker:   deps.TunnelBroker,
+		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
+		workspaceChannels: workspaceChannels,
+		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
+		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
+		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
+		deploymentRuns:    deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
+		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
+		files:             files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
+		filestore:         filestoreHandler,
+		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
+		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
+		models:            modelsapi.NewHandler(deps.DB),
+		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
+		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
+		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
+		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
+		tunnelBroker:      deps.TunnelBroker,
 	}
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
@@ -217,6 +232,10 @@ func NewServer(deps ServerDeps) *Server {
 	router.Use(s.requestIDMiddleware)
 	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
+	if gateway := s.configureSessionPorts(deps, codeSessionService, componentLogger("session_port_tunnel"), componentLogger("session_port_gateway")); gateway != nil {
+		router.Use(gateway.Middleware)
+		router.Get(porttunnel.Path, s.sessionPortTunnel.ServeHTTP)
+	}
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +351,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
+	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
@@ -346,6 +366,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
+			r.Get("/env-oauth/providers", s.handleEnvOAuthProviders)
+			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
 				// 配置校验保证 enabled 时 backend 只会是受支持的值。
@@ -368,6 +390,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
 			mcpServerHandler.RegisterRoutes(r)
+			r.With(s.skillConsoleScope).Mount("/workspaces/{workspaceId}/skills", s.skills.ConsoleRoutes())
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}
@@ -398,6 +421,9 @@ func platformCSRFMiddleware(next http.Handler) http.Handler {
 func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Post("/agents:search", s.agents.Search)
 	r.Mount("/agents", s.agents)
+	if s.workspaceChannels != nil {
+		r.Mount("/channels", s.workspaceChannels)
+	}
 	r.Mount("/deployment_runs", s.deploymentRuns)
 	r.Mount("/deployments", s.deployments)
 	r.Mount("/environments", s.envs)
@@ -440,6 +466,9 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if abort, ok := recovered.(error); ok && errors.Is(abort, http.ErrAbortHandler) {
+					panic(recovered)
+				}
 				requestID := httpapi.RequestID(r.Context())
 				s.logger.ErrorContext(
 					r.Context(),

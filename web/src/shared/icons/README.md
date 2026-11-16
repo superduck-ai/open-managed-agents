@@ -11,6 +11,7 @@
 | 资源 / 工作区                    | Boxes / Building2                                     |
 | 技能 / 文件 / 记忆 / 凭据保险库  | BookOpenCheck / Folder / Brain / Vault                |
 | MCP 服务器 / MCP 隧道 / Webhooks | Plug / Network / Webhook                              |
+| OAuth 服务方                     | Plug（方形服务图标）                                  |
 | 模型 / 可观测 / 用量 / 成本      | Cpu / Activity / ChartNoAxesColumnIncreasing / Wallet |
 | 成员 / API 密钥 / 管理 / 文档    | Users / KeyRound / Settings / BookOpen                |
 

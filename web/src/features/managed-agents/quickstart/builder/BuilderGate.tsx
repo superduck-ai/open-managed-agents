@@ -269,6 +269,7 @@ function CredentialGate({ builder, workspaceId, orgUuid }: GateProps) {
           workspaceId={workspaceId}
           orgUuid={orgUuid}
           initialMcpServerUrl={server.url}
+          allowedAuthTypes={['static_bearer', 'mcp_oauth']}
           returnFocus={focus}
           onClose={() => {
             setCredentialOpen(false);

@@ -11,6 +11,7 @@ import { workspaceIdFromPath, workspaceSwitchPath } from '../shared/workspaces/p
 const initialWorkspaceId = workspaceIdFromPath(window.location.pathname);
 
 async function navigateScope(workspaceId: string) {
+  if (workspaceIdFromPath(router.state.location.pathname) === workspaceId) return;
   const href = workspaceSwitchPath(router.state.location.pathname, workspaceId);
   if (href === router.state.location.pathname) return;
   await router.navigate({ href, replace: true, ignoreBlocker: true });

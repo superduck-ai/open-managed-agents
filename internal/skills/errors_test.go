@@ -54,6 +54,52 @@ func TestMapResolveVersionError(t *testing.T) {
 	}
 }
 
+func TestMapConsoleSkillError(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		kind    apperr.Kind
+		message string
+	}{
+		{errConsoleSkillDenied, apperr.PermissionDenied, "Workspace access required"},
+		{db.ErrNotFound, apperr.NotFound, "Skill or version not found"},
+		{errSkillPreviewNotFound, apperr.NotFound, "File not found"},
+		{errSkillPreviewTooLarge, apperr.RequestTooLarge, "SKILL.md exceeds 256 KiB preview limit"},
+		{errInvalidSkillIconInput, apperr.InvalidArgument, "Invalid icon request payload"},
+		{errSkillStorageMismatch, apperr.InvalidArgument, "Skill storage configuration mismatch"},
+		{errSkillIntegrityFailed, apperr.InvalidArgument, "Skill package integrity check failed"},
+		{errInvalidSkillFilter, apperr.InvalidArgument, "Invalid skill filter parameters"},
+		{errInvalidSkillLimit, apperr.InvalidArgument, "Limit must be between 1 and 100"},
+		{errInvalidSkillOffset, apperr.InvalidArgument, "Offset is invalid"},
+	} {
+		assertSkillAppError(t, mapConsoleSkillError(tc.err), tc.kind, tc.message)
+	}
+	raw := errors.New("database password leaked")
+	if got := mapConsoleSkillError(raw); !errors.Is(got, raw) {
+		t.Fatalf("mapConsoleSkillError(raw) = %v, want raw error passthrough", got)
+	}
+}
+
+func TestMapSkillDeleteError(t *testing.T) {
+	inUse := &db.SkillInUseError{
+		Agents: []db.SkillReferencingAgent{
+			{ExternalID: "agent_1", Name: "Alpha"},
+			{ExternalID: "agent_2", Name: ""},
+		},
+	}
+	assertSkillAppError(
+		t,
+		mapSkillDeleteError(inUse),
+		apperr.Conflict,
+		"Skill is in use by active agent(s): Alpha (agent_1), agent_2. Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.",
+	)
+	assertSkillAppError(
+		t,
+		mapSkillDeleteError(db.ErrSkillHasVersions),
+		apperr.InvalidArgument,
+		"Delete all skill versions before deleting the skill",
+	)
+}
+
 func assertSkillAppError(t *testing.T, err error, kind apperr.Kind, message string) {
 	t.Helper()
 	appErr, ok := errors.AsType[*apperr.Error](err)

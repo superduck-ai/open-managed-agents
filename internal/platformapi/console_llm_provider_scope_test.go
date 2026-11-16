@@ -25,7 +25,7 @@ func TestLLMProviderOrganizationScope(t *testing.T) {
 			req := httptest.NewRequest(tc.method, "/", nil)
 			route := chi.NewRouteContext()
 			route.URLParams.Add("orgUuid", "org")
-			ctx := auth.WithPrincipal(req.Context(), auth.Principal{OrganizationUUID: tc.principalOrg})
+			ctx := auth.WithPrincipal(req.Context(), auth.Principal{AccountUUID: "account", OrganizationUUID: tc.principalOrg, CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}})
 			req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
 			response := httptest.NewRecorder()
 			_, _, ok := llmProviderScope(response, req, nil)

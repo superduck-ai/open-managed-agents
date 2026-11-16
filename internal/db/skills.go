@@ -11,7 +11,21 @@ import (
 var ErrSkillHasVersions = errors.New("skill has versions")
 var ErrSkillLastVersion = errors.New("cannot delete the only skill version")
 
+type SkillReferencingAgent struct {
+	ExternalID string
+	Name       string
+}
+
+type SkillInUseError struct {
+	Agents []SkillReferencingAgent
+}
+
+func (e *SkillInUseError) Error() string {
+	return "skill is referenced by active agents"
+}
+
 type Skill struct {
+	IconKey             string
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
@@ -94,6 +108,7 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 			WorkspaceUUID:       skill.WorkspaceUUID,
 			CreatedByAPIKeyUUID: nullableString(skill.CreatedByAPIKeyUUID),
 			DisplayTitle:        skill.DisplayTitle,
+			IconKey:             skill.IconKey,
 			LatestVersion:       version.Version,
 			CreatedAt:           skill.CreatedAt,
 		})
@@ -109,7 +124,7 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	return createdSkill, createdVersion, err
 }
 
-func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID string, version SkillVersion) (Skill, SkillVersion, error) {
+func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID string, version SkillVersion, iconKey *string) (Skill, SkillVersion, error) {
 	var updatedSkill Skill
 	var createdVersion SkillVersion
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -135,6 +150,7 @@ func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skill
 			WorkspaceUUID: workspaceUUID,
 			ExternalID:    skillExternalID,
 			LatestVersion: createdVersion.Version,
+			IconKey:       iconKey,
 			UpdatedAt:     createdVersion.CreatedAt,
 		})
 		updatedSkill, txErr = skillFromMapperRow(row, txErr)
@@ -216,6 +232,18 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 		skill, txErr := skillFromMapperRow(row, txErr)
 		if txErr != nil {
 			return txErr
+		}
+
+		referencingRows, txErr := skillMapper.ListReferencingActiveAgents(ctx, workspaceUUID, externalID)
+		if txErr != nil {
+			return txErr
+		}
+		if len(referencingRows) > 0 {
+			agents := make([]SkillReferencingAgent, 0, len(referencingRows))
+			for _, ref := range referencingRows {
+				agents = append(agents, SkillReferencingAgent(ref))
+			}
+			return &SkillInUseError{Agents: agents}
 		}
 
 		versionRows, txErr := versionMapper.ListBySkillUUID(ctx, workspaceUUID, skill.UUID)
@@ -335,6 +363,7 @@ func (r skillRow) skill() Skill {
 		DisplayTitle:        r.DisplayTitle,
 		LatestVersion:       r.LatestVersion,
 		Source:              r.Source,
+		IconKey:             r.IconKey,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		DeletedAt:           r.DeletedAt,
@@ -360,4 +389,9 @@ func (r skillVersionRow) version() SkillVersion {
 		CreatedAt:           r.CreatedAt,
 		DeletedAt:           r.DeletedAt,
 	}
+}
+
+func (d *DB) UpdateSkillIcon(ctx context.Context, workspaceUUID, externalID, iconKey string) (Skill, error) {
+	row, err := NewSkillMapper(d.mapperDB).UpdateIcon(ctx, workspaceUUID, externalID, iconKey)
+	return skillFromMapperRow(row, err)
 }

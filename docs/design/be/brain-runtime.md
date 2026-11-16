@@ -479,7 +479,7 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
 
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前组织的
 模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
@@ -494,7 +494,7 @@ flowchart LR
     SDK --> Transport[OMA fetch transport]
     Transport --> Proxy[Go 模型代理]
     Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
-    Proxy --> Provider[Workspace Provider]
+    Proxy --> Provider[Organization Provider]
 ```
 
 DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与
@@ -582,6 +582,11 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 并发 MCP 请求通过既有 Work 事务锁及 `CreateEnvironmentSandbox` 的 pending 检查复用同一个 replacement。恢复不更换宿主机 Brain 的 Code Session 或 worker epoch。Provider 已删除的临时文件与进程无法保留，持久化事件和已提交 Filestore 内容不受影响。
 
 本地端口查询前也执行 SDK Connect，使 paused 恢复及过期错误分类与云端一致。端口查询本身返回 404 时同样识别为沙箱已删除。单测检查暂停连接、缺失分类及服务端错误保留；实际开发环境验收包含首次 Bash 调用、超过 TTL 后再次调用和环境信息查询。
+
+## 端口地址工具
+
+`launch.tools` 含 `get_port_url` 时，Brain 注册同名工具；服务端只在启用 `session_ports` 时下发它，Brain 不需要知道部署开关，经 `POST /v2/ccr-sessions/{id}/port-url` 用 ingress token 取地址，不访问沙箱，子线程调用带 `X-OMA-Session-Thread-ID`。
+该工具与 web 工具同在 host-tools 插件中注册，工具列表刷新时一起增删。端口范围在本地先校验，成功结果是纯文本 URL。工具描述说明只监听 127.0.0.1 的服务可直接访问，避免模型建议改成 0.0.0.0。合同、开启方式与错误见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。服务端启用 `session_ports` 前必须先部署包含该工具的 Brain，否则默认配置的 Agent 的 `launch.tools` 会被旧 Brain 以 `Invalid launch tools` 拒绝。
 
 ## DSH 自定义问卷工具
 

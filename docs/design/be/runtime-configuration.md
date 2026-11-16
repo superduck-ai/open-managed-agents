@@ -61,7 +61,7 @@ YAML 使用严格字段解析，未知字段、显式 `null`、类型错误和�
 
 `config.Config` 只表示可以由 YAML 加载、校验和复现的数据，不持有 logger、数据库连接、对象存储 client 或其他进程内对象。`*slog.Logger` 属于运行时依赖：可执行程序通过 `internal/logging` 创建根 logger 后，通过 `api.ServerDeps` 和组件构造函数显式注入。HTTP Server 组装层从根 logger 派生带稳定 `component` 字段的子 logger，各 handler、service、enqueuer 和 worker 保存并使用自己的 logger；数据库入口同样接收 `component=database` logger，并交给持久化 runtime 持有。构造边界通过 `logging.LoggerOrDefault` 统一兼容 nil，组件内部不再读取全局默认 logger。HTTP access middleware 同样使用归一化后的 `component=http` logger 并始终安装；nil 只表示回落到 `slog.Default()`，不用于隐式关闭 access log。
 
-稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组持有数据库、Vault service 和 logger，并按请求 workspace 读取 Provider；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库连接和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
+稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组持有数据库、Vault service 和 logger，并按请求组织读取 Provider；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库连接和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
 
 ```mermaid
 flowchart LR
@@ -96,7 +96,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_REGION`                           | `storage.s3.endpoint` / `bucket` / `region`                                | 同时设置 `storage.type: s3`                                                       |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_FORCE_PATH_STYLE` | `storage.s3.access_key_id` / `secret_access_key` / `force_path_style`      | `force_path_style` 省略时默认 `true`                                              |
 | `MAX_FILE_BYTES` / `WORKSPACE_STORAGE_LIMIT_BYTES`                  | `storage.max_file_bytes` / `storage.workspace_limit_bytes`                 | 迁移非默认容量限制                                                                |
-| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY`        | 无                                                                         | 已删除；启动后在控制台按 workspace 配置 Provider                                  |
+| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY`        | 无                                                                         | 已删除；启动后在控制台按组织配置 Provider                                  |
 | `BATCH_*`                                                           | `batch.*`                                                                  | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
 | `E2B_*`                                                             | `e2b.*`                                                                    | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段                |
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY`     | `environment_runner.enabled` / `concurrency`                               | 仅在覆盖代码默认值时配置                                                          |
@@ -216,7 +216,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 ## 兼容与安全合同
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
-- LLM Provider 是数据库中的 workspace 业务数据，不属于 `config.Config`。进程 YAML 不再包含 `anthropic_upstream`。
+- LLM Provider 是数据库中的组织业务数据，不属于 `config.Config`。进程 YAML 不再包含 `anthropic_upstream`。
 - Provider 可以有多个，每个包含不可变 slug、base URL、Vault 信封加密 Key 和上游模型 ID 列表；对外模型 ID 为 `{slug}/{upstream_model_id}`，转发前替换回上游 ID，不做别名或默认回退（见 [messages-proxy](messages-proxy.md)）。
 - Environment Runner 直接使用 Agent Snapshot 保存的完整模型 ID。`environment-manager` v0 仍把该值投射为 Claude Code 所需的 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；Provider Key 不进入 sandbox。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。
@@ -250,4 +250,4 @@ just duplicates
 just complexity
 ```
 
-供应商模板目录由可选的 `llm_provider_presets_file` 独立 JSON 提供，属于部署共享默认值；它不包含凭据，也不会覆盖数据库中的 Provider 实例。未配置时使用内置目录。控制台只读此目录，不提供默认模型回写接口；发现和编辑的模型仅保存到当前组织或工作区的 Provider 实例。显式配置的目录文件无需写权限；具体格式与部署要求见配置文档。
+供应商模板目录由可选的 `llm_provider_presets_file` 独立 JSON 提供，属于部署共享默认值；它不包含凭据，也不会覆盖数据库中的 Provider 实例。未配置时使用内置目录。控制台只读此目录，不提供默认模型回写接口；发现和编辑的模型仅保存到当前组织的 Provider 实例。显式配置的目录文件无需写权限；具体格式与部署要求见配置文档。

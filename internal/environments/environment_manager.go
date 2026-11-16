@@ -262,6 +262,9 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 	} else {
 		commandParts = append(commandParts, "if [ ! -x "+shellQuote(claudePath)+" ]; then printf '%s\\n' "+shellQuote("Claude binary missing or not executable: "+claudePath)+" >&2; exit 1; fi")
 	}
+	if cfg.SessionPorts.Enabled() {
+		commandParts = append(commandParts, "export TUNNEL_ENABLED=true")
+	}
 	commandParts = append(commandParts, gitConfigExportLinesFrom(environmentManagerBuiltInGitConfigCount, extraGitConfig)...)
 	commandParts = append(commandParts,
 		"export GIT_EDITOR=true",

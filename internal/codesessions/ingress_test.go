@@ -40,7 +40,7 @@ func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 		}`),
 	}
 
-	context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.Config{})
+	context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.Config{}, builtinToolCatalog{})
 	if err != nil {
 		t.Fatal(err)
 	}

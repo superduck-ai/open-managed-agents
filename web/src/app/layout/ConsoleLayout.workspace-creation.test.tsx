@@ -34,11 +34,13 @@ function mount(dirty = false) {
   const created = { id: 'ws-new', name: 'new', type: 'workspace', effective_role: 'workspace_admin' };
   const createRequest = mock(async () => Response.json(created));
   globalThis.fetch = mock(async (_input, options) =>
-    options?.method === 'POST'
-      ? createRequest()
-      : Response.json([
-          { id: 'ws-a', name: 'Default', type: 'workspace', is_default: true, effective_role: 'workspace_user' },
-        ]),
+    String(_input).includes('/api/invitations')
+      ? Response.json({ data: [] })
+      : options?.method === 'POST'
+        ? createRequest()
+        : Response.json([
+            { id: 'ws-a', name: 'Default', type: 'workspace', is_default: true, effective_role: 'workspace_user' },
+          ]),
   ) as typeof fetch;
   const scopeNavigation = mock(async (_id: string) => {});
   const shellNavigation = mock(async (_href: string) => {});

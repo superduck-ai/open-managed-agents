@@ -116,7 +116,7 @@ func configureChatModel(t *testing.T, e *liveEnv, modelURL string) {
 		configureIsolatedChatModel(t, e, modelURL)
 		return
 	}
-	providers, err := e.database.ListLLMProviders(t.Context(), e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String())
+	providers, err := e.database.ListLLMProviders(t.Context(), e.key.OrganizationUUID.String())
 	requireOK(t, err)
 	if len(providers) != 1 || !strings.HasPrefix(providers[0].ExternalID, "llmprov_probe_") {
 		t.Fatal("chat verification requires a fresh isolated workspace with its own fixture provider")

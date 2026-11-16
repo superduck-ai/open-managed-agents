@@ -30,7 +30,7 @@ just dev-init
 2. 首次创建 `.run/config.yaml` 和 `.run/dev-init.yaml`，默认启用 Brain 模式。
 3. 自动生成当前 worktree 的 JWT 签名私钥、代理 CA 私钥和 Vault KEK，文件保存在 `.run/secrets/`，权限为 `0600`。
 4. 在本机共享目录缺少 provider 文件时，创建 `~/.oma-dev/model-providers.yaml` 模板。新 worktree 的初始化文件会引用它的绝对路径。
-5. 启动当前环境独立的 PostgreSQL、Redis、三节点 NATS、MinIO 和 e2b-local，应用数据库迁移，创建开发账号、两个 workspace、四个客户端 API key，并分别写入共享 provider 定义。
+5. 启动当前环境独立的 PostgreSQL、Redis、三节点 NATS、MinIO 和 e2b-local，应用数据库迁移，创建开发账号、两个 workspace、四个客户端 API key，并按定义为组织写入共享 provider，两个 workspace 使用同一模型目录。
 
 默认入口只在首次缺少输入时为当前 worktree 准备密钥；若已提供 `fixed_secrets_dir` 中的 JWT 和代理 CA 私钥，则复用并复制到 `.run/generated/secrets/`。已有配置、共享 provider 文件和密钥不会被覆盖或隐式轮换。环境已绑定但人工输入配置丢失时会报错，要求恢复原文件，避免误生成新 Vault 主密钥导致旧数据无法解密。
 
@@ -60,7 +60,7 @@ chmod 600 "$HOME/.oma-dev/model-providers.yaml"
 
 模板的 `api_key` 默认为空，必须填写服务商提供的真实 key。共享目录只需保留 `model-providers.yaml`，不再需要共享的 `dev-init.yaml` 或 `secrets/`。真实 key 只保存在仓库外的私有配置中，不要写入仓库或文档。
 
-Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个 workspace 内不同 provider 可以配置相同上游模型 ID，通过 `<slug>/<model_id>` 选择，例如 `primary/kimi-k2.5`。`slug` 可选，作为新建 provider 的候选值，省略时使用 `default`。实际 slug 在整个组织内唯一；跨 workspace 或组织级连接发生冲突时会追加 `-2`、`-3` 等可用后缀。模型引用使用 Console 中的实际 slug；重跑和 `--update` 均保留它。旧状态首次重跑兼容数据库迁移后的 slug，并登记当前文件候选值，之后不得修改该值。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
+Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个组织内不同 provider 可以配置相同上游模型 ID，通过 `<slug>/<model_id>` 选择，例如 `primary/kimi-k2.5`。`slug` 可选，作为新建 provider 的候选值，省略时使用 `default`。实际 slug 在整个组织内唯一；与组织内已有连接发生冲突时会追加 `-2`、`-3` 等可用后缀。模型引用使用 Console 中的实际 slug；重跑和 `--update` 均保留它。旧状态首次重跑兼容数据库迁移后的 slug，并登记当前文件候选值，之后不得修改该值。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
 
 所有新 worktree 的 `.run/dev-init.yaml` 都会包含类似下面的引用：
 
@@ -226,7 +226,7 @@ just dev-recycle --yes --worktree /absolute/path/to/worktree
 | portless 域名打不开 | 检查 proxy 是否以 `--no-tls` 启动，使用 `slot-info` 给出的完整 HTTP URL；首次启动代理可能需要 sudo |
 | Brain ready，但消息一直排队 | 确认基础配置与生成配置均为 `agent_mode: brain`；仅有进程 ready 不代表对话执行已验证 |
 | Brain 领取请求返回 401 | 重新执行 `just restart-brain`，让脚本读取当前环境 token；环境重建后旧进程持有的 token 已失效 |
-| provider 修改后没生效 | 执行 `dev-init --update`，重启不会同步 provider；检查当前 workspace 和 Agent 的模型配置 |
+| provider 修改后没生效 | 执行 `dev-init --update`，重启不会同步 provider；检查当前组织的模型目录和 Agent 的模型引用 |
 | 容器、卷或网络归属校验失败 | 核对当前 worktree、环境 ID 和旧资源归属；旧版缺少身份标签的资源不会自动接管。确认归属后再处理旧资源，不要删除绑定文件来绕过检查 |
 | 工具需要沙箱时报 E2B 错误 | Brain 模式下工具可能按需创建沙箱；还需检查 `e2b` 鉴权、模板和本地运行时配置，Brain ready 不等于沙箱已验证 |
 | Go 构建提示缺少 Mapper | 执行 `./scripts/generate-go.sh`，完成后再重启；不要手改或提交生成文件 |

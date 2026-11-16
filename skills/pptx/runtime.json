@@ -1,0 +1,10 @@
+{
+  "commands": [
+    "soffice",
+    "pdftoppm"
+  ],
+  "modules": [
+    "pptx"
+  ],
+  "scope": "普通可编辑 PPTX；本地 Slides CLI 可选"
+}

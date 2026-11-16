@@ -185,7 +185,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    just init-compose-config
    ```
 
-   启动后在控制台的「LLM 模型」页面为工作区配置 Provider。不要把 Provider API Key 写入 Compose YAML。
+   启动后在控制台的「LLM 模型」页面为组织配置 Provider，组织内所有工作区共享此目录。不要把 Provider API Key 写入 Compose YAML。
 
 > **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 

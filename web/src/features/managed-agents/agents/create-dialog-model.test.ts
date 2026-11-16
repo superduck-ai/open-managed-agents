@@ -12,6 +12,7 @@ import {
   toggleSkill,
   toggleSubagent,
   toolsetPermission,
+  toolsetToolPermission,
   updateCustomTool,
   updateDraftModelID,
   updateMcpServer,
@@ -495,11 +496,47 @@ describe('create agent draft model', () => {
     expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
   });
 
+  test('lets a missing get_port_url config follow the toolset default', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const toolset = normalizedDraft.tools[0];
+    expect(toolset.configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_allow')).toBe('always_allow');
+    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_ask')).toBe('always_ask');
+    const groupAsked = setToolsetPermission(normalizedDraft, () => true, 'always_ask');
+    expect(groupAsked.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(groupAsked.tools[0].default_config).toEqual({ enabled: true, permission_policy: { type: 'always_ask' } });
+  });
+
+  test('writes get_port_url like web_fetch only when it differs from the default', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const disabled = setToolPermission(normalizedDraft, () => true, 'get_port_url', 'always_deny', 'always_allow');
+    expect(disabled.tools[0].configs).toContainEqual({
+      name: 'get_port_url',
+      enabled: false,
+      permission_policy: { type: 'always_allow' },
+    });
+    expect(toolsetToolPermission(disabled.tools[0], 'get_port_url', 'always_allow')).toBe('always_deny');
+    const restored = setToolPermission(disabled, () => true, 'get_port_url', 'always_allow', 'always_allow');
+    expect(restored.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    const groupAllowed = setToolsetPermission(disabled, () => true, 'always_allow');
+    expect(groupAllowed.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    for (const name of ['get_port_url', 'web_fetch']) {
+      expect(
+        setToolPermission(normalizedDraft, () => true, name, 'always_ask', 'always_allow').tools[0].configs,
+      ).toContainEqual({
+        name,
+        enabled: true,
+        permission_policy: { type: 'always_ask' },
+      });
+    }
+  });
+
   test('accepts the built-in tool permission surface and rejects unknown tools', () => {
     const configs = [
       'ask_user_question',
       'bash',
       'edit',
+      'get_port_url',
       'glob',
       'grep',
       'read',

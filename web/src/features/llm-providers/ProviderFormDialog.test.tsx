@@ -9,6 +9,8 @@ afterEach(cleanup);
 const provider: LLMProvider = {
   id: 'llmp_sample',
   type: 'llm_provider',
+  created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+  can_manage: true,
   name: 'Research provider',
   slug: 'research',
   api_backend: 'messages',

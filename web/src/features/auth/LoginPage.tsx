@@ -11,6 +11,7 @@ import { sendMagicLink, verifyMagicLink } from '../../shared/auth/api';
 import { useAuth } from '../../shared/auth/context';
 import { returnToFromSearch } from '../../shared/auth/redirects';
 import { useI18n } from '../../shared/i18n';
+import { documentationHref } from '../../shared/documentation';
 
 type LoginStep = 'email' | 'code';
 
@@ -259,7 +260,6 @@ export function LoginFlow({
 
 function LoginShell({ children }: { children: ReactNode }) {
   const { locale, msg } = useI18n();
-  const docsLocale = locale === 'zh-CN' ? 'zh' : 'en';
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -275,7 +275,7 @@ function LoginShell({ children }: { children: ReactNode }) {
             {topNavItems.map((item) => (
               <ButtonLink
                 key={item.id}
-                href={`https://oma.mintlifysite.com/docs/${docsLocale}/${item.path}`}
+                href={documentationHref(item.path, locale)}
                 rel="noreferrer"
                 size="sm"
                 target="_blank"

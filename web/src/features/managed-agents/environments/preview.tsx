@@ -66,7 +66,7 @@ export function EnvironmentPreview({
         initialFocus={popup}
         showOverlay={false}
         showCloseButton={false}
-        className="environment-preview pointer-events-none inset-y-2 right-2 h-[calc(100dvh-16px)] w-[calc(100%-16px)] gap-0 border-0 bg-transparent shadow-none ring-0 sm:max-w-[calc(100%-32px)]"
+        className="environment-preview pointer-events-none gap-0 border-0 bg-transparent shadow-none ring-0 sm:max-w-none"
       >
         <ResizablePanelGroup orientation="horizontal" className="pointer-events-none min-h-0">
           <ResizablePanel minSize={0} />

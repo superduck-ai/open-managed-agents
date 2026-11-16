@@ -77,7 +77,9 @@ sequenceDiagram
 
 ## 数据模型
 
-goose migration `00117_sandbox_tool_calls.sql` 新建表 `sandbox_tool_calls`，不建外键：
+goose migration `00131_sandbox_tool_calls.sql` 新建表 `sandbox_tool_calls`，不建外键：
+
+与 main 合并后，本方案的三份迁移依次编号为 00131、00132、00133，避免与已合入的 Skills、组织模型目录和 OAuth 迁移重复。曾执行开发分支旧 00117–00119 编号的隔离开发数据库需要重建后再运行合并版本；不能把旧 Goose 记录视为 main 同编号迁移已经执行。已有开发环境不会由本次代码合并自动回收或重建。
 
 | 列 | 类型 | 含义 |
 | --- | --- | --- |

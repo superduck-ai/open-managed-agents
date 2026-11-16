@@ -13,7 +13,7 @@ import (
 func TestModelPricesPostgres(t *testing.T) {
 	d, _ := newTranscriptArchiveTestDB(t)
 	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
-	_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_price", OrganizationUUID: org, WorkspaceUUID: ws, Name: "价格测试", Slug: "oma", SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, BaseURL: "http://localhost", Models: LLMModels{}.WithIDs([]string{"priced", "other", "ambiguous", "test/priced"}), CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_price", OrganizationUUID: org, SecretWorkspaceUUID: ws, Name: "价格测试", Slug: "oma", SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, BaseURL: "http://localhost", Models: LLMModels{}.WithIDs([]string{"priced", "other", "ambiguous", "test/priced"}), CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +84,15 @@ func TestModelPricesPostgres(t *testing.T) {
 		t.Fatal("失败同步丢失已有价格")
 	}
 	other, err := d.BillingCalculator().Scope(t.Context(), org, uuid.NewV4().String())
-	if err != nil || other.HasModel("priced") {
-		t.Fatal("跨工作区模型泄漏")
+	if err != nil || !other.HasModel("priced") {
+		t.Fatal("组织模型价格未在工作区之间共享")
+	}
+	if cents, ok := other.ModelRequestCents("priced", billing.TokenUsage{InputTokens: 1000000}); !ok || cents != 500 {
+		t.Fatalf("组织共享模型计价不一致：%d/%t", cents, ok)
+	}
+	foreign, err := d.BillingCalculator().Scope(t.Context(), uuid.NewV4().String(), ws)
+	if err != nil || foreign.HasModel("priced") {
+		t.Fatal("模型价格泄漏到其他组织")
 	}
 
 }
@@ -126,7 +133,7 @@ func TestModelPriceTTLReconciliationPostgres(t *testing.T) {
 func TestNarrowsPriceSourcePostgres(t *testing.T) {
 	d, _ := newTranscriptArchiveTestDB(t)
 	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
-	provider, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_narrows", OrganizationUUID: org, WorkspaceUUID: ws, Name: "Narrows", Slug: "narrows", BaseURL: "https://narrows-gateway.test.seewo.com", Models: LLMModels{}.WithIDs([]string{"priced"}), SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	provider, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_narrows", OrganizationUUID: org, SecretWorkspaceUUID: ws, Name: "Narrows", Slug: "narrows", BaseURL: "https://narrows-gateway.test.seewo.com", Models: LLMModels{}.WithIDs([]string{"priced"}), SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +173,7 @@ func TestQualifiedModelPricesKeepProviderIdentityPostgres(t *testing.T) {
 		if slug == "second" {
 			baseURL, source, input = "https://narrows-gateway.test.seewo.com", "narrows", "6"
 		}
-		_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_" + slug, OrganizationUUID: org, WorkspaceUUID: ws, Name: slug, Slug: slug, BaseURL: baseURL, Models: LLMModels{}.WithIDs([]string{"priced"}), SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+		_, err := d.CreateLLMProvider(t.Context(), LLMProvider{UUID: uuid.NewV4().String(), ExternalID: "provider_" + slug, OrganizationUUID: org, SecretWorkspaceUUID: ws, Name: slug, Slug: slug, BaseURL: baseURL, Models: LLMModels{}.WithIDs([]string{"priced"}), SecretEnvelope: &secrets.Envelope{Ciphertext: []byte("test"), Nonce: []byte("test"), WrappedDEK: []byte("test"), FormatVersion: 1, KeyProvider: "test", KeyVersion: 1}, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +234,7 @@ func TestOrganizationModelPricesPostgres(t *testing.T) {
 	}
 	for _, slug := range []string{"first", "second"} {
 		provider, err := d.CreateLLMProvider(t.Context(), LLMProvider{
-			UUID: uuid.NewV4().String(), ExternalID: "provider_" + slug, OrganizationUUID: org, WorkspaceUUID: ws,
+			UUID: uuid.NewV4().String(), ExternalID: "provider_" + slug, OrganizationUUID: org, SecretWorkspaceUUID: ws,
 			Name: slug, Slug: slug, BaseURL: "https://narrows-gateway.test.seewo.com",
 			Models: LLMModels{{ID: "priced"}}, SecretEnvelope: organization.SecretEnvelope,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -237,19 +244,19 @@ func TestOrganizationModelPricesPostgres(t *testing.T) {
 		}
 		calculator, err := d.BillingCalculator().Scope(t.Context(), org, ws, "priced")
 		if err != nil || calculator.HasModel("priced") {
-			t.Fatalf("unpriced or ambiguous workspace model fell back to organization: %v", err)
+			t.Fatalf("ambiguous organization model gained a bare price: %v", err)
 		}
 		price.Price.Source, price.Price.Rates.Input = "narrows", new("6")
 		if err := d.ReplaceModelPriceCatalog(t.Context(), "narrows", []CatalogPrice{price}); err != nil {
 			t.Fatal(err)
 		}
 		assertPrice(slug+"/priced", ws, provider.UUID, 600)
-		if slug == "first" {
-			assertPrice("priced", ws, provider.UUID, 600)
-		}
 	}
 	assertPrice("organization/priced", ws, organization.UUID, 300)
-	assertPrice("priced", uuid.NewV4().String(), organization.UUID, 300)
+	otherWorkspace, err := d.BillingCalculator().Scope(t.Context(), org, uuid.NewV4().String(), "priced")
+	if err != nil || otherWorkspace.HasModel("priced") {
+		t.Fatalf("organization ambiguity differs across workspaces: %v", err)
+	}
 	other, err := d.BillingCalculator().Scope(t.Context(), uuid.NewV4().String(), ws, "organization/priced")
 	if err != nil || other.HasModel("organization/priced") {
 		t.Fatalf("organization price leaked to another organization: %v", err)

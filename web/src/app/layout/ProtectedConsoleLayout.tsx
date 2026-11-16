@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef } from 'react';
@@ -9,6 +10,7 @@ import { ConsoleShell } from './ConsoleLayout';
 import { Button } from '../../shared/ui/button';
 
 export function ProtectedConsoleLayout() {
+  const { msg } = useI18n();
   const { status, account, logout, refresh } = useAuth();
   const organizations = useOrganizations();
   const { activeWorkspaceId } = useWorkspace();
@@ -42,10 +44,7 @@ export function ProtectedConsoleLayout() {
       </div>
     );
 
-  if (
-    organizations &&
-    (organizations.switching || organizations.error || !organizations.orgUuid || !activeWorkspaceId)
-  ) {
+  if (organizations && (organizations.error || !organizations.orgUuid || !activeWorkspaceId)) {
     return (
       <ConsoleShell account={account} onLogout={logout} currentPath={location.pathname}>
         <div role={organizations.error ? 'alert' : 'status'} className="space-y-3">
@@ -65,5 +64,19 @@ export function ProtectedConsoleLayout() {
       </ConsoleShell>
     );
   }
-  return <Outlet key={`${organizations?.orgUuid ?? ''}:${activeWorkspaceId}`} />;
+  return (
+    <>
+      <div className="contents" inert={organizations?.switching || undefined}>
+        <Outlet key={organizations?.orgUuid ?? ''} />
+      </div>
+      {organizations?.switching && (
+        <div
+          role="status"
+          className="fixed inset-0 z-40 grid place-items-center bg-background/80 text-sm text-muted-foreground"
+        >
+          {msg('workspace.switching', 'Switching workspace…')}
+        </div>
+      )}
+    </>
+  );
 }

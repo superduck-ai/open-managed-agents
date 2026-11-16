@@ -14,8 +14,9 @@ func TestCommandRejectsInvalidOptions(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"--from-key-version", "1"}, "flag provided but not defined"},
 		{nil, "--from and --to are required"},
-		{[]string{"--from", "local", "--to", "local"}, "must be different"},
+		{[]string{"--from", "local", "--to", "local"}, "must be different providers"},
 		{[]string{"--from", "typo", "--to", "hashicorp_vault"}, "choose local"},
 		{[]string{"--from", "local", "--to", "hashicorp_vault", "unexpected"}, "unexpected positional arguments"},
 	} {

@@ -1,7 +1,4 @@
-import { useContext } from 'react';
 import { WorkspaceOAuthProviderPicker } from './workspace-oauth-provider-picker';
-import { Link } from '@tanstack/react-router';
-import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import { Button } from '../../../shared/ui/button';
@@ -38,8 +35,6 @@ export function EnvOAuthCredentialFields({
   onChange,
 }: EnvOAuthCredentialFieldsProps) {
   const { msg } = useI18n();
-  const auth = useContext(AuthContext);
-  const platformAccess = auth?.platformAccess;
   const selected = providers.find((provider) => provider.id === values.envOAuthProviderId);
   const hostsMissing = credentialEnvHostsMissing(values);
   const options = providers
@@ -108,13 +103,8 @@ export function EnvOAuthCredentialFields({
         <FieldDescription>
           {msg(
             'managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured',
-            'Not configured. Contact a platform administrator. You can still save a manually supplied token.',
+            'Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.',
           )}
-          {platformAccess?.permissions.includes('platform:access') ? (
-            <Link className="ml-2 underline" to="/platform-admin/oauth">
-              {msg('platformAdmin.oauthManagement.configure', 'Configure provider')}
-            </Link>
-          ) : null}
         </FieldDescription>
       ) : null}
       <ManagedTextField

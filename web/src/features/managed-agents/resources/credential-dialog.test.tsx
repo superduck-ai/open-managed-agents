@@ -492,7 +492,9 @@ test.each(['Feishu', 'Custom'])('未配置服务方 %s 禁用授权但保留手�
   fireEvent.click(within(dialog).getByRole('checkbox'));
   expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);
   expect(
-    screen.getByText('Not configured. Contact a platform administrator. You can still save a manually supplied token.'),
+    screen.getByText(
+      'Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.',
+    ),
   ).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Configure provider' })).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: /Use an existing token/ }));
@@ -616,10 +618,15 @@ test('MCP 凭据门禁只展示调用方允许的认证类型', async () => {
 test.each([false, true])('自定义服务方默认四项，客户端配置默认折叠：%s', async (withClient) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
   const writes: RequestInit[] = [];
+  let completeCreate: () => void = () => {};
+  const createPending = new Promise<void>((resolve) => {
+    completeCreate = resolve;
+  });
   globalThis.fetch = mock(async (url, options) => {
     expect(String(url)).toContain('workspace_id=default');
     if (options?.method === 'POST') {
       writes.push(options);
+      await createPending;
       return Response.json({
         id: 'poap_workspace',
         provider_key: 'custom:poap_workspace',
@@ -686,6 +693,14 @@ test.each([false, true])('自定义服务方默认四项，客户端配置默认
     fireEvent.click(clientToggle);
   }
   fireEvent.click(within(register).getByRole('button', { name: 'Add' }));
+  await within(register).findByRole('button', { name: 'Saving...' });
+  fireEvent.keyDown(within(register).getByLabelText('Name'), { key: 'Escape', code: 'Escape' });
+  expect(screen.getByRole('form', { name: 'Custom OAuth provider' })).toBe(register);
+  fireEvent.pointerDown(within(credentialDialog).getByPlaceholderText('Example credential'));
+  expect(screen.getByRole('form', { name: 'Custom OAuth provider' })).toBe(register);
+  fireEvent.click(within(credentialDialog).getByRole('combobox', { name: 'OAuth provider' }));
+  expect(screen.getByRole('form', { name: 'Custom OAuth provider' })).toBe(register);
+  await act(async () => completeCreate());
   await waitFor(() => expect(screen.queryByRole('form', { name: 'Custom OAuth provider' })).toBeNull());
   expect(writes).toHaveLength(1);
   expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('csrf_fixture');

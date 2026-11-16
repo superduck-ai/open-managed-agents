@@ -3473,7 +3473,7 @@
   "platformAdmin.oauthManagement.changeAppHint": "Changing the client ID requires a new secret. Existing tokens may need reauthorization.",
   "platformAdmin.errors.oauthProviderVersionConflict": "The provider changed. Close and reopen this form.",
   "platformAdmin.errors.oauthProviderUnavailable": "OAuth client decryption is unavailable. Try again later.",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "Not configured. Contact a platform administrator. You can still save a manually supplied token.",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "Client not configured. Supply a token manually, or enter client configuration when creating a provider to authorize.",
   "skills.all": "All skills",
   "skills.builtin": "System built-in",
   "skills.custom": "Custom",

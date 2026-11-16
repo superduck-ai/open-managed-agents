@@ -16,9 +16,11 @@ export function WorkspaceOAuthProviderForm({
   workspaceId,
   onClose,
   onCreated,
+  onPendingChange,
 }: {
   orgUuid: string;
   workspaceId: string;
+  onPendingChange: (pending: boolean) => void;
   onClose: () => void;
   onCreated: (provider: OAuthProviderRecord) => void;
 }) {
@@ -50,6 +52,8 @@ export function WorkspaceOAuthProviderForm({
         },
         csrfToken,
       ),
+    onMutate: () => onPendingChange(true),
+    onSettled: () => onPendingChange(false),
     onSuccess: onCreated,
   });
   const ready =

@@ -32,6 +32,7 @@ export function WorkspaceOAuthProviderPicker({
   const id = useId();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [pending, setPending] = useState(false);
   const selected = options.find((option) => option.id === value);
   const customLabel = msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider');
   return (
@@ -39,7 +40,11 @@ export function WorkspaceOAuthProviderPicker({
       <Label htmlFor={id}>{label}</Label>
       <Popover
         open={open}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          if (!next && pending) {
+            details.cancel();
+            return;
+          }
           setOpen(next);
           if (!next) setCreating(false);
         }}
@@ -67,6 +72,7 @@ export function WorkspaceOAuthProviderPicker({
             <WorkspaceOAuthProviderForm
               orgUuid={orgUuid}
               workspaceId={workspaceId}
+              onPendingChange={setPending}
               onClose={() => setCreating(false)}
               onCreated={(provider) => {
                 onCreated(provider);

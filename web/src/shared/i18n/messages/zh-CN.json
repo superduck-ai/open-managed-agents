@@ -3473,7 +3473,7 @@
   "platformAdmin.oauthManagement.changeAppHint": "修改客户端 ID 必须同时填写新密钥，已有令牌可能需要重新授权。",
   "platformAdmin.errors.oauthProviderVersionConflict": "服务方已被修改，请关闭并重新打开表单。",
   "platformAdmin.errors.oauthProviderUnavailable": "OAuth 客户端暂时无法解密，请稍后重试。",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "未配置，请联系平台管理员。仍可手工填写并保存令牌。",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured": "尚未配置客户端。可手工填写令牌；如需授权，请在创建服务方时填写客户端配置。",
   "skills.all": "全部技能",
   "skills.builtin": "系统内置",
   "skills.custom": "自定义",

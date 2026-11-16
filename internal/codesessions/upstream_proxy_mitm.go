@@ -66,7 +66,7 @@ func (h *Handler) serveUpstreamProxyMITM(connection *websocket.Conn, identity up
 	if err := clientConnection.HandshakeContext(handshakeContext); err != nil {
 		return
 	}
-	_ = h.serveUpstreamProxyMITMHTTP(clientConnection, transport, identity, target, targetHost)
+	_ = h.serveUpstreamProxyMITMHTTP(context.WithoutCancel(connection.Request().Context()), clientConnection, transport, identity, target, targetHost)
 }
 
 func newUpstreamProxyMITMServerTLSConfig(authority *upstreamProxyCertificateAuthority, targetHost string, now time.Time) (*tls.Config, error) {
@@ -158,7 +158,7 @@ func newUpstreamProxyMITMTransport(dialer *upstreamProxyMITMTLSDialer) *http.Tra
 	}
 }
 
-func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, identity upstreamProxyIdentity, target string, targetHost string) error {
+func (h *Handler) serveUpstreamProxyMITMHTTP(baseContext context.Context, connection net.Conn, transport http.RoundTripper, identity upstreamProxyIdentity, target string, targetHost string) error {
 	targetURL := &url.URL{Scheme: "https", Host: target}
 	baseTransport := transport
 	proxy := &httputil.ReverseProxy{
@@ -172,7 +172,9 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			request.Out.Header.Del("Proxy-Connection")
 			request.Out.Header.Set(sessionIDHeader, identity.publicSessionID)
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+		ModifyResponse: h.observeUpstreamProxyResponse,
+		ErrorHandler: func(w http.ResponseWriter, request *http.Request, err error) {
+			h.observeUpstreamProxyFailure(request, err)
 			status := http.StatusBadGateway
 			message := http.StatusText(status)
 			if errors.Is(err, vaults.ErrInjectionRejected) {
@@ -228,11 +230,12 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			"port", targetURL.Port(),
 			"url", logURL.String(),
 		)
-		proxy.ServeHTTP(w, request)
+		proxy.ServeHTTP(w, withUpstreamProxyExchange(request, identity.codeSessionExternalID, targetHost))
 	})
 	listener := newUpstreamProxySingleConnectionListener(connection)
 	server := &http.Server{
 		Handler:           handler,
+		BaseContext:       func(net.Listener) context.Context { return baseContext },
 		ReadHeaderTimeout: upstreamProxyMITMHeaderTimeout,
 		IdleTimeout:       upstreamProxyMITMIdleTimeout,
 		MaxHeaderBytes:    maxUpstreamProxyConnectHeadBytes * 8,

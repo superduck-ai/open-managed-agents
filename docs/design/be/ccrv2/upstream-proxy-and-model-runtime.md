@@ -230,6 +230,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - 不记录 bearer token、Basic header、上游 API key 或隧道内容。
 - MITM 默认开启，需提供稳定 CA 私钥；显式配置 `upstream_proxy_mitm_enabled: false` 可关闭。开启时只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
 - MITM 解密并完成 Host 校验后，为每条 HTTP 请求记录结构化的 `host`、`port` 和去除 query 的 `url`；不记录 header 或 body。
+- MITM 转发结果同样可观测：上游返回 4xx/5xx 时以 Warn 记录 `upstream proxy response rejected`，字段为 `code_session_id`、`host`、`method`、`path`、`status`、`duration_ms`；转发未取得上游响应（拨号、DNS、TLS、超时、凭证注入拒绝等）时记录 `upstream proxy request failed`，附加 `error_kind`（`credential_injection_rejected`、`canceled`、`timeout`、`dns`、`tls`、`connect`、`connection_closed`、`other`）与 `error`，客户端取消为 Info，其余为 Warn。两类结果同时作为 span event 写入 CONNECT 隧道所在请求的 trace，日志沿用该请求的 request ID 与 trace 关联。1xx–3xx 响应不额外记录；任何情况下都不记录 query、header 或 body。排查沙箱出站失败（例如 Git `info/refs` 返回 401/404）时，以这两条日志区分上游拒绝与网络故障。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
 本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
@@ -313,7 +314,7 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 - environment-manager 单元测试覆盖开关判断、token 原子替换、权限和空值拒绝。
 - API 单元测试覆盖 protobuf、CONNECT、Basic 双字段鉴权、私网/端口拒绝、CA 解析和二进制隧道往返。
-- MITM 单元测试覆盖稳定 private key 驱动的启动期根证书签发、旧根验证新 leaf、动态 leaf 信任链、LRU 淘汰、同域并发签发合并、异域并行签发、客户端 TLS 解密、path/query 转发和代理凭证剥离。
+- MITM 单元测试覆盖稳定 private key 驱动的启动期根证书签发、旧根验证新 leaf、动态 leaf 信任链、LRU 淘汰、同域并发签发合并、异域并行签发、客户端 TLS 解密、path/query 转发和代理凭证剥离；转发结果日志覆盖上游拒绝状态、转发失败的 `error_kind`，以及 query、凭证 header 和响应 body 不进入日志。
 - API 集成测试覆盖无 token、私网 CONNECT、公开 CA，以及 `/v1/messages` 的多凭证鉴权、上游密钥替换和流式转发。
 - `internal/networkpolicy` 单元测试先覆盖纯策略失败场景（空 allowlist、未知类型、畸形 JSON、非法 allowed host、畸形 AgentSnapshot/MCP URL、通配符越界、未授权 host、非法 target），再覆盖成功场景（显式 host、MCP host、package catalog、unrestricted）。
 - Go module redirect 合同测试覆盖 `proxy.golang.org` 到 `storage.googleapis.com` 的 host 链；设置 `TEST_GO_MODULE_PROXY_REDIRECT=1` 可额外对真实大 module zip 运行 live redirect 验证。

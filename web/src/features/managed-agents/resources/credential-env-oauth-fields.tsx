@@ -1,7 +1,6 @@
 import { useContext, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { OAuthProviderDialog } from '../../platform-admin/oauth/OAuthProviderDialog';
-import { createWorkspaceOAuthProvider } from '../api';
+import { WorkspaceOAuthProviderDialog } from './workspace-oauth-provider-dialog';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
@@ -100,10 +99,11 @@ export function EnvOAuthCredentialFields({
         }}
       />
       {creating && orgUuid && workspaceId ? (
-        <OAuthProviderDialog
+        <WorkspaceOAuthProviderDialog
+          orgUuid={orgUuid}
+          workspaceId={workspaceId}
           onClose={() => setCreating(false)}
-          onSave={(input) => createWorkspaceOAuthProvider(orgUuid, workspaceId, input, auth?.csrfToken)}
-          onSaved={async (record) => {
+          onCreated={(record) => {
             const provider = { ...record, id: record.provider_key };
             onProviderCreated?.(provider);
             const defaults = envOAuthProviderDefaults(provider);

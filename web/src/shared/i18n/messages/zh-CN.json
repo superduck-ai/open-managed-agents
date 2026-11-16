@@ -3406,6 +3406,7 @@
   "systemSkills.requiredVersion": "请输入版本号",
   "systemSkills.invalidVersion": "版本号格式无效",
   "managedAgents.credentialVaults.credentialDialog.envOAuth": "ENV OAuth",
+  "managedAgents.credentialVaults.credentialDialog.oauthClientConfiguration": "客户端配置",
   "managedAgents.credentialVaults.credentialDialog.customProvider": "自定义 OAuth 服务方",
   "managedAgents.credentialVaults.credentialDialog.envOAuthProvider": "OAuth 服务方",
   "managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider": "选择服务方",

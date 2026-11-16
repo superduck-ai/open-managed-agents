@@ -17,7 +17,8 @@ import { Textarea } from '../../../shared/ui/textarea';
 import { Input } from '../../../shared/ui/input';
 import { Field as FormField, FieldLabel, FieldDescription } from '../../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import { type OAuthProviderInput, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
+import { createOAuthProvider, updateOAuthProvider, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
+import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 import type { ApiError } from '../../../shared/api/client';
 import {
@@ -29,18 +30,17 @@ import {
 
 export function OAuthProviderDialog({
   provider,
-  onSave,
   onClose,
   onSaved,
   onConflict,
 }: {
   provider?: OAuthProviderRecord;
-  onSave: (input: OAuthProviderInput) => Promise<OAuthProviderRecord>;
   onClose: () => void;
-  onSaved: (provider: OAuthProviderRecord) => Promise<void>;
-  onConflict?: () => Promise<void>;
+  onSaved: () => Promise<void>;
+  onConflict: () => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const { client } = usePlatformAdmin();
   const errorMessage = usePlatformAdminError();
   const [values, setValues] = useState<OAuthProviderFormValues>(() => initialOAuthProviderFormValues(provider));
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -67,14 +67,16 @@ export function OAuthProviderDialog({
         token_endpoint_auth_method: values.authMethod,
         token_endpoint_encoding: values.encoding,
       };
-      return onSave(input);
+      return provider
+        ? updateOAuthProvider(client, provider.id, { ...input, expected_version: provider.version })
+        : createOAuthProvider(client, { ...input, client_id: values.clientId.trim() });
     },
-    onSuccess: (saved) => {
-      void onSaved(saved);
+    onSuccess: () => {
+      void onSaved();
     },
     onError: async (submitError: unknown) => {
       setError(errorMessage(submitError));
-      if ((submitError as ApiError).code === 'oauth_provider_version_conflict') await onConflict?.();
+      if ((submitError as ApiError).code === 'oauth_provider_version_conflict') await onConflict();
     },
   });
   const canSubmit = oauthProviderFormReady(values, provider);
@@ -102,7 +104,6 @@ export function OAuthProviderDialog({
           className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            event.stopPropagation();
             if (canSubmit && !mutation.isPending) {
               setError(null);
               mutation.mutate();

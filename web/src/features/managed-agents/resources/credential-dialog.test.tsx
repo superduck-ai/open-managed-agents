@@ -613,7 +613,7 @@ test('MCP 凭据门禁只展示调用方允许的认证类型', async () => {
   expect(screen.getByRole('option', { name: 'Bearer token' })).toBeTruthy();
 });
 
-test('普通用户在凭据弹窗创建工作区服务方并带入默认主机', async () => {
+test.each([false, true])('自定义服务方默认四项，客户端配置默认折叠：%s', async (withClient) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
   const writes: RequestInit[] = [];
   globalThis.fetch = mock(async (url, options) => {
@@ -625,10 +625,9 @@ test('普通用户在凭据弹窗创建工作区服务方并带入默认主机',
         provider_key: 'custom:poap_workspace',
         name: 'Team OAuth',
         enabled: true,
-        configured: true,
-        default_secret_name: 'TEAM_TOKEN',
-        default_allowed_hosts: ['api.example.test'],
-        client_id: 'client',
+        configured: withClient,
+        default_secret_name: '',
+        default_allowed_hosts: [],
       });
     }
     return Response.json([]);
@@ -653,7 +652,12 @@ test('普通用户在凭据弹窗创建工作区服务方并带入默认主机',
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(await within(credentialDialog).findByRole('combobox', { name: 'OAuth provider' }));
   fireEvent.click(await screen.findByRole('option', { name: 'Custom OAuth provider' }));
-  const register = await screen.findByRole('dialog', { name: 'Register OAuth client' });
+  const register = await screen.findByRole('dialog', { name: 'Custom OAuth provider' });
+  expect(within(register).getAllByRole('textbox')).toHaveLength(4);
+  expect(within(register).queryByLabelText('Client ID')).toBeNull();
+  expect(within(register).queryByLabelText(/Default allowed hosts/)).toBeNull();
+  const clientToggle = within(register).getByRole('button', { name: /Client configuration/ });
+  expect(clientToggle.getAttribute('aria-expanded')).toBe('false');
   fireEvent.change(within(register).getByLabelText('Name'), { target: { value: 'Team OAuth' } });
   fireEvent.change(within(register).getByLabelText('Authorize endpoint'), {
     target: { value: 'https://auth.example.test/authorize' },
@@ -661,16 +665,28 @@ test('普通用户在凭据弹窗创建工作区服务方并带入默认主机',
   fireEvent.change(within(register).getByLabelText('Token endpoint'), {
     target: { value: 'https://auth.example.test/token' },
   });
-  fireEvent.change(within(register).getByLabelText(/Default allowed hosts/), { target: { value: 'api.example.test' } });
-  fireEvent.click(within(register).getByRole('button', { name: 'Save' }));
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Register OAuth client' })).toBeNull());
+  fireEvent.change(within(register).getByLabelText(/Scope/), { target: { value: 'read' } });
+  if (withClient) {
+    fireEvent.click(clientToggle);
+    fireEvent.change(await within(register).findByLabelText('Client ID'), { target: { value: 'client' } });
+    expect(within(register).getByRole('button', { name: 'Add' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(within(register).getByLabelText('Client secret'), { target: { value: 'synthetic-secret' } });
+    fireEvent.click(clientToggle);
+  }
+  fireEvent.click(within(register).getByRole('button', { name: 'Add' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Custom OAuth provider' })).toBeNull());
   expect(writes).toHaveLength(1);
   expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('csrf_fixture');
-  expect(JSON.parse(String(writes[0].body)).default_allowed_hosts).toEqual(['api.example.test']);
-  expect((within(credentialDialog).getByLabelText('Allowed hosts') as HTMLTextAreaElement).value).toBe(
-    'api.example.test',
+  expect(JSON.parse(String(writes[0].body))).toEqual({
+    name: 'Team OAuth',
+    authorize_endpoint: 'https://auth.example.test/authorize',
+    token_endpoint: 'https://auth.example.test/token',
+    scope: 'read',
+    ...(withClient ? { client_id: 'client', client_secret: 'synthetic-secret' } : {}),
+  });
+  expect(within(credentialDialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain(
+    'Team OAuth',
   );
-  expect((within(credentialDialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('TEAM_TOKEN');
   expect(submit).not.toHaveBeenCalled();
   queries.clear();
 });

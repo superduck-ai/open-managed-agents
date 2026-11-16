@@ -46,13 +46,14 @@ type envOAuthNetworkingInput struct {
 }
 
 type envOAuthVaultAuthStartRequest struct {
-	ProviderID  string                   `json:"provider_id"`
-	VaultID     string                   `json:"vault_id"`
-	WorkspaceID string                   `json:"workspace_id"`
-	SecretName  string                   `json:"secret_name"`
-	DisplayName string                   `json:"display_name"`
-	Networking  *envOAuthNetworkingInput `json:"networking"`
-	RedirectURL string                   `json:"redirect_url"`
+	CredentialID string                   `json:"credential_id"`
+	ProviderID   string                   `json:"provider_id"`
+	VaultID      string                   `json:"vault_id"`
+	WorkspaceID  string                   `json:"workspace_id"`
+	SecretName   string                   `json:"secret_name"`
+	DisplayName  string                   `json:"display_name"`
+	Networking   *envOAuthNetworkingInput `json:"networking"`
+	RedirectURL  string                   `json:"redirect_url"`
 }
 
 type envOAuthVaultAuthStartResponse struct {
@@ -179,7 +180,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		writeEnvOAuthStartError(w, http.StatusInternalServerError, envOAuthErrorInvalidRequest, "")
 		return
 	}
-	if !envOAuthSecretNameAvailable(credentials, secretName, req.ProviderID) {
+	if !envOAuthSecretNameAvailable(credentials, secretName, req.ProviderID, req.CredentialID) {
 		writeEnvOAuthStartError(w, http.StatusConflict, envOAuthErrorCredentialKeyConflict, "")
 		return
 	}
@@ -210,6 +211,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		WorkspaceUUID:           workspace.UUID,
 		VaultUUID:               vault.UUID,
 		VaultExternalID:         vault.ExternalID,
+		CredentialExternalID:    req.CredentialID,
 		ProviderVersion:         provider.Version,
 		ProviderKey:             provider.ProviderKey,
 		SecretName:              secretName,
@@ -419,7 +421,7 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		if current.CredentialKey != flow.SecretName {
 			continue
 		}
-		if !envOAuthSecretNameAvailable([]db.VaultCredential{current}, flow.SecretName, flow.ProviderKey) {
+		if !envOAuthSecretNameAvailable([]db.VaultCredential{current}, flow.SecretName, flow.ProviderKey, flow.CredentialExternalID) {
 			return "", db.ErrDuplicate
 		}
 		existingPlaceholder, ok := vaultsapi.EnvOAuthCredentialPlaceholder(current.Auth)
@@ -444,6 +446,9 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		credential.SecretVersion = current.SecretVersion
 		existing = true
 		break
+	}
+	if flow.CredentialExternalID != "" && !existing {
+		return "", db.ErrNotFound
 	}
 	publicAuth, secretPayload, err := vaultsapi.BuildEnvOAuthCredentialPayloads(vaultsapi.EnvOAuthCredentialBuildInput{
 		Provider:         flow.ProviderKey,
@@ -522,20 +527,22 @@ func (s *Server) decodeEnvOAuthStartRequest(
 	return req, redirectURL, secretName, true
 }
 
-func envOAuthSecretNameAvailable(credentials []db.VaultCredential, secretName, providerID string) bool {
+func envOAuthSecretNameAvailable(credentials []db.VaultCredential, secretName, providerID, credentialID string) bool {
+	found := credentialID == ""
 	for _, credential := range credentials {
 		if credential.CredentialKey != secretName {
 			continue
 		}
-		if credential.AuthType != "env_oauth" {
+		if credential.ExternalID != credentialID || credential.AuthType != "env_oauth" {
 			return false
 		}
 		provider, err := vaultsapi.EnvOAuthCredentialProvider(credential.Auth)
 		if err != nil || provider != providerID {
 			return false
 		}
+		found = true
 	}
-	return true
+	return found
 }
 
 func buildEnvOAuthAuthorizeURL(endpoint, clientID, scope, redirectURL, flowID string) (string, error) {

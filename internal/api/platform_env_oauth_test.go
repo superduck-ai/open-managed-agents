@@ -124,3 +124,24 @@ func TestEnvOAuthStartValidatesDisplayName(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvOAuthSecretNameRequiresExplicitReauthorization(t *testing.T) {
+	credentials := []db.VaultCredential{{ExternalID: "vcrd_existing", CredentialKey: "TOKEN", AuthType: "env_oauth", Auth: json.RawMessage(`{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","placeholder":"oma_ph_test","networking":{"type":"unrestricted"},"injection_location":{"header":true,"body":false}}`)}}
+	for _, tc := range []struct {
+		name, secret, provider, target string
+		want                           bool
+	}{
+		{"新变量", "NEW_TOKEN", "builtin:feishu", "", true},
+		{"重复变量", "TOKEN", "builtin:feishu", "", false},
+		{"重新授权", "TOKEN", "builtin:feishu", "vcrd_existing", true},
+		{"错误凭证", "TOKEN", "builtin:feishu", "vcrd_other", false},
+		{"错误服务方", "TOKEN", "builtin:friday", "vcrd_existing", false},
+		{"目标不存在", "NEW_TOKEN", "builtin:feishu", "vcrd_missing", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := envOAuthSecretNameAvailable(credentials, tc.secret, tc.provider, tc.target); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

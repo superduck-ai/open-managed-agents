@@ -1,4 +1,5 @@
 {
+  "managedAgents.credentialVaults.credentialDialog.envOAuthError.duplicateVariable": "变量名「{name}」在当前凭证库中已存在。",
   "llmModels.modelIdRequired": "配置模型参数时必须填写模型 ID。",
   "llmModels.modelParameters": "模型参数",
   "llmModels.contextWindow": "上下文窗口",

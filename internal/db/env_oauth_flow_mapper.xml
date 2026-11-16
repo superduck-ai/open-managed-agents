@@ -13,14 +13,14 @@
             uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
             provider_version, provider_key, secret_name, display_name, redirect_url, authorize_endpoint, token_endpoint,
             client_id_envelope, code_verifier_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
-            allowed_hosts, status, created_by_api_key_uuid, created_at, expires_at
+            allowed_hosts, status, credential_external_id, created_by_api_key_uuid, created_at, expires_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.VaultUUID}, #{params.VaultExternalID}, #{params.ProviderVersion}, #{params.ProviderKey}, #{params.SecretName},
             #{params.DisplayName}, #{params.RedirectURL}, #{params.AuthorizeEndpoint},
             #{params.TokenEndpoint}, #{params.ClientIDEnvelope,sensitive=true}, #{params.CodeVerifierEnvelope,sensitive=true}, #{params.Scope},
             #{params.TokenEndpointAuthMethod}, #{params.TokenEndpointEncoding},
-            #{params.NetworkingType}, #{params.AllowedHosts}, #{params.Status},
+            #{params.NetworkingType}, #{params.AllowedHosts}, #{params.Status}, #{params.CredentialExternalID},
             #{params.CreatedByAPIKeyUUID}, #{params.CreatedAt}, #{params.ExpiresAt}
         )
         RETURNING <include refid="columns"/>

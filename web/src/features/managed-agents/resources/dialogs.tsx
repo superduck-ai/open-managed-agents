@@ -1,3 +1,4 @@
+import { toast } from '../../../shared/ui/sonner';
 import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
 import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
@@ -434,6 +435,7 @@ export function CredentialDialog({
         const started = await startEnvOAuthVaultAuth(
           orgUuid,
           {
+            ...(reauthorize ? { credential_id: credential?.id } : {}),
             provider_id: values.envOAuthProviderId,
             vault_id: vaultId,
             workspace_id: workspaceId,
@@ -484,6 +486,17 @@ export function CredentialDialog({
       pendingOAuthFlowIdRef.current = started.oauth_flow_id;
       popup.location.href = started.redirect_url;
     } catch (connectError) {
+      if (envOAuth && (connectError as { code?: string })?.code === 'credential_key_conflict') {
+        abandonOAuthWait();
+        toast.error(
+          msg(
+            'managedAgents.credentialVaults.credentialDialog.envOAuthError.duplicateVariable',
+            'Variable name “{name}” already exists in this vault.',
+            { name: values.secretName.trim() },
+          ),
+        );
+        return;
+      }
       abandonOAuthWait(vaultOAuthStartErrorMessage(connectError, msg));
     }
   };

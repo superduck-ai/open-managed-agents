@@ -1631,6 +1631,7 @@ export function startMCPVaultAuth(orgUuid: string, input: StartMCPVaultAuthInput
 }
 
 export type StartEnvOAuthVaultAuthInput = {
+  credential_id?: string;
   provider_id: string;
   vault_id: string;
   workspace_id: string;

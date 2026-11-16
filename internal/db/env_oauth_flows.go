@@ -80,6 +80,7 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 		TokenEndpointEncoding:   flow.TokenEndpointEncoding,
 		NetworkingType:          flow.NetworkingType,
 		AllowedHosts:            string(allowedHosts),
+		CredentialExternalID:    flow.CredentialExternalID,
 		Status:                  flow.Status,
 		CreatedByAPIKeyUUID:     optionalVaultString(flow.CreatedByAPIKeyUUID),
 		CreatedAt:               flow.CreatedAt,

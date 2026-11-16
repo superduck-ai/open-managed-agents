@@ -30,7 +30,7 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 			"params.VaultUUID", "params.VaultExternalID", "params.ProviderVersion", "params.ProviderKey", "params.SecretName",
 			"params.DisplayName", "params.RedirectURL", "params.AuthorizeEndpoint", "params.TokenEndpoint",
 			"params.ClientIDEnvelope", "params.CodeVerifierEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
-			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CreatedByAPIKeyUUID",
+			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CredentialExternalID", "params.CreatedByAPIKeyUUID",
 			"params.CreatedAt", "params.ExpiresAt",
 		},
 		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope", "params.CodeVerifierEnvelope"},

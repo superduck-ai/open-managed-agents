@@ -60,6 +60,7 @@ type insertEnvOAuthFlowParams struct {
 	TokenEndpointEncoding   string
 	NetworkingType          string
 	AllowedHosts            string
+	CredentialExternalID    string
 	Status                  string
 	CreatedByAPIKeyUUID     *string
 	CreatedAt               time.Time

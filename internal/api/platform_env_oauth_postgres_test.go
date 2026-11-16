@@ -126,8 +126,12 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 	}
 }
 
-func (f envOAuthFixture) createFlow(t *testing.T, tokenEndpoint, secretName string, expiresAt time.Time) db.EnvOAuthFlow {
+func (f envOAuthFixture) createFlow(t *testing.T, tokenEndpoint, secretName string, expiresAt time.Time, credentialIDs ...string) db.EnvOAuthFlow {
 	t.Helper()
+	credentialID := ""
+	if len(credentialIDs) > 0 {
+		credentialID = credentialIDs[0]
+	}
 	now := time.Now().UTC()
 	provider, err := f.database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), "feishu")
 	if err != nil {
@@ -143,7 +147,7 @@ func (f envOAuthFixture) createFlow(t *testing.T, tokenEndpoint, secretName stri
 		TokenEndpoint:     tokenEndpoint, Scope: "offline_access",
 		TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "json",
 		NetworkingType: "limited", AllowedHosts: []string{"open.feishu.cn"},
-		Status: "pending", CreatedByAPIKeyUUID: f.apiKey,
+		Status: "pending", CreatedByAPIKeyUUID: f.apiKey, CredentialExternalID: credentialID,
 		CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt,
 	})
 	if err != nil {
@@ -297,7 +301,15 @@ func TestEnvOAuthVaultAuthCallbackPostgres(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(completed, replayFlow) {
 		t.Fatal("重放修改 flow", err)
 	}
-	second := f.createFlow(t, upstream.URL, vaultsapi.EnvOAuthFeishuDefaultSecretName, time.Now().UTC().Add(time.Minute))
+	duplicate := f.createFlow(t, upstream.URL, vaultsapi.EnvOAuthFeishuDefaultSecretName, time.Now().UTC().Add(time.Minute))
+	if response := f.callback(t, duplicate.ExternalID, "duplicate"); !strings.Contains(response.Body.String(), envOAuthErrorCredentialKeyConflict) {
+		t.Fatal(response.Body.String())
+	}
+	unchanged, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID)
+	if err != nil || !reflect.DeepEqual(afterReplay, unchanged) {
+		t.Fatal("重复创建覆盖了已有凭证", err)
+	}
+	second := f.createFlow(t, upstream.URL, vaultsapi.EnvOAuthFeishuDefaultSecretName, time.Now().UTC().Add(time.Minute), credential.ExternalID)
 	if recorder := f.callback(t, second.ExternalID, "auth-code-2"); !strings.Contains(recorder.Body.String(), `"status":"ok"`) {
 		t.Fatalf("reauthorize callback = %s", recorder.Body.String())
 	}
@@ -310,7 +322,7 @@ func TestEnvOAuthVaultAuthCallbackPostgres(t *testing.T) {
 	if len(credentials) != 1 || credentials[0].ExternalID != credential.ExternalID || credentials[0].SecretVersion <= credential.SecretVersion {
 		t.Fatalf("reauthorization did not update in place: %+v", credentials)
 	}
-	if tokenRequests != 2 {
+	if tokenRequests != 3 {
 		t.Fatalf("token requests = %d", tokenRequests)
 	}
 }
@@ -763,7 +775,7 @@ func TestEnvOAuthReauthorizationPreservesNetworkingPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute))
+	pending := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute), completed.CredentialExternalID)
 	current, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, completed.CredentialExternalID)
 	if err != nil {
 		t.Fatal(err)

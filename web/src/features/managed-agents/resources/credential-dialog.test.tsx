@@ -1,4 +1,5 @@
-import { afterEach, expect, mock, test } from 'bun:test';
+import { toast } from '../../../shared/ui/sonner';
+import { afterEach, expect, mock, spyOn, test } from 'bun:test';
 import { type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { resetTestDom } from '../../../test/setup';
@@ -304,7 +305,7 @@ test('ignores unrelated OAuth completions and preserves one exit lifecycle for t
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 });
 
-test('creates an ENV OAuth credential through the authorization popup', async () => {
+test.each([false, true])('creates an ENV OAuth credential through the authorization popup', async (conflict) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
   const popup = {
     closed: false,
@@ -314,6 +315,7 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
     }),
   };
   window.open = mock(() => popup as unknown as Window);
+  const errorToast = spyOn(toast, 'error').mockImplementation(() => 'toast_fixture');
   const writes: string[] = [];
   globalThis.fetch = mock(async (input, init) => {
     const url = String(input);
@@ -335,6 +337,7 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
     }
     if (url.includes('/env-oauth/vault-auth/start')) {
       writes.push(String(init?.body));
+      if (conflict) return Response.json({ error_code: 'credential_key_conflict' }, { status: 409 });
       return Response.json({ oauth_flow_id: 'flow_env', authorize_url: 'https://accounts.feishu.cn/authorize' });
     }
     return Response.json({});
@@ -364,6 +367,22 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
   });
+  if (conflict) {
+    await waitFor(() =>
+      expect(errorToast).toHaveBeenCalledWith(
+        'Variable name “LARKSUITE_CLI_USER_ACCESS_TOKEN” already exists in this vault.',
+      ),
+    );
+    expect(popup.close).toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Add credential' })).toBeTruthy();
+    expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe(
+      'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    );
+    expect(popup.location.href).toBe('');
+    errorToast.mockRestore();
+    return;
+  }
+  errorToast.mockRestore();
   await waitFor(() => expect(popup.location.href).toBe('https://accounts.feishu.cn/authorize'));
   expect(writes).toHaveLength(1);
   expect(JSON.parse(writes[0])).toEqual({
@@ -548,6 +567,7 @@ test('ENV OAuth 编辑授权失败后可重试，回调完成后刷新且不提�
   fireEvent.click(reconnect);
   await waitFor(() => expect(popup.location.href).toBe('https://accounts.feishu.cn/authorize'));
   expect(writes[1]).toMatchObject({
+    credential_id: 'cred_fixture',
     provider_id: 'builtin:feishu',
     secret_name: 'TEAM_TOKEN',
     vault_id: 'vlt_fixture',

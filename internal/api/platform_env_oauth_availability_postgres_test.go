@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,17 +48,25 @@ func TestEnvOAuthUnavailableProviderOnlyBlocksNewCredentialsPostgres(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if response := create("EXISTING_TOKEN"); response.Code != http.StatusOK {
+			response := create("EXISTING_TOKEN")
+			if response.Code != http.StatusOK {
 				t.Fatalf("启用客户端创建失败：%d %s", response.Code, response.Body.String())
+			}
+			var existing struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &existing); err != nil {
+				t.Fatal(err)
 			}
 			if _, err := service.Update(t.Context(), platformadmin.Actor{}, provider.ExternalID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: enabled.Version, Enabled: new(state.enabled), Archived: new(state.archived)}); err != nil {
 				t.Fatal(err)
 			}
 			for _, test := range []struct {
 				name   string
+				target string
 				status int
-			}{{"NEW_TOKEN", http.StatusConflict}, {"EXISTING_TOKEN", http.StatusOK}} {
-				body := `{"provider_id":"builtin:feishu","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"` + test.name + `","networking":{"type":"limited","allowed_hosts":["open.feishu.cn"]},"redirect_url":"https://app.example.test/oauth/vault/env-success"}`
+			}{{"NEW_TOKEN", "", http.StatusConflict}, {"EXISTING_TOKEN", "", http.StatusConflict}, {"EXISTING_TOKEN", existing.ID, http.StatusOK}} {
+				body := `{"credential_id":"` + test.target + `","provider_id":"builtin:feishu","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"` + test.name + `","networking":{"type":"limited","allowed_hosts":["open.feishu.cn"]},"redirect_url":"https://app.example.test/oauth/vault/env-success"}`
 				req := httptest.NewRequest(http.MethodPost, "/env-oauth/vault-auth/start", strings.NewReader(body))
 				req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
 				route := chi.NewRouteContext()

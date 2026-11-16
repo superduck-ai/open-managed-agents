@@ -619,6 +619,10 @@ test.each([null, 'clientId', 'clientSecret'] as const)('自定义服务方焦点
   const withClient = firstField !== null;
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
   const writes: RequestInit[] = [];
+  let completeDirectory: () => void = () => {};
+  const directoryPending = new Promise<Response>((resolve, reject) => {
+    completeDirectory = () => (withClient ? resolve(Response.json([])) : reject(new Error('目录加载失败')));
+  });
   let completeCreate: () => void = () => {};
   const createPending = new Promise<void>((resolve) => {
     completeCreate = resolve;
@@ -638,7 +642,7 @@ test.each([null, 'clientId', 'clientSecret'] as const)('自定义服务方焦点
         default_allowed_hosts: [],
       });
     }
-    return Response.json([]);
+    return directoryPending;
   }) as typeof fetch;
   const submit = mock(async () => {});
   const queries = new QueryClient();
@@ -737,6 +741,14 @@ test.each([null, 'clientId', 'clientSecret'] as const)('自定义服务方焦点
   expect(within(credentialDialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain(
     'Team OAuth (Workspace)',
   );
+  fireEvent.change(within(credentialDialog).getByLabelText('Variable name'), { target: { value: 'TEAM_TOKEN' } });
+  fireEvent.change(within(credentialDialog).getByLabelText('Allowed hosts'), { target: { value: 'api.example.test' } });
+  fireEvent.click(within(credentialDialog).getByRole('checkbox'));
+  await act(async () => completeDirectory());
+  expect(within(credentialDialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain(
+    'Team OAuth (Workspace)',
+  );
+  expect(within(credentialDialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(!withClient);
   expect(submit).not.toHaveBeenCalled();
   queries.clear();
 });

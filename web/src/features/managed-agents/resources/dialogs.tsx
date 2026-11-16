@@ -245,16 +245,20 @@ export function CredentialDialog({
       return;
     }
     let active = true;
+    setEnvOAuthProviders(null);
     void listEnvOAuthProviders(orgUuid, workspaceId)
       .then((providers) => {
         if (active) {
-          setEnvOAuthProviders(providers);
+          setEnvOAuthProviders((current) => [
+            ...providers,
+            ...(current ?? []).filter((created) => !providers.some((provider) => provider.id === created.id)),
+          ]);
           setEnvOAuthProvidersError(null);
         }
       })
       .catch(() => {
         if (active) {
-          setEnvOAuthProviders([]);
+          setEnvOAuthProviders((current) => current ?? []);
           setEnvOAuthProvidersError(
             msg(
               'managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoadFailed',

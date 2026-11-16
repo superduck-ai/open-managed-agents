@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
@@ -27,6 +27,12 @@ export function WorkspaceOAuthProviderForm({
   const { msg } = useI18n();
   const { csrfToken } = useAuth();
   const errorMessage = usePlatformAdminError();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [clientOpen, setClientOpen] = useState(false);
+  const [clientError, setClientError] = useState<'clientId' | 'clientSecret' | null>(null);
+  useEffect(() => {
+    if (clientError && clientOpen) formRef.current?.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus();
+  }, [clientError, clientOpen]);
   const [values, setValues] = useState({
     name: '',
     authorizeEndpoint: '',
@@ -56,9 +62,7 @@ export function WorkspaceOAuthProviderForm({
     onSettled: () => onPendingChange(false),
     onSuccess: onCreated,
   });
-  const ready =
-    [values.name, values.authorizeEndpoint, values.tokenEndpoint].every((value) => value.trim()) &&
-    Boolean(values.clientId.trim()) === Boolean(values.clientSecret.trim());
+  const ready = [values.name, values.authorizeEndpoint, values.tokenEndpoint].every((value) => value.trim());
   const fields = [
     {
       key: 'name',
@@ -83,12 +87,20 @@ export function WorkspaceOAuthProviderForm({
   ] as const;
   return (
     <form
+      ref={formRef}
       aria-label={msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider')}
       className="space-y-4 p-4"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (ready && !mutation.isPending) mutation.mutate();
+        if (!ready || mutation.isPending) return;
+        if (Boolean(values.clientId.trim()) !== Boolean(values.clientSecret.trim())) {
+          formRef.current?.querySelector<HTMLInputElement>('[aria-invalid="true"]')?.focus();
+          setClientError(values.clientId.trim() ? 'clientSecret' : 'clientId');
+          setClientOpen(true);
+          return;
+        }
+        mutation.mutate();
       }}
     >
       <Button
@@ -114,6 +126,7 @@ export function WorkspaceOAuthProviderForm({
             </FieldLabel>
             <Input
               id={`workspace-oauth-${field.key}`}
+              autoFocus={field.key === 'name'}
               placeholder={field.placeholder}
               value={values[field.key]}
               onChange={(event) => patch({ [field.key]: event.target.value })}
@@ -123,6 +136,8 @@ export function WorkspaceOAuthProviderForm({
       </div>
       <OptionalCredentialFields
         title={msg('managedAgents.credentialVaults.credentialDialog.oauthClientConfiguration', 'Client configuration')}
+        open={clientOpen}
+        onOpenChange={setClientOpen}
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field>
@@ -131,8 +146,13 @@ export function WorkspaceOAuthProviderForm({
             </FieldLabel>
             <Input
               id="workspace-oauth-client-id"
+              aria-invalid={clientError === 'clientId' || undefined}
+              aria-describedby={clientError === 'clientId' ? 'workspace-oauth-client-error' : undefined}
               value={values.clientId}
-              onChange={(event) => patch({ clientId: event.target.value })}
+              onChange={(event) => {
+                patch({ clientId: event.target.value });
+                setClientError(null);
+              }}
             />
           </Field>
           <Field>
@@ -142,12 +162,25 @@ export function WorkspaceOAuthProviderForm({
             <Input
               id="workspace-oauth-client-secret"
               type="password"
+              aria-invalid={clientError === 'clientSecret' || undefined}
+              aria-describedby={clientError === 'clientSecret' ? 'workspace-oauth-client-error' : undefined}
               value={values.clientSecret}
-              onChange={(event) => patch({ clientSecret: event.target.value })}
+              onChange={(event) => {
+                patch({ clientSecret: event.target.value });
+                setClientError(null);
+              }}
             />
           </Field>
         </div>
       </OptionalCredentialFields>
+      {clientError ? (
+        <p id="workspace-oauth-client-error" role="alert" className="text-sm text-destructive">
+          {msg(
+            'platformAdmin.oauthManagement.firstConfiguration',
+            'Enter both client ID and client secret to configure this provider.',
+          )}
+        </p>
+      ) : null}
       {mutation.error ? (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(mutation.error)}

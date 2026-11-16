@@ -82,7 +82,7 @@ export function WorkspaceOAuthProviderPicker({
             />
           ) : (
             <Command>
-              <CommandInput placeholder={msg('select.search', 'Search options...')} />
+              <CommandInput autoFocus placeholder={msg('select.search', 'Search options...')} />
               <CommandList>
                 <CommandEmpty>{msg('select.empty', 'No matching options.')}</CommandEmpty>
                 {[{ id: '', label: placeholder }, ...options].map((option) => (

@@ -6,16 +6,25 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../sh
 export function OptionalCredentialFields({
   title,
   defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }) {
   const { msg } = useI18n();
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? internalOpen;
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 border-t-[0.5px] border-border pt-3">
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange ?? setOpen}
+      className="min-w-0 border-t-[0.5px] border-border pt-3"
+    >
       <CollapsibleTrigger
         type="button"
         className="flex min-h-9 w-full items-center gap-2 text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground"

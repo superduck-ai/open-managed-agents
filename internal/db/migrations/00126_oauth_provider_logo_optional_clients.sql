@@ -6,6 +6,8 @@ ALTER TABLE platform_oauth_providers
         (client_id_envelope IS NULL) = (client_secret_envelope IS NULL)
     );
 
+UPDATE platform_oauth_providers SET logo_url='https://www.feishu.cn/favicon.ico' WHERE builtin_key='feishu';
+
 -- +goose Down
 ALTER TABLE platform_oauth_providers
     DROP COLUMN logo_url,

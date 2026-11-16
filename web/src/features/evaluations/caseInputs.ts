@@ -36,28 +36,35 @@ export function editedCaseInputs(
   return sameCaseFiles(fileBlocks(withQuery), files) ? withQuery : syncFileBlocks(withQuery, files);
 }
 
-function replaceQueryText(blocks: EvaluationContentBlock[], query: string) {
-  const rest = blocks.filter((block) => block.type !== 'text');
-  if (!query) return rest;
-  const text = { type: 'text' as const, text: query };
-  const first = blocks.findIndex((block) => block.type === 'text');
-  if (first < 0) return [text, ...rest];
-  return [
-    ...blocks.slice(0, first).filter((block) => block.type !== 'text'),
-    text,
-    ...blocks.slice(first + 1).filter((block) => block.type !== 'text'),
-  ];
+function replaceQueryText(blocks: EvaluationContentBlock[], query: string): EvaluationContentBlock[] {
+  const kept: EvaluationContentBlock[] = [];
+  let replaced = false;
+  for (const block of blocks) {
+    if (block.type !== 'text') {
+      kept.push(block);
+      continue;
+    }
+    if (!query || replaced) continue;
+    kept.push({ type: 'text', text: query });
+    replaced = true;
+  }
+  if (query && !replaced) kept.unshift({ type: 'text', text: query });
+  return kept;
 }
 
-function syncFileBlocks(blocks: EvaluationContentBlock[], files: CaseFile[]) {
+function syncFileBlocks(blocks: EvaluationContentBlock[], files: CaseFile[]): EvaluationContentBlock[] {
   const kept = new Set<string>();
-  const next = blocks.flatMap((block) => {
-    if (block.type === 'text') return [block];
+  const next: EvaluationContentBlock[] = [];
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      next.push(block);
+      continue;
+    }
     const file = files.find((item) => item.id === block.source.file_id);
-    if (!file || kept.has(file.id)) return [];
+    if (!file || kept.has(file.id)) continue;
     kept.add(file.id);
-    return [{ type: file.kind, source: { type: 'file' as const, file_id: file.id } }];
-  });
+    next.push({ type: file.kind, source: { type: 'file', file_id: file.id } });
+  }
   for (const file of files) {
     if (kept.has(file.id)) continue;
     next.push({ type: file.kind, source: { type: 'file', file_id: file.id } });

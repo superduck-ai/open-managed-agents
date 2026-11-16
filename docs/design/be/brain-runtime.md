@@ -259,7 +259,9 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求沿用 dsh 原生流程，日志异步复制，不无条件等待远程确认；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
 
-控制输入的 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送，避免审批解除时运行状态已落库、却被后发确认回执越过。回执链独立于控制输入接收；状态或回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。
+权限确认的 `control_response` 在解除工具等待前，先同步等待 `processing` 回执。后端据此持久化并投递已处理的 `user.tool_confirmation`，再由 Brain 应用允许或拒绝决定，避免工具结果先于已处理确认落库。`processing` 不消费投递消息；失败时不解除审批、不发送最终 ACK，重投仍可重试。同一进程已处理过的控制输入不重复报告 processing。主线程和子线程遵循同一路径。
+
+控制输入的最终 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送。最终回执链独立于控制输入接收；状态或最终回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。`tests/ccrv2.test.ts` 覆盖处理回执失败后不放行、重试、主/子线程允许与拒绝屏障、重复投递及最终回执不阻塞中断。
 
 带代理请求身份的文本块与 thinking 状态在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量与 thinking 起始预览继续实时发送，无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息、thinking 状态和结束 span，避免 Brain 的 block-end 抢存输出后，代理按更早 EndedAt 写入结束 span，导致历史中 thinking 晚于 end。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时预览、提前落盘、终态前未发布完成块及终态后恰一次来源正确的完成块。
 
@@ -335,7 +337,7 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 Brain 在 `block-start` 生成 `event_start`，普通文本生成 `event_delta`，思考正文与签名不公开。预览经过串行检查点和 CCRv2 FIFO 上传队列。代理和 Brain 使用 code session ID、上游 message ID、原始 block index 与事件类型生成一致的事件 ID；end 保留本请求的 `event_ids`。SSE 收到完整消息或 end 后丢弃相关的迟到预览，其他并行请求和子线程的预览不受影响。
 
-Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传，并在恢复时重放完成块日志。流式文本和 thinking 的完成块均等待模型流 end 帧后才回传，避免在代理完成批次前抢先落库；起始预览与文本增量不等待该屏障。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。该回传可能晚于 end，end 仅退休预览，不禁止随后持久化完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
+Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传。流式完成块等待模型流 end 帧后，仅在 outcome 对应的原生记录是正常提交、未标记 `interrupted` 的 `assistant/message` 时释放本次 attempt 的缓冲。取消、错误尝试、异常断流及 abandoned 不补发公开完成块。恢复时忽略带代理请求身份的 assistant-block 日志，直接从正常完成的 `assistant/message` 按原生消息块顺序重建公开输出；中断消息不投影，独立模型的块日志仍按记录顺序重放。不预扫描历史或维护成功块 ID 集合。起始预览与文本增量不等待该屏障。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 正常提交的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。成功提交的完整块回传可能晚于 end；失败或取消请求不通过该回传新增 thinking 或完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
 
 DSH 的 `compaction` 和 `session-title` 内部调用通过 `X-OMA-Model-Purpose` 声明用途。代理在请求边界读取并移除该 header，不转发给模型供应商；这些调用保留 span、usage 和计费，不生成完整消息、thinking 预览、工具投影或公开消息关联 ID。内部调用不覆盖 Brain 的业务响应 ID。普通调用不发送用途 header。
 

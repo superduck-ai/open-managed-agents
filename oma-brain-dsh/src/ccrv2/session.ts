@@ -290,7 +290,12 @@ export class CcrSession {
         } else ready.push(payload);
       }
       if (frame.type === "end") {
-        ready.push(...(this.proxyCompletions.get(attempt) ?? []));
+        const owner = threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session;
+        const outcome = frame.outcome;
+        const settled = outcome.kind === "committed" ? owner?.snapshotEvents().findLast(event => event.seq === outcome.seq) : undefined;
+        if (settled?.type === "assistant/message" && !settled.data.interrupted) {
+          ready.push(...(this.proxyCompletions.get(attempt) ?? []));
+        }
         this.proxyCompletions.delete(attempt);
       }
       if (ready.length) this.previews = Promise.all([this.previews, this.publishPreview(ready)]).then(() => {});
@@ -614,6 +619,9 @@ export class CcrSession {
       await this.opened.promise;
     }
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
+    if (!repeatedControl && payload.type === "control_response") {
+      await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
+    }
     if (repeatedControl || await this.control(payload, interruptConsumed)) {
       this.rememberControl(inputId);
       const receipt = this.updateStatus().then(() => this.checkpoint())

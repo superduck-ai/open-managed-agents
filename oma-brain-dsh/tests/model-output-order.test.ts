@@ -46,69 +46,100 @@ test("block ends advance at upstream boundaries, including interleaved text, thi
   expect(stream.finish().map(chunk => chunk.type)).toEqual(["usage", "finish"]);
 });
 
-test.each([false, true])("proxied thinking waits for the model terminal after its durable checkpoint and live preview (child=%s)", async child => {
-  const backend = new Backend();
-  await backend.ready;
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, backend.a);
-  const release = Promise.withResolvers<void>();
-  const sentReasoning = Promise.withResolvers<void>();
-  let turn: Promise<unknown> | undefined;
-  let confirmed = false;
-  const persist = session.backend.persist.bind(session.backend);
-  session.backend.persist = async (...args) => {
-    await persist(...args);
-    if ("type" in args[2] && "seq" in args[2] && pluginRecordOf(args[2])?.type === "plugin:oma/assistant-block") confirmed = true;
-  };
-  backend.onModel = async request => child && !modelSystemText(request).includes("# Subagent rules") ? textEvents("parent report") : new Response(new ReadableStream<Uint8Array>({ async start(controller) {
-    const emit = (event: Record<string, unknown>) => controller.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-    emit({ type: "message_start", message: { id: "msg_ordered", type: "message", role: "assistant", model: "test-model", content: [], usage: { input_tokens: 1, output_tokens: 0 } } });
-    emit({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });
-    emit({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "private reasoning" } });
-    emit({ type: "content_block_stop", index: 0 });
-    sentReasoning.resolve();
-    await release.promise;
-    emit({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
-    emit({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ordered answer" } });
-    emit({ type: "content_block_stop", index: 1 });
-    emit({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } });
-    emit({ type: "message_stop" });
-    controller.close();
-  } }), { headers: { "content-type": "text/event-stream", "request-id": "request_ordered" } });
-  try {
-    await session.open();
-    turn = child
-      ? runSubagent(session, "subagent", { description: "specialist", prompt: "Inspect and reply" })
-      : session.receive("ordered-input", { content: "Reply" });
-    turn.catch(() => {});
-    await sentReasoning.promise;
-    await eventually(() => backend.timeline.some(event => event.type === "event_start" && event.event.type === "agent.thinking"));
-    await eventually(() => confirmed);
-    expect(confirmed).toBe(true);
-    expect([...backend.publicLog.values()].filter(event => event.type === "agent.thinking")).toHaveLength(0);
-    expect(backend.timeline.some(event => event.type === "event_delta")).toBe(false);
-    release.resolve();
-    await turn;
-    expect(backend.timeline.some(event => event.type === "event_delta")).toBe(true);
-    const finals = [...backend.publicLog.values()].filter(event => ["agent.thinking", "agent.message"].includes(event.type)
-      && (child ? event.session_thread_id === session.subagents.threads[0]!.id : !event.session_thread_id));
-    expect(finals.map(event => event.type)).toEqual(["agent.thinking", "agent.message"]);
-    expect(finals.every(event => event.model_request_start_id === "request_ordered")).toBe(true);
-    expect(confirmed).toBe(true);
-    expect([...backend.privateLog.values()].some(event => event.type === "dsh_log" && event.data.type === "assistant/message"
-      && JSON.stringify(event.data).includes("ordered answer"))).toBe(true);
-  } finally {
-    release.resolve();
-    await turn?.catch(() => {});
-    await session.close();
-    await ctx.fiber.dispose();
-    await backend.stop();
-  }
-});
+for (const terminal of ["cancelled", "provider_error", "truncated", "success"] as const) {
+  test.each([false, true])(`proxied thinking follows ${terminal} settlement in live output and recovery (child=%s)`, async child => {
+    const backend = new Backend();
+    await backend.ready;
+    const ctx = new Context();
+    const api = new OmaApi(backend.url);
+    await mountOma(ctx, api);
+    const session = createOmaSession(ctx, api, backend.a);
+    const release = Promise.withResolvers<void>();
+    const sentReasoning = Promise.withResolvers<void>();
+    let turn: Promise<unknown> | undefined;
+    let confirmed = false;
+    const persist = session.backend.persist.bind(session.backend);
+    session.backend.persist = async (...args) => {
+      await persist(...args);
+      if ("type" in args[2] && "seq" in args[2] && pluginRecordOf(args[2])?.type === "plugin:oma/assistant-block") confirmed = true;
+    };
+    let streamed = false;
+    backend.onModel = async request => {
+      if (child && !modelSystemText(request).includes("# Subagent rules")) return textEvents("parent report");
+      if (streamed) return textEvents("retry reply");
+      streamed = true;
+      return new Response(new ReadableStream<Uint8Array>({ async start(controller) {
+        const emit = (event: Record<string, unknown>) => controller.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+        emit({ type: "message_start", message: { id: "msg_ordered", type: "message", role: "assistant", model: "test-model", content: [], usage: { input_tokens: 1, output_tokens: 0 } } });
+        emit({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });
+        emit({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "private reasoning" } });
+        emit({ type: "content_block_stop", index: 0 });
+        sentReasoning.resolve();
+        await release.promise;
+        if (terminal !== "success") {
+          if (terminal === "provider_error") emit({ type: "error", error: { type: "invalid_request_error", message: "controlled failure" } });
+          controller.close();
+          return;
+        }
+        emit({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+        emit({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ordered answer" } });
+        emit({ type: "content_block_stop", index: 1 });
+        emit({ type: "content_block_start", index: 2, content_block: { type: "text", text: "" } });
+        emit({ type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "second answer" } });
+        emit({ type: "content_block_stop", index: 2 });
+        emit({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } });
+        emit({ type: "message_stop" });
+        controller.close();
+      } }), { headers: { "content-type": "text/event-stream", "request-id": "request_ordered" } });
+    };
+    try {
+      await session.open();
+      turn = child
+        ? runSubagent(session, "subagent", { description: "specialist", prompt: "Inspect and reply" })
+        : session.receive("ordered-input", { content: "Reply" });
+      turn.catch(() => {});
+      await sentReasoning.promise;
+      await eventually(() => backend.timeline.some(event => event.type === "event_start" && event.event.type === "agent.thinking"));
+      await eventually(() => confirmed);
+      expect(confirmed).toBe(true);
+      expect([...backend.publicLog.values()].filter(event => event.type === "agent.thinking")).toHaveLength(0);
+      expect(backend.timeline.some(event => event.type === "event_delta")).toBe(false);
+      if (terminal === "cancelled") await session.control({ type: "interrupt", ...(child ? { session_thread_id: session.subagents.threads[0]!.id } : {}) });
+      release.resolve();
+      await turn.catch(() => {});
+      if (terminal === "success") expect(backend.timeline.some(event => event.type === "event_delta")).toBe(true);
+      const finals = [...backend.publicLog.values()].filter(event => ["agent.thinking", "agent.message"].includes(event.type)
+        && (child ? event.session_thread_id === session.subagents.threads[0]!.id : !event.session_thread_id));
+      expect(finals.filter(event => event.model_request_start_id === "request_ordered").map(event => event.type)).toEqual(terminal === "success" ? ["agent.thinking", "agent.message", "agent.message"] : []);
+      expect(confirmed).toBe(true);
+      if (terminal === "success") expect([...backend.privateLog.values()].some(event => event.type === "dsh_log" && event.data.type === "assistant/message"
+        && JSON.stringify(event.data).includes("ordered answer"))).toBe(true);
+      await session.close();
+      for (const [id, event] of backend.publicLog) if (event.model_request_start_id === "request_ordered") backend.publicLog.delete(id);
+      const restoredContext = new Context();
+      await mountOma(restoredContext, api);
+      const restored = createOmaSession(restoredContext, api, backend.a);
+      try {
+        await restored.open();
+        const replayed = [...backend.publicLog.values()].filter(event => event.model_request_start_id === "request_ordered");
+        expect(replayed.map(event => event.type)).toEqual(terminal === "success" ? ["agent.thinking", "agent.message", "agent.message"] : []);
+        expect(replayed.map(event => event.id)).toEqual(finals.filter(event => event.model_request_start_id === "request_ordered").map(event => event.id));
+        if (terminal === "success") expect(replayed.flatMap(event => event.content ?? []).map(block => block.text)).toEqual(["ordered answer", "second answer"]);
+      } finally {
+        await restored.close();
+        await restoredContext.fiber.dispose();
+      }
+    } finally {
+      release.resolve();
+      await turn?.catch(() => {});
+      await session.close();
+      await ctx.fiber.dispose();
+      await backend.stop();
+    }
+  });
+}
 
-test.each([false, true])("a proxied reply beyond 4 MiB is published once by Brain (child=%s)", async child => {
+test.each([false, true])("a proxied reply beyond 4 MiB survives message-based recovery (child=%s)", async child => {
   const backend = new Backend();
   await backend.ready;
   const ctx = new Context();
@@ -131,6 +162,19 @@ test.each([false, true])("a proxied reply beyond 4 MiB is published once by Brai
     expect(replies).toHaveLength(1);
     expect(replies[0]!.content).toEqual([{ type: "text", text }]);
     expect(replies[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
+    await session.close();
+    for (const reply of replies) backend.publicLog.delete(reply.uuid);
+    const restoredContext = new Context();
+    await mountOma(restoredContext, api);
+    const restored = createOmaSession(restoredContext, api, backend.a);
+    try {
+      await restored.open();
+      const replayed = [...backend.publicLog.values()].filter(event => event.type === "agent.message" && event.model_request_start_id === "sevt_large_request");
+      expect(replayed).toEqual(replies);
+    } finally {
+      await restored.close();
+      await restoredContext.fiber.dispose();
+    }
   } finally { await session.close(); await ctx.fiber.dispose(); await backend.stop(); }
 });
 

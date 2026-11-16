@@ -41,7 +41,7 @@ class MemoryBackend implements CcrBackend {
     this.output.set(id, [...previous, ...structuredClone(payloads.filter(event => !seen.has(event.uuid)))]);
   }
   async acknowledge(id: string, inputId: string) { this.acknowledged.push(`${id}:${inputId}`); }
-  async reportDelivery() {}
+  async reportDelivery(..._args: Parameters<CcrBackend["reportDelivery"]>) {}
   async setStatus(_id: string, _status: SessionState, _details?: RequiresActionDetails) {}
   async reportMetadata(id: string, patch: Record<string, unknown>) {
     const metadata = { ...this.metadata.get(id) };
@@ -758,6 +758,77 @@ test("only backend-confirmed user approvals pause the worker and late lookups ca
   }
 });
 
+
+test("failed confirmation processing leaves approval pending and can be retried", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, session } = await mountMediaKernel(backend);
+  const requested = Promise.withResolvers<string>();
+  const cancel = new AbortController();
+  let acknowledgements = 0;
+  backend.events = async (_id, events) => {
+    const request = events.find(event => event.type === "control_request");
+    if (request) requested.resolve(request.request_id);
+  };
+  backend.reportDelivery = async () => { throw new Error("processing unavailable"); };
+  backend.acknowledge = async () => { acknowledgements++; };
+  const decision = session.approve({ callId: "read", toolName: "Read", input: {} }, cancel.signal);
+  decision.catch(() => {});
+  try {
+    const requestId = await requested.promise;
+    const payload = { type: "control_response", response: {
+      subtype: "success", request_id: requestId, response: { behavior: "deny" },
+    } };
+    await expect(session.receive("confirmation", payload)).rejects.toThrow("processing unavailable");
+    expect(session.approvals.has(requestId)).toBe(true);
+    expect(acknowledgements).toBe(0);
+    backend.reportDelivery = async () => {};
+    await session.receive("confirmation", payload);
+    expect(await decision).toMatchObject({ allowed: false });
+    await eventually(() => acknowledgements === 1);
+  } finally { cancel.abort(); await ctx.fiber.dispose(); }
+});
+
+for (const behavior of ["deny", "allow"] as const) {
+  test.each([undefined, "child"])(`${behavior} waits for confirmation processing before resolving approval (thread=%s)`, async threadId => {
+    const backend = new MemoryBackend();
+    const { ctx, session } = await mountMediaKernel(backend);
+    const requested = Promise.withResolvers<string>();
+    const processing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const cancel = new AbortController();
+    const deliveries: string[] = [];
+    let acknowledgements = 0;
+    let resolved = false;
+    backend.events = async (_id, events) => {
+      const request = events.find(event => event.type === "control_request");
+      if (request) requested.resolve(request.request_id);
+    };
+    backend.reportDelivery = async (_id, inputId, status) => {
+      deliveries.push(`${inputId}:${status}`);
+      processing.resolve();
+      await release.promise;
+    };
+    backend.acknowledge = async () => { acknowledgements++; };
+    const decision = session.approve({ callId: "read", toolName: "Read", input: {} }, cancel.signal, threadId);
+    decision.then(() => { resolved = true; }, () => {});
+    try {
+      const requestId = await requested.promise;
+      const payload = { type: "control_response", response: {
+        subtype: "success", request_id: requestId, response: { behavior },
+      } };
+      const receiving = session.receive("confirmation", payload);
+      await Promise.race([processing.promise, receiving.then(() => { throw new Error("Approval resumed without a processing receipt"); })]);
+      expect(resolved).toBe(false);
+      expect(acknowledgements).toBe(0);
+      release.resolve();
+      await receiving;
+      expect(await decision).toMatchObject({ allowed: behavior === "allow" });
+      await eventually(() => acknowledgements === 1);
+      await session.receive("confirmation", payload);
+      expect(deliveries).toEqual(["confirmation:processing"]);
+    } finally { release.resolve(); cancel.abort(); await ctx.fiber.dispose(); }
+  });
+}
 
 test("approval processing receipts wait for preceding status publication without blocking controls", async () => {
   const backend = new MemoryBackend();

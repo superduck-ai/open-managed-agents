@@ -15,6 +15,8 @@ import {
 } from './command';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 
+type SelectOpenChangeDetails = Parameters<NonNullable<React.ComponentProps<typeof Popover>['onOpenChange']>>[1];
+
 const SelectContext = React.createContext<{
   value: string | null;
   disabled: boolean;
@@ -48,15 +50,15 @@ function Select<Value extends string = string>({
   items?: ReadonlyArray<{ value: Value; label: React.ReactNode }>;
   disabled?: boolean;
   open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  onOpenChange?: (open: boolean, details?: SelectOpenChangeDetails) => void;
   emptyLabel?: React.ReactNode;
 }) {
   const [internalValue, setInternalValue] = React.useState<Value | null>(defaultValue);
   const [internalOpen, setInternalOpen] = React.useState(false);
   const isOpen = open ?? internalOpen;
-  const changeOpen = (next: boolean) => {
+  const changeOpen = (next: boolean, details?: SelectOpenChangeDetails) => {
     setInternalOpen(next);
-    onOpenChange?.(next);
+    onOpenChange?.(next, details);
   };
   const selectedValue = value === undefined ? internalValue : value;
   const labels = new Map<string, React.ReactNode>(items?.map((item) => [item.value, item.label]));
@@ -135,9 +137,11 @@ function SelectContent({
   children,
   align = 'start',
   alignItemWithTrigger = false,
+  customContent,
   ...props
 }: React.ComponentProps<typeof PopoverContent> & {
   alignItemWithTrigger?: boolean;
+  customContent?: React.ReactNode;
 }) {
   const { msg } = useI18n();
   const { value, emptyLabel } = useSelect();
@@ -150,13 +154,15 @@ function SelectContent({
       className={cn('w-(--anchor-width) min-w-48 gap-0 overflow-hidden p-0', className)}
       {...props}
     >
-      <Command label={searchLabel} defaultValue={value === null ? undefined : JSON.stringify(value)}>
-        <CommandInput placeholder={searchLabel} />
-        <CommandList className="max-h-72 p-1 [&_[cmdk-group]]:p-0">
-          <CommandEmpty>{emptyLabel ?? msg('select.empty', 'No matching options.')}</CommandEmpty>
-          {children}
-        </CommandList>
-      </Command>
+      {customContent ?? (
+        <Command label={searchLabel} defaultValue={value === null ? undefined : JSON.stringify(value)}>
+          <CommandInput autoFocus placeholder={searchLabel} />
+          <CommandList className="max-h-72 p-1 [&_[cmdk-group]]:p-0">
+            <CommandEmpty>{emptyLabel ?? msg('select.empty', 'No matching options.')}</CommandEmpty>
+            {children}
+          </CommandList>
+        </Command>
+      )}
     </PopoverContent>
   );
 }

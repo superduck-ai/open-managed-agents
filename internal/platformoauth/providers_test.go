@@ -27,7 +27,7 @@ func (s providerStoreStub) GetPlatformOAuthProviderByBuiltinKey(_ context.Contex
 func (s providerStoreStub) GetPlatformOAuthProviderByExternalID(context.Context, string) (db.PlatformOAuthProvider, error) {
 	return s.provider, s.err
 }
-func (s providerStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
+func (s providerStoreStub) ListWorkspaceOAuthProviders(context.Context, string) ([]db.PlatformOAuthProvider, error) {
 	return []db.PlatformOAuthProvider{s.provider, {ExternalID: "poap_example"}}, s.err
 }
 
@@ -79,7 +79,7 @@ func TestResolverUsesDatabaseMetadata(t *testing.T) {
 	if snapshot.ClientID != "client" || snapshot.ClientSecret != "secret" || snapshot.DefaultSecretName != "DB_VARIABLE" || snapshot.Scope != provider.Scope {
 		t.Fatal("database snapshot mismatch")
 	}
-	rows, err := NewResolver(providerStoreStub{provider: provider}, nil, nil).ListProviders(t.Context())
+	rows, err := NewResolver(providerStoreStub{provider: provider}, nil, nil).ListProviders(t.Context(), "")
 	if err != nil || len(rows) != 2 || !rows[0].Configured || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
 		t.Fatal("metadata listing requires keys or exposes client")
 	}
@@ -139,7 +139,7 @@ func TestProviderDefaultsRejectInvalidDomains(t *testing.T) {
 		{BuiltinKey: "feishu", DefaultAllowedHosts: []string{"not a valid host"}},
 		{BuiltinKey: "feishu", DefaultSecretName: "not a variable"},
 	} {
-		if _, err := NewResolver(providerStoreStub{provider: changed}, service, nil).ListProviders(t.Context()); err == nil {
+		if _, err := NewResolver(providerStoreStub{provider: changed}, service, nil).ListProviders(t.Context(), ""); err == nil {
 			t.Fatal("无效默认配置未失败关闭")
 		}
 	}

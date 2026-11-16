@@ -209,6 +209,14 @@ func TestEnvOAuthTokenResolverFailsClosed(t *testing.T) {
 		}
 	})
 
+	t.Run("provider from another workspace", func(t *testing.T) {
+		credential := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "api.example.test", "expired", "refresh", &past)
+		store := &fakeCredentialStore{get: credential}
+		resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{WorkspaceUUID: "other-workspace", TokenEndpoint: "https://example.test/token", ClientID: "client"}})
+		if _, err := resolver.resolve(t.Context(), &credential); !errors.Is(err, ErrEnvOAuthProviderUnavailable) {
+			t.Fatal("跨工作区刷新未拒绝", err)
+		}
+	})
 	t.Run("permanent endpoint failure", func(t *testing.T) {
 		credential := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "expired", "refresh", &past)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

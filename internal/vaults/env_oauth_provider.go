@@ -20,6 +20,7 @@ const (
 var errEnvOAuthProviderKeyInvalid = errors.New("env_oauth provider is invalid")
 
 type EnvOAuthProviderSnapshot struct {
+	WorkspaceUUID           string
 	Enabled                 bool
 	Version                 int64
 	ProviderKey             string

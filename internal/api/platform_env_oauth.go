@@ -20,7 +20,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
-	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -62,6 +61,7 @@ type envOAuthVaultAuthStartResponse struct {
 }
 
 type envOAuthProviderResponse struct {
+	WorkspaceScoped     bool     `json:"workspace_scoped"`
 	Enabled             bool     `json:"enabled"`
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
@@ -91,10 +91,15 @@ type envOAuthCallbackPayload struct {
 }
 
 func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authorizeEnvOAuthOrganization(w, r); !ok {
+	principal, ok := s.authorizeEnvOAuthOrganization(w, r)
+	if !ok {
 		return
 	}
-	providers, err := s.envOAuthProviders.ListProviders(r.Context())
+	workspace, ok := s.resolveEnvOAuthWorkspace(w, r, principal, strings.TrimSpace(r.URL.Query().Get("workspace_id")))
+	if !ok {
+		return
+	}
+	providers, err := s.envOAuthProviders.ListProviders(r.Context(), workspace.UUID)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "list env oauth providers", "error", err)
 		httpapi.WriteJSON(w, http.StatusServiceUnavailable, envOAuthErrorResponse{ErrorCode: envOAuthErrorProviderUnavailable})
@@ -103,6 +108,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	response := make([]envOAuthProviderResponse, 0, len(providers))
 	for _, provider := range providers {
 		response = append(response, envOAuthProviderResponse{
+			WorkspaceScoped:     provider.WorkspaceUUID != "",
 			Enabled:             provider.Enabled,
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,
@@ -129,25 +135,8 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	workspaceID := req.WorkspaceID
-	if workspaceID == "default" {
-		workspaceID = principal.WorkspaceExternalID
-	}
-	workspace, access, err := s.workspaceAccess.ResolvePrincipal(r.Context(), principal, workspaceID)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, workspaceaccess.ErrDenied) {
-			status = http.StatusForbidden
-		}
-		writeEnvOAuthStartError(w, status, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	if !access.UseResources() {
-		writeEnvOAuthStartError(w, http.StatusForbidden, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	if workspace.ArchivedAt != nil {
-		writeEnvOAuthStartError(w, http.StatusNotFound, envOAuthErrorInvalidRequest, "")
+	workspace, ok := s.resolveEnvOAuthWorkspace(w, r, principal, req.WorkspaceID)
+	if !ok {
 		return
 	}
 	vault, err := s.db.GetVaultByExternalIDOrUUID(r.Context(), workspace.UUID, req.VaultID)
@@ -165,7 +154,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 	}
 
 	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), req.ProviderID)
-	if err != nil || provider.AuthorizeEndpoint == "" || provider.TokenEndpoint == "" || provider.ClientID == "" {
+	if err != nil || provider.AuthorizeEndpoint == "" || provider.TokenEndpoint == "" || provider.ClientID == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != workspace.UUID) {
 		writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
 		return
 	}
@@ -317,7 +306,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		return
 	}
 	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), flow.ProviderKey)
-	if err != nil || provider.ClientID == "" || provider.ClientSecret == "" {
+	if err != nil || provider.ClientID == "" || provider.ClientSecret == "" || (provider.WorkspaceUUID != "" && provider.WorkspaceUUID != flow.WorkspaceUUID) {
 		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_uuid", flow.UUID, "error_code", envOAuthErrorProviderUnavailable)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{

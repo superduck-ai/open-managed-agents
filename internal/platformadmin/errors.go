@@ -65,3 +65,5 @@ func invalidOAuthProviderLogoURL() error {
 func invalidOAuthProviderClients() error {
 	return invalid("客户端 ID 和客户端密钥须同时填写，或同时留空")
 }
+
+func invalidOAuthProviderHosts() error { return invalid("默认允许主机必须是有效的域名") }

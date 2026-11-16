@@ -1,5 +1,6 @@
 import { consoleRequestHeaders, getConsoleRequestContext, getScopeSignal } from '../../../shared/api/client';
 import { useSessionFiles } from './SessionFileContext';
+import { sessionFilePreviewKind } from './sessionFilePreviewModel';
 import { sessionOutputFileForPath } from './sessionOutputModel';
 import { useSessionFileDownload } from './useSessionFileDownload';
 import {
@@ -41,7 +42,8 @@ function TranscriptFileLink({ node: _node, href, ...props }: ComponentPropsWitho
           ? (event) => {
               event.preventDefault();
               event.stopPropagation();
-              void download(file);
+              if (sessionFiles?.openPreview && sessionFilePreviewKind(file)) sessionFiles.openPreview(file.id);
+              else void download(file);
             }
           : undefined
       }

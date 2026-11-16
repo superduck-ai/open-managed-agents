@@ -95,16 +95,30 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 
 ## 数据来源
 
-| 区域          | 数据来源                                            | 说明                                                                                                |
-| ------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 标题摘要      | Session retrieve + events                           | 状态、引用、用量、时间与实时状态                                                                    |
-| 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机                                                               |
-| Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                                                                    |
-| Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时                                                                |
+| 区域          | 数据来源                                            | 说明                                                                                                         |
+| ------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 标题摘要      | Session retrieve + events                           | 状态、引用、用量、时间与实时状态                                                                             |
+| 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机                                                                        |
+| Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                                                                             |
+| Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时                                                                         |
 | Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小/下载权限按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
-| Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点                                                             |
+| Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点                                                                      |
 
-主会话的转录末尾显示「输出文件」卡片，文件名、类型和大小来自 Files API；整个卡片可点击下载，显示下载状态，并通过共享下载 hook 处理错误。输出区使用圆角容器、柔和底色、淡色轮廓和内边距与消息正文区分，内部下载卡片使用背景色形成层次，适配明暗主题。卡片位于消息滚动容器内，位于输入框上方；关闭 Inspector 后仍可见，窄屏自动变为单列。没有可下载输出时不渲染空占位。输出属于整个 Session，子线程和消息搜索视图不展示该汇总，避免把 Session 文件误认为某个子线程的产物或搜索命中。
+主会话的转录末尾显示「输出文件」卡片，文件名、类型和大小来自 Files API；可预览类型点击卡片主体打开预览、右侧图标下载，其余类型整个卡片可点击下载，显示下载状态，并通过共享下载 hook 处理错误。输出区使用圆角容器、柔和底色、淡色轮廓和内边距与消息正文区分，内部下载卡片使用背景色形成层次，适配明暗主题。卡片位于消息滚动容器内，位于输入框上方；关闭 Inspector 后仍可见，窄屏自动变为单列。没有可下载输出时不渲染空占位。输出属于整个 Session，子线程和消息搜索视图不展示该汇总，避免把 Session 文件误认为某个子线程的产物或搜索命中。
+
+输出文件预览完全在前端完成，不新增后端接口：打开预览时复用 Files download 取回 Blob，在右侧 Sheet 中渲染，头部保留下载按钮。渲染方式只按文件扩展名决定，不使用沙箱上报的 `mime_type`；超过上限或不支持的类型（含 PPTX、XLS）保持直接下载。预览状态由 `SessionOutputFiles` 的上下文持有，整个 Session 同时只有一个预览，列表刷新不会关闭已打开的预览；消息正文中指向可预览输出文件的链接同样打开预览，其余文件链接保持下载。预览面板不使用遮罩，对话保持可读，默认宽度沿用共享 Sheet（约为视口的 46%），头部提供放大/还原切换、下载，以及文本类内容的复制；卡片图标按类型区分，可预览卡片悬停或聚焦时显示预览图标。关闭预览会取消尚未完成的内容请求。
+
+| 类型       | 扩展名                                                  | 渲染                                                                           | 上限                 |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------- |
+| 代码与文本 | `py`、`js`、`ts`、`json`、`yaml`、`sh`、`txt`、`log` 等 | 复用转录的 `SyntaxCodeBlock`                                                   | 1 MB                 |
+| Markdown   | `md`、`markdown`                                        | 复用 `MarkdownTranscriptContent`                                               | 1 MB                 |
+| 表格       | `csv`、`tsv`、`xlsx`                                    | 共享 `Table`；XLSX 多 sheet 用 `Tabs`；每张表最多 1000 行、50 列并提示总行列数 | CSV 1 MB、XLSX 10 MB |
+| Word       | `docx`                                                  | `mammoth` 转 HTML 后以对象 URL 载入 `sandbox=""` 的 iframe                     | 10 MB                |
+| HTML       | `html`、`htm`                                           | 以对象 URL 载入 `sandbox="allow-scripts"` 的 iframe                            | 5 MB                 |
+| PDF        | `pdf`                                                   | Blob 类型强制为 `application/pdf` 后由 iframe 加载对象 URL                     | 20 MB                |
+| 图片       | `png`、`jpg`、`jpeg`、`gif`、`webp`、`svg`              | `<img>` 加载对象 URL，Blob 类型按扩展名强制                                    | 20 MB                |
+
+Agent 生成的 HTML 与 DOCX 转换结果属于不可信内容，只在不带 `allow-same-origin` 的沙箱 iframe 中渲染，文档为不透明源，无法读取控制台的 Cookie、存储或 DOM；iframe 与图片均设置 `referrerpolicy="no-referrer"`，且内容来自 `blob:` URL，预览文档读不到控制台页面地址，子资源请求也不携带它；`sessionKey` 为 `SameSite=Lax`，沙箱内发往控制台的请求不携带登录态。浏览器不在沙箱 iframe 中渲染 PDF，因此 PDF 依靠强制 Blob 类型保证只被当作 PDF 解析。`mammoth` 与 `read-excel-file` 通过动态 `import()` 按需加载。PDF 由浏览器内置查看器承载，没有 HTML sandbox，其中的链接、表单等交互取决于浏览器查看器自身的限制。图片无法解码时显示加载失败提示并保留下载入口。已知限制：焦点进入 HTML 预览的 iframe 后，按键不会传到控制台页面，Esc 无法关闭面板，需使用关闭按钮或点击遮罩；CSV 行列上限只裁剪展示结果，解析仍是全量；DOCX 与 XLSX 在主线程解压解析，只限制压缩后的文件大小，未限制解压后体积；HTML 以对象 URL 加载，相对路径的 CSS、脚本和图片无法解析，仅自包含或引用外部 CDN 的单文件 HTML 可正常显示。
 
 输出列表直接调用 `GET /v1/files?scope_id={session_id}&beta=true`，同时携带 Files 与 `managed-agents-2026-04-01` beta 请求头，读取完整分页并只显示 `downloadable=true` 的文件；按 file ID 去重。Session `resources[]` 的输出摘要存在数量上限，因此卡片不依赖资源摘要是否包含某个输出文件。Files 列表和文件元数据缓存按 workspace/session 或 workspace/file ID/资源版本隔离；作用域切换取消旧请求，列表结果也会填充 Inspector 使用的元数据缓存。分页游标缺失或重复会终止读取并展示可重试错误。
 
@@ -184,10 +198,10 @@ stateDiagram-v2
 用户提供的 `platform.claude.com.har` 中，`0hb36q-3rvz8d.js` 与 `1vfc34t0k8rxd.js` 包含 `useListSessionFiles`、`sessionFilesQueryKey` 和 `useDownloadFileForWorkspace`：通过 `scope_id` 查询文件、按组织/工作区/会话缓存、传入 abort signal，并使用 Files SDK 下载 Blob、保留文件名和延后回收对象 URL。本实现参考这些数据流与交互行为，使用项目自身的 shadcn 组件和语义令牌。HAR 未包含完整的聊天末尾文件卡片组件，不能据此声称与 Claude 的该组件逐像素一致；HAR、原始 JS 和请求凭据不纳入仓库。
 
 - `api.test.ts` 覆盖带 session scope 的全分页请求、beta/workspace/cookie/abort signal，以及循环游标终止。
+- `sessionFilePreviewModel.test.ts` 覆盖预览类型判定、大小上限、分隔文本解析、行列截断和 Blob 类型强制；`SessionOutputFiles.test.tsx` 另覆盖不支持类型保持下载、预览加载失败、表格预览与关闭、HTML 沙箱与 referrer 属性、关闭时取消请求、列表刷新保留预览。
 - `SessionOutputFiles.test.tsx` 覆盖上传文件排除、输出 ID 去重、无输出占位、错误重试与旧卡片保留、作用域切换取消、运行期与 idle 刷新、下载失败恢复及重复点击保护。
 - `SessionDetailPage.scroll.test.tsx` 覆盖文件卡片独立位于所属回复下方、关闭 Inspector 后可下载，以及搜索/子线程作用域切换。
 - 对 React Query 轮询与组件验证，先通过 `bun test --preload ./src/test/setup.ts ...` 初始化 DOM，避免 Query Core 在其他纯工具测试先加载时被缓存为 server mode。
-
 
 ### 按回复展示输出文件
 
@@ -204,7 +218,6 @@ stateDiagram-v2
 
 `SessionTranscriptView.test.tsx` 验证两轮之间文件留存、流式时隐藏以及结束后归位；`SessionOutputFiles.test.tsx` 验证最新优先与展开/收起；`sessionOutputModel.test.ts` 和 `SessionTranscriptContent.test.tsx` 验证同名路径隔离、编码路径、别名及正文链接下载。
 
-
 ### 短视口与浏览器缩放
 
 当视口高度不超过600px时，会话工作区外壳允许纵向滚动，内部保留640px的最小布局高度，避免页头、时间线及检查器挤压消息输入区。正常高度继续保持事件区独立滚动。验收应使用Chrome原生100%和200%缩放，核对输入框及发送按钮完整可达，不能仅用DPR或窄视口替代。
@@ -216,7 +229,6 @@ stateDiagram-v2
 ## 快速查看页头
 
 会话快速查看页头保留会话标题和完整 ID，重复说明“无需离开列表”的内容仅供辅助技术读取，不占用可见页头空间。关闭、退出过渡及焦点恢复仍由现有 Sheet 生命周期控制。
-
 
 ## 快速查看与详情的状态文案一致性
 
@@ -245,7 +257,6 @@ Inspector详情正文和ScrollArea内容均受面板宽度约束，长事件JSON
 上下文用量图仅有一个数据点时直接显示标记，不能依赖悬停才能看见已有用量；继续使用真实事件时间，不补造时间跨度。多点路径、悬停联动和事件选择合同保持。session-inspector-details-review-2026-10-26记录15组隔离样本；单点补充修复后4组线程截图已重采，事件JSON已滚动到末尾，整页仍待联合验收。
 
 Inspector内嵌Traces时，外层ScrollArea内容宽度约束在面板内，不能由稠密表格的最小宽度撑开。筛选、时间范围和刷新在面板内换行，表格保留局部横向滚动；节点详情继续复用共享TraceDetailView与SpanDetailPanel，不创建独立版本。session-traces-joined-review-2026-10-26记录8组完整Inspector隔离对比及节点/末列观察；状态搜索、Escape焦点恢复、详情关闭与返回列表已复核。样本仅使用模拟GET，不证明真实链路采集或后端验收。
-
 
 ### 窄屏默认面板
 

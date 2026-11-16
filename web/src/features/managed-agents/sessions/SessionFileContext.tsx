@@ -5,6 +5,7 @@ export const SessionFileContext = createContext<{
   files: SessionOutputFile[];
   workspaceId: string;
   running: boolean;
+  openPreview?: (fileId: string) => void;
 } | null>(null);
 export function useSessionFiles() {
   return useContext(SessionFileContext);

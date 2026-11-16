@@ -735,7 +735,7 @@ test.each([null, 'clientId', 'clientSecret'] as const)('自定义服务方焦点
     ...(withClient ? { client_id: 'client', client_secret: 'synthetic-secret' } : {}),
   });
   expect(within(credentialDialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain(
-    'Team OAuth',
+    'Team OAuth (Workspace)',
   );
   expect(submit).not.toHaveBeenCalled();
   queries.clear();

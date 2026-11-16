@@ -41,7 +41,9 @@ export function EnvOAuthCredentialFields({
     .filter((provider) => provider.enabled || (secretNameLocked && provider.id === values.envOAuthProviderId))
     .map((provider) => ({
       id: provider.id,
-      label: provider.name,
+      label: provider.workspace_scoped
+        ? `${provider.name} (${msg('settings.scope.workspace', 'Workspace')})`
+        : provider.name,
       icon: <OAuthProviderAvatar logoUrl={provider.logo_url} />,
     }));
   const selectableOptions =
@@ -78,7 +80,7 @@ export function EnvOAuthCredentialFields({
           });
         }}
         onCreated={(record) => {
-          const provider = { ...record, id: record.provider_key };
+          const provider = { ...record, id: record.provider_key, workspace_scoped: true };
           onProviderCreated?.(provider);
           const defaults = envOAuthProviderDefaults(provider);
           const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';

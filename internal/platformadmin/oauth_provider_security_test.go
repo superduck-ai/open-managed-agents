@@ -325,3 +325,17 @@ func TestOAuthProviderDefaultHostsUpdate(t *testing.T) {
 		t.Fatal("默认允许主机无法清空", err)
 	}
 }
+
+func TestPlatformOAuthProviderCannotMutateWorkspaceProvider(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	store.provider.WorkspaceUUID = "workspace"
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatal("平台更新未拒绝工作区服务方", err)
+	}
+	if err := service.Delete(t.Context(), Actor{}, store.provider.ExternalID, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatal("平台删除未拒绝工作区服务方", err)
+	}
+	if store.writes != 0 {
+		t.Fatal("工作区记录被平台管理路径修改")
+	}
+}

@@ -219,6 +219,9 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 		}
 		return OAuthProviderView{}, err
 	}
+	if current.WorkspaceUUID != "" {
+		return OAuthProviderView{}, ErrNotFound
+	}
 	if input.ExpectedVersion < 1 {
 		return OAuthProviderView{}, invalid("必须提供 expected_version")
 	}
@@ -283,6 +286,9 @@ func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, external
 	}()
 	if err != nil {
 		return mapOAuthProviderError(err)
+	}
+	if current.WorkspaceUUID != "" {
+		return ErrNotFound
 	}
 	if expectedVersion < 1 {
 		return invalid("必须提供 expected_version")

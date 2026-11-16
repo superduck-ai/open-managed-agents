@@ -81,6 +81,9 @@ func TestWorkspaceOAuthProviderIsolationPostgres(t *testing.T) {
 		if listed.Code != http.StatusOK {
 			t.Fatalf("目录查询失败：%d", listed.Code)
 		}
+		if scope.visible && !strings.Contains(listed.Body.String(), `"workspace_scoped":true`) {
+			t.Fatal("工作区服务方缺少作用域标识")
+		}
 		if strings.Contains(listed.Body.String(), created.ProviderKey) != scope.visible {
 			t.Fatal("工作区目录隔离失败")
 		}

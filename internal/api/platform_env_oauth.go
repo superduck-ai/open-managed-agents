@@ -61,6 +61,7 @@ type envOAuthVaultAuthStartResponse struct {
 }
 
 type envOAuthProviderResponse struct {
+	WorkspaceScoped     bool     `json:"workspace_scoped"`
 	Enabled             bool     `json:"enabled"`
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
@@ -107,6 +108,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	response := make([]envOAuthProviderResponse, 0, len(providers))
 	for _, provider := range providers {
 		response = append(response, envOAuthProviderResponse{
+			WorkspaceScoped:     provider.WorkspaceUUID != "",
 			Enabled:             provider.Enabled,
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,

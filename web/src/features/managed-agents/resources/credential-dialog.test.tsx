@@ -652,7 +652,19 @@ test.each([false, true])('自定义服务方默认四项，客户端配置默认
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(await within(credentialDialog).findByRole('combobox', { name: 'OAuth provider' }));
   fireEvent.click(await screen.findByRole('option', { name: 'Custom OAuth provider' }));
-  const register = await screen.findByRole('dialog', { name: 'Custom OAuth provider' });
+  let register = await screen.findByRole('form', { name: 'Custom OAuth provider' });
+  expect(document.querySelectorAll('[data-slot="dialog-content"]')).toHaveLength(1);
+  fireEvent.change(within(register).getByLabelText('Name'), { target: { value: 'Discarded draft' } });
+  fireEvent.click(within(register).getByRole('button', { name: withClient ? 'Custom OAuth provider' : 'Cancel' }));
+  expect(screen.queryByRole('form', { name: 'Custom OAuth provider' })).toBeNull();
+  expect(screen.getByRole('dialog', { name: 'Add credential' })).toBe(credentialDialog);
+  expect(writes).toHaveLength(0);
+  fireEvent.click(await screen.findByRole('option', { name: 'Custom OAuth provider' }));
+  register = await screen.findByRole('form', { name: 'Custom OAuth provider' });
+  expect((within(register).getByLabelText('Name') as HTMLInputElement).value).toBe('');
+  expect(register.closest('form form')).toBeNull();
+  fireEvent.submit(register);
+  expect(submit).not.toHaveBeenCalled();
   expect(within(register).getAllByRole('textbox')).toHaveLength(4);
   expect(within(register).queryByLabelText('Client ID')).toBeNull();
   expect(within(register).queryByLabelText(/Default allowed hosts/)).toBeNull();
@@ -674,7 +686,7 @@ test.each([false, true])('自定义服务方默认四项，客户端配置默认
     fireEvent.click(clientToggle);
   }
   fireEvent.click(within(register).getByRole('button', { name: 'Add' }));
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Custom OAuth provider' })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole('form', { name: 'Custom OAuth provider' })).toBeNull());
   expect(writes).toHaveLength(1);
   expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('csrf_fixture');
   expect(JSON.parse(String(writes[0].body))).toEqual({

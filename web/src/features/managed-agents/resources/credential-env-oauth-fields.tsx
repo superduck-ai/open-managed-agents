@@ -1,13 +1,12 @@
-import { useContext, useState } from 'react';
-import { Plus } from 'lucide-react';
-import { WorkspaceOAuthProviderDialog } from './workspace-oauth-provider-dialog';
+import { useContext } from 'react';
+import { WorkspaceOAuthProviderPicker } from './workspace-oauth-provider-picker';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import { Button } from '../../../shared/ui/button';
 import { FieldDescription } from '../../../shared/ui/field';
-import { ManagedSelectField, ManagedTextField } from '../components/common';
+import { ManagedTextField } from '../components/common';
 import { type CredentialFormValues, type EnvOAuthProviderApiResponse } from '../types';
 import { CredentialNetworkingFields } from './credential-networking-fields';
 import { OptionalCredentialFields } from './optional-credential-fields';
@@ -41,7 +40,6 @@ export function EnvOAuthCredentialFields({
   const { msg } = useI18n();
   const auth = useContext(AuthContext);
   const platformAccess = auth?.platformAccess;
-  const [creating, setCreating] = useState(false);
   const selected = providers.find((provider) => provider.id === values.envOAuthProviderId);
   const hostsMissing = credentialEnvHostsMissing(values);
   const options = providers
@@ -55,7 +53,7 @@ export function EnvOAuthCredentialFields({
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;
   return (
     <div className="space-y-4">
-      <ManagedSelectField
+      <WorkspaceOAuthProviderPicker
         label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthProvider', 'OAuth provider')}
         value={values.envOAuthProviderId}
         placeholder={
@@ -63,23 +61,10 @@ export function EnvOAuthCredentialFields({
             ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoading', 'Loading providers...')
             : msg('managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider', 'Select a provider')
         }
-        options={
-          orgUuid && workspaceId && !secretNameLocked
-            ? [
-                ...selectableOptions,
-                {
-                  id: '__create_provider__',
-                  label: msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider'),
-                  icon: <Plus className="size-4" aria-hidden />,
-                },
-              ]
-            : selectableOptions
-        }
+        options={selectableOptions}
+        orgUuid={secretNameLocked ? undefined : orgUuid}
+        workspaceId={workspaceId}
         onChange={(providerId) => {
-          if (providerId === '__create_provider__') {
-            setCreating(true);
-            return;
-          }
           if (secretNameLocked || providerId === values.envOAuthProviderId) {
             return;
           }
@@ -97,28 +82,20 @@ export function EnvOAuthCredentialFields({
               : {}),
           });
         }}
+        onCreated={(record) => {
+          const provider = { ...record, id: record.provider_key };
+          onProviderCreated?.(provider);
+          const defaults = envOAuthProviderDefaults(provider);
+          const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
+          onChange({
+            envOAuthProviderId: provider.id,
+            allowedHostsText: defaults.allowedHostsText,
+            ...(values.secretName.trim() && values.secretName !== previousDefault
+              ? {}
+              : { secretName: defaults.secretName }),
+          });
+        }}
       />
-      {creating && orgUuid && workspaceId ? (
-        <WorkspaceOAuthProviderDialog
-          orgUuid={orgUuid}
-          workspaceId={workspaceId}
-          onClose={() => setCreating(false)}
-          onCreated={(record) => {
-            const provider = { ...record, id: record.provider_key };
-            onProviderCreated?.(provider);
-            const defaults = envOAuthProviderDefaults(provider);
-            const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
-            onChange({
-              envOAuthProviderId: provider.id,
-              allowedHostsText: defaults.allowedHostsText,
-              ...(values.secretName.trim() && values.secretName !== previousDefault
-                ? {}
-                : { secretName: defaults.secretName }),
-            });
-            setCreating(false);
-          }}
-        />
-      ) : null}
       {providersError ? (
         <div className="flex flex-wrap items-center gap-2">
           <FieldDescription className="text-destructive">{providersError}</FieldDescription>

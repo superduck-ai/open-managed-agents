@@ -26,15 +26,21 @@ test('系统技能列表点击详情、关闭后打开导入仍可响应', async
   Object.assign(globalThis, { scrollTo: () => {} });
   const skill: SystemSkill = {
     id: 'demo',
+    bundled: true,
     display_title: 'Demo',
     listed: true,
     default_version: '1.0.0',
-    revision: 1,
     created_at: '2026-11-01T00:00:00Z',
     updated_at: '2026-11-01T00:00:00Z',
   };
   globalThis.fetch = mock(async (url: RequestInfo | URL) =>
-    Response.json(String(url).endsWith('/demo') ? skill : { data: [skill], has_more: false }),
+    Response.json(
+      String(url).endsWith('/content')
+        ? { name: 'demo', description: 'Demo', files: ['demo/SKILL.md'], skill_md: '# Demo', existing: null }
+        : String(url).endsWith('/demo')
+          ? skill
+          : { data: [skill], has_more: false },
+    ),
   ) as typeof fetch;
   const root = createRootRoute();
   const route = createRoute({
@@ -67,6 +73,7 @@ test('系统技能列表点击详情、关闭后打开导入仍可响应', async
     </QueryClientProvider>,
   );
   expect(await screen.findByRole('button', { name: 'Demo', exact: true })).toBeTruthy();
+  expect(screen.queryByText('项目预置')).toBeNull();
   expect(screen.queryByRole('columnheader', { name: '发布者' })).toBeNull();
   expect(screen.queryByRole('textbox', { name: '发布者' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Demo', exact: true }));

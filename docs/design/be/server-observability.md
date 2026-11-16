@@ -3,6 +3,12 @@
 本文记录 OMA 服务端 OpenTelemetry 的传播、指标、日志与 OpenObserve 查询契约。
 第 1–7 节说明模型与配置，P0–P9 按功能给出职责、实现入口和验证边界；实现细节以代码为准。
 
+## 沙箱工具协议迁移
+
+内置工具已改为 [持久化领取协议](sandbox-tool-call-claim.md)。本文中 `oma.sandbox_mcp.call`、`oma.sandbox_mcp.duration`、`sandbox_mcp_ready` 和同步 MCP 网关的时序说明仅适用于旧版本的历史数据，新版本不再产生这些 span / histogram。`sandbox_tool_calls` 是调用状态的事实来源；HTTP 路由指标、DSH 原生工具日志及公开事件继续生效，Runner 就绪阶段使用 `sandbox_tool_calls_ready`。`lazy_mcp` 保留为现有 Runner 触发类型的遥测标签。
+
+随仓库提供的 OpenObserve 看板中依赖旧 MCP span 的工具次数、失败率和耗时面板仍只展示历史数据，不能用于新协议的调用统计。当前未新增跨进程工具执行 span 或持久调用专属指标。
+
 ## 0. 维护约束
 
 - 保持 API、状态机、事务、重试与超时合同；遥测不得改变业务结果。
@@ -292,6 +298,7 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 - 字段名一律 snake_case。访问日志字段在 P1 改为 snake_case（第 P1 节）。
 - `session status event` 为 Debug，状态时间线默认使用 `oma.session.status` span；
   `session error event` 为 Warn。Runner 失败日志补充 `session_id`、`work_id`。
+- 阿里云 KMS 失败以 `KMSError` 直接作为 `error` 字段输出结构化分组：`provider`、`operation`、`code`、`status`、`request_id`、`attempts`。`code` 对未收到服务端响应的失败使用固定细分码 `NetworkError.DNS`、`NetworkError.ConnectionRefused`、`NetworkError.ConnectionReset`、`NetworkError.TLS`、`NetworkError.TLSCertificate`、`NetworkError.Timeout`，非 JSON 响应体的 5xx 为 `UnexpectedResponse`（带 `status`），其余为 `NetworkError` 或 `RequestFailed`；`attempts` 为本次操作实际尝试次数。规则见 [vault-runtime.md](vault-runtime.md) 阿里云 KMS 模式。
 - OTel 导出错误交给 bootstrap console logger 打印，不能写回 OTLP，避免导出故障产生自我放大的日志。
 
 ## 6. 指标目录
@@ -344,7 +351,7 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 | `oma.sandbox.provider.duration` | Float64Histogram | latency | `oma.operation`=`create`、`kill`、`set_timeout`、`write_file`、`file_exists`、`run_command`、`start_background_command`、`service_endpoint`；`oma.outcome`=`ok`、`not_found`、`error`、`canceled`、`timeout` | `E2BProvider` 各方法 |
 | `oma.code_session.activation.duration` | Float64Histogram | latency | `oma.outcome` | `ActivateManagedAgentCodeSession` |
 
-Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、
+Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`（仅配置 Manager 制品时）、`packages`、
 `filestore`、`mark_running`、`code_session`、`manager_start`、`sandbox_mcp_ready`、`publish_runtime`、
 `sandbox_prewarm`、`brain_dispatch`。各触发方式实际经过的阶段见 P8.2。
 
@@ -1041,10 +1048,10 @@ sequenceDiagram
 
 | 触发 | 根/子 | 经过的阶段 |
 | --- | --- | --- |
-| `queue`，沙箱模式 | 根 span，link 到 `environment_work.trace_parent` | `claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`code_session`、`manager_start`、`publish_runtime` |
+| `queue`，沙箱模式 | 根 span，link 到 `environment_work.trace_parent` | `claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、`filestore`、`mark_running`、`code_session`、`manager_start`、`publish_runtime` |
 | `queue`，brain 模式 | 同上 | `claim`、`prepare`、`code_session`、`mark_running`、[`sandbox_prewarm`]、`publish_runtime`、`brain_dispatch` |
 | `stale_recovery` | 根 span，link 到 Work 上保存的旧 `trace_parent` | 同 brain 模式；不记录 `oma.runner.queue_wait`，span 带 `oma.runner.trigger=stale_recovery`，同时输出恢复 Warn 日志 |
-| `lazy_mcp`、`prewarm` | 当前 span 的子 span（MCP 网关或 `sandbox_prewarm` 阶段） | `prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`manager_start`、`sandbox_mcp_ready` |
+| `lazy_mcp`、`prewarm` | 当前 span 的子 span（MCP 网关或 `sandbox_prewarm` 阶段） | `prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、`filestore`、`mark_running`、`manager_start`、`sandbox_mcp_ready` |
 
 `queue_wait` 只对 `queue` 有意义：恢复领取的 Work 保留最初的 `queued_at`，直接计算会得到数小时的假值。
 预热在外层 run 的 `sandbox_prewarm` 阶段内产生一个 `prewarm` 子 run，两者按 `oma.runner.trigger`

@@ -6,7 +6,7 @@
 
 ## 入口与模块
 
-正式入口继续使用工作区的 `agent-quickstart` 路由。默认显示对话构建，`?mode=api` 显示原有字段表单。两个模式分别维护草稿和历史。API 模式保留原有创建、请求预览与 Session 试跑逻辑。
+正式入口继续使用工作区的 `agent-quickstart` 路由。默认显示对话构建，`?mode=api` 显示原有字段表单。两个模式分别维护草稿和历史。API 模式保留原有创建、请求预览与 Session 试跑逻辑。两个模式的起始页共用视口高度响应式间距：在 1024×768 至 1920×1080 的桌面窗口内完整展示输入区、六个模板和开始操作，不出现内容滚动条；更矮的窗口仍由滚动容器兜底。
 
 实现位于 `web/src/features/managed-agents/quickstart/builder/`：
 
@@ -85,9 +85,9 @@ Agent metadata 的 `quickstart_environment_packages` 保存依赖需求 JSON；�
 
 授权复用 `CredentialDialog` 的真实 OAuth 与手动凭据能力。令牌和 OAuth 凭据停留在该弹窗与既有 API 请求中，不写入 Builder 快照或工具结果。OAuth 完成后重新读取凭据验证覆盖。明确跳过记录未授权事实并允许有限试跑；用户后续要求重新授权时可以重新打开该服务的授权步骤。
 
-Builder 同时加载工作区和组织供应商，与 `/v1/models` 的范围一致。先匹配完整供应商/模型引用，再匹配裸模型 ID；每一阶段均工作区优先、组织回退。同一范围内裸 ID 歧义时拒绝解析，不降级到组织。保留供应商 ID 引用兼容。Chat 无参工具的缺省、空串或纯空白 arguments 解析为空对象；非空非法 JSON 仍拒绝执行。
+Builder 只加载当前组织的供应商目录，与 `/v1/models` 的范围一致。先匹配完整供应商/模型引用，再匹配裸模型 ID；裸 ID 必须在整个组织内唯一，歧义时拒绝解析。保留供应商 ID 引用兼容。Chat 无参工具的缺省、空串或纯空白 arguments 解析为空对象；非空非法 JSON 仍拒绝执行。
 
-Builder 模型通过工作区配置解析实际 Provider。Messages 使用已有 Console proxy；Chat Completions 使用新增的组织 Console proxy 路径。Chat Completions 流请求显式发送 `stream_options: { include_usage: true }`，请求供应商返回用量；Messages 请求保持原协议。二者均由服务端注入供应商密钥并移除浏览器凭据。未修改 `/v1/chat/completions` 的 Brain 凭据授权边界。
+Builder 模型通过组织目录解析实际 Provider，资源与会话仍按当前工作区鉴权。Messages 使用已有 Console proxy；Chat Completions 使用新增的组织 Console proxy 路径。Chat Completions 流请求显式发送 `stream_options: { include_usage: true }`，请求供应商返回用量；Messages 请求保持原协议。二者均由服务端注入供应商密钥并移除浏览器凭据。未修改 `/v1/chat/completions` 的 Brain 凭据授权边界。
 
 Console POST 流请求携带 CSRF，资源请求继续使用现有 SDK client 与服务端工作区权限。界面暂停和确认不替代服务端 RBAC。
 

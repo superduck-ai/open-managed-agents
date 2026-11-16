@@ -114,7 +114,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		h.database,
 		h.secrets,
 		principal.OrganizationUUID,
-		principal.WorkspaceUUID,
 		modelID,
 	)
 	if err != nil {

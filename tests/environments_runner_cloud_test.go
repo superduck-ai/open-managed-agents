@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"slices"
@@ -1383,6 +1384,14 @@ func (p *recordingRunnerProvider) SetTimeout(context.Context, string, time.Durat
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
 	p.kills = append(p.kills, sandboxID)
 	return nil
+}
+
+func (p *recordingRunnerProvider) WriteFileFrom(ctx context.Context, sandboxID, path string, reader io.Reader) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return p.WriteFile(ctx, sandboxID, path, data)
 }
 
 func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID, path string, data []byte) error {

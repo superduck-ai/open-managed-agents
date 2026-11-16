@@ -14,18 +14,28 @@ func TestSandboxLifecycleMapperClaimBindsScopeAndIdleCutoff(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: sandboxLifecycleMapperClaimStatement, bound: bound,
 		wantID: "SandboxLifecycleMapper.Claim", wantKind: yourbatis.StatementUpdate,
-		wantArgumentNames: []string{"codeSessionUUID", "cutoff", "sandboxUUID"},
+		wantArgumentNames: []string{"codeSessionUUID", "cutoff", "cutoff", "sandboxUUID"},
 		wantSQLFragments: []string{"current_worker_epoch = current_worker_epoch + 1",
-			"worker_status = 'idle'", "idle_since <= $2", "sandbox.uuid = $3", "s.organization_uuid = cs.organization_uuid",
+			"worker_status = 'idle'", "idle_since <= $2", "cs.port_last_access_at IS NULL OR cs.port_last_access_at <= $3", "sandbox.uuid = $4", "s.organization_uuid = cs.organization_uuid",
 			"env.config->>'type' = 'cloud'"},
 	})
 	values := make([]any, len(bound.Args))
 	for i, arg := range bound.Args {
 		values[i] = arg.Value
 	}
-	if !reflect.DeepEqual(values, []any{"code-session-uuid", cutoff, "sandbox-uuid"}) {
+	if !reflect.DeepEqual(values, []any{"code-session-uuid", cutoff, cutoff, "sandbox-uuid"}) {
 		t.Fatalf("bound values = %#v", values)
 	}
+}
+
+func TestSandboxLifecycleMapperRecentPortAccessBlocksIdleCandidates(t *testing.T) {
+	bound := buildSandboxLifecycleMapperListCandidates(yourbatis.DialectPostgres, time.Now(), "", 100, true)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sandboxLifecycleMapperListCandidatesStatement, bound: bound,
+		wantID: "SandboxLifecycleMapper.ListCandidates", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"cutoff", "cutoff", "limit"},
+		wantSQLFragments:  []string{"cs.idle_since <= $1", "cs.port_last_access_at IS NULL OR cs.port_last_access_at <= $2", "LIMIT $3"},
+	})
 }
 
 func TestSandboxLifecycleMapperDeletionTargetsImmutableTenantSandbox(t *testing.T) {
@@ -50,6 +60,16 @@ func TestSandboxLifecycleMapperDisabledSweepStillRepairsCommittedDeletion(t *tes
 	if containsMapperSQL(bound.SQL, "cs.idle_since") {
 		t.Fatal("disabled sweep still selects new idle candidates")
 	}
+}
+
+func TestSandboxLifecycleMapperIdleSweepUsesWorkTenantScope(t *testing.T) {
+	bound := buildSandboxLifecycleMapperListCandidates(yourbatis.DialectPostgres, time.Now(), "sandbox-cursor", 100, true)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sandboxLifecycleMapperListCandidatesStatement, bound: bound,
+		wantID: "SandboxLifecycleMapper.ListCandidates", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"after", "cutoff", "cutoff", "limit"},
+		wantSQLFragments:  []string{"sandbox.uuid > $1", "cs.idle_since <= $2", "tc.organization_uuid = work.organization_uuid", "tc.workspace_uuid = work.workspace_uuid", "tc.code_session_uuid = cs.uuid", "cs.port_last_access_at IS NULL OR cs.port_last_access_at <= $3", "LIMIT $4"},
+	})
 }
 
 func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *testing.T) {

@@ -6,6 +6,7 @@ import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
   RetryableInputError,
+  UnknownSandboxOutcomeError,
   ToolNotForwardedError,
   isShutdownCancel,
   type ApprovalDecision,
@@ -49,18 +50,20 @@ export class ToolExecution {
     let result: Payload;
     try {
       result = await this.bridge.runTool(exec.callId, async () => decision.externalResult
-        ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal, this.threadId)), readOnly);
+        ?? await this.sandbox.call(tool, effective, exec.signal, this.threadId, exec.callId), readOnly);
+      if (result.errorCode === "TOOL_OUTCOME_UNKNOWN") throw new UnknownSandboxOutcomeError(toolText(result));
     } catch (error) {
+      if (error instanceof UnknownSandboxOutcomeError) throw error;
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
       const shutdownInterrupted = exec.signal.aborted && isShutdownCancel(exec.signal.reason);
+ if (shutdownInterrupted) throw error;
       if (readOnly && !userInterrupted || error instanceof ToolNotForwardedError) {
         const failure = error instanceof ToolNotForwardedError ? error.message
           : exec.signal.aborted ? "Read-only tool call was cancelled" : "Read-only tool outcome is unknown";
         throw new Error(failure);
       }
-      if (userInterrupted || shutdownInterrupted) {
-        const text = userInterrupted ? "Tool call interrupted."
-          : "Tool call interrupted because the Brain worker shut down; its outcome is unknown.";
+      if (userInterrupted) {
+        const text = "Tool call interrupted.";
         result = { isError: true, content: [{ type: "text", text }] };
       } else {
         throw new Error("Remote tool outcome is unknown. Do not retry blindly; verify external state before repeating operations with side effects.");
@@ -89,12 +92,4 @@ export class ToolExecution {
     return output;
   }
 
-  private async callWithRetry(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {
-    try {
-      return await this.sandbox.call(tool, args, signal, this.threadId);
-    } catch (error) {
-      if (signal.aborted) throw error;
-      return await this.sandbox.call(tool, args, signal, this.threadId);
-    }
-  }
 }

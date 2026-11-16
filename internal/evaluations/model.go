@@ -22,7 +22,6 @@ var (
 
 type CompletionRequest struct {
 	OrganizationUUID string
-	WorkspaceUUID    string
 	Model            string
 	System           string
 	User             string
@@ -45,7 +44,7 @@ func NewRubricModel(database *db.DB, secretService *secrets.Service) *LLMRubricM
 func (m *LLMRubricModel) Complete(ctx context.Context, request CompletionRequest) (string, error) {
 	modelID := strings.TrimSpace(request.Model)
 	if modelID == "" {
-		resolved, ok, err := firstWorkspaceModel(ctx, m.database, request.OrganizationUUID, request.WorkspaceUUID)
+		resolved, ok, err := firstOrganizationModel(ctx, m.database, request.OrganizationUUID)
 		if err != nil {
 			return "", err
 		}
@@ -54,7 +53,7 @@ func (m *LLMRubricModel) Complete(ctx context.Context, request CompletionRequest
 		}
 		modelID = resolved
 	}
-	upstream, err := llmproviders.Resolve(ctx, m.database, m.secrets, request.OrganizationUUID, request.WorkspaceUUID, modelID)
+	upstream, err := llmproviders.Resolve(ctx, m.database, m.secrets, request.OrganizationUUID, modelID)
 	if err != nil {
 		if errors.Is(err, llmproviders.ErrNotConfigured) || errors.Is(err, llmproviders.ErrModelNotConfigured) {
 			return "", errModelMissing
@@ -64,8 +63,8 @@ func (m *LLMRubricModel) Complete(ctx context.Context, request CompletionRequest
 	return m.complete(ctx, upstream, request)
 }
 
-func firstWorkspaceModel(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) (string, bool, error) {
-	catalog, err := llmproviders.LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+func firstOrganizationModel(ctx context.Context, database *db.DB, organizationUUID string) (string, bool, error) {
+	catalog, err := llmproviders.LoadCatalog(ctx, database, organizationUUID)
 	if err != nil {
 		if errors.Is(err, llmproviders.ErrNotConfigured) {
 			return "", false, nil

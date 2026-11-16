@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http/httputil"
 	"net/url"
 	"os"
@@ -30,7 +31,6 @@ type chatDockerProvider struct {
 	created            atomic.Int32
 	failNext           atomic.Bool
 	failMemoryMarkdown atomic.Bool
-	publishMCP         bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -47,9 +47,6 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 		_ = p.Kill(cleanupCtx, name)
 	})
 	args := []string{"run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run=" + os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway"}
-	if p.publishMCP {
-		args = append(args, "-p", "127.0.0.1::3001")
-	}
 	args = append(args, "--entrypoint", "sleep", p.image, "infinity")
 	err := exec.CommandContext(ctx, "docker", args...).Run()
 	return e2bruntime.Sandbox{ID: name}, err
@@ -57,6 +54,14 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
+func (p *chatDockerProvider) WriteFileFrom(ctx context.Context, sandboxID, path string, reader io.Reader) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return p.WriteFile(ctx, sandboxID, path, data)
+}
+
 func (p *chatDockerProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
 	if path == "/mnt/memory/MEMORY.md" && p.failMemoryMarkdown.Swap(false) {
 		return errors.New("injected memory mount setup failure")
@@ -109,6 +114,7 @@ func TestChatPublicStart(t *testing.T) {
 	var calls atomic.Int32
 	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
+	verifyPublicManagerArtifactRejection(t, e)
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
 	provider.failNext.Store(true)
@@ -184,7 +190,7 @@ func registerPublicSandboxCleanup(t *testing.T, e *liveEnv, f *liveSession) {
 	})
 }
 
-func startPublicRunner(t *testing.T, e *liveEnv) (*chatDockerProvider, func()) {
+func startPublicRunner(t *testing.T, e *liveEnv, configure ...func(*config.Config)) (*chatDockerProvider, func()) {
 	t.Helper()
 	cfg, err := config.Load()
 	requireOK(t, err)
@@ -195,6 +201,10 @@ func startPublicRunner(t *testing.T, e *liveEnv) (*chatDockerProvider, func()) {
 	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID"), image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t}
 	cfg.EnvironmentRunner.Enabled = true
 	cfg.EnvironmentRunner.Concurrency = 2
+	configurePublicManagerArtifact(t, &cfg)
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)
 	runner, err := environments.NewRunner(environments.RunnerDependencies{DB: e.database, Provider: provider, Config: cfg, CodeSessions: e.service, Skills: skillsapi.NewRuntimeResolver(e.database), FilestoreTokens: credentials})

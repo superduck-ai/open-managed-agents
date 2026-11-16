@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { I18nProvider } from '../../shared/i18n';
 import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from '../../shared/workspaces/api';
 import { buildCreateWorkspaceInput } from '../../shared/workspaces/presentation';
@@ -108,7 +108,7 @@ describe('Workspaces settings page', () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     renderWorkspacesSettings({
-      withSettingsShell: false,
+      withConsoleShell: false,
       workspaceValue: {
         orgUuid: 'org_test',
         canManageWorkspaces: true,
@@ -202,13 +202,13 @@ describe('Workspaces settings page', () => {
 
 function renderWorkspacesSettings({
   workspaceValue,
-  withSettingsShell = true,
+  withConsoleShell = true,
 }: {
   workspaceValue: WorkspaceContextValue;
-  withSettingsShell?: boolean;
+  withConsoleShell?: boolean;
 }) {
-  const content = withSettingsShell ? (
-    <SettingsShell
+  const content = withConsoleShell ? (
+    <ConsoleShell
       currentPath="/settings/workspaces"
       account={{
         uuid: 'acct_test',
@@ -221,7 +221,7 @@ function renderWorkspacesSettings({
       onLogout={() => undefined}
     >
       <WorkspacesSettingsPage />
-    </SettingsShell>
+    </ConsoleShell>
   ) : (
     <WorkspacesSettingsPage />
   );

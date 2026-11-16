@@ -1,9 +1,8 @@
 package environments
 
-// environmentManagerCommand 保存一次 environment-manager 后台启动所需的 stdin payload 与 shell 命令。
+// environmentManagerCommand 保存一次 environment-manager 后台启动所需的 stdin payload。
 type environmentManagerCommand struct {
-	Payload      []byte
-	ShellCommand string
+	Payload []byte
 }
 
 // AuthConfig 描述 environment-manager v0 启动合同中的一项鉴权配置。

@@ -64,9 +64,13 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
     id: 'llmModels.errorInvalidConfiguration',
     defaultMessage: 'The provider configuration is invalid.',
   },
-  llm_provider_permission_denied: {
-    id: 'llmModels.errorPermissionDenied',
-    defaultMessage: 'You do not have permission to manage LLM providers.',
+  llm_provider_management_denied: {
+    id: 'llmModels.manageDenied',
+    defaultMessage: 'Only the creator or an organization administrator can manage this provider.',
+  },
+  llm_provider_creator_required: {
+    id: 'llmModels.creatorRequired',
+    defaultMessage: 'An authenticated account is required to create an LLM provider.',
   },
 };
 

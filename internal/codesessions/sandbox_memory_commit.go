@@ -1,11 +1,9 @@
 package codesessions
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -52,13 +50,13 @@ func (c *memoryToolCommit) wait(ctx context.Context) error {
 	}
 }
 
-func isMemoryToolMutation(call sandboxRPCRequest) bool {
+func isMemoryToolMutation(call sandboxToolRequest) bool {
 	name := strings.ToLower(call.Params.Name)
 	target := path.Clean(call.Params.Arguments.FilePath)
 	return call.Method == "tools/call" && (name == "write" || name == "edit") && strings.HasPrefix(target, sessionresource.MemoryMountRoot+"/")
 }
 
-func (h *Handler) prepareMemoryToolCommit(ctx context.Context, session db.CodeSession, call sandboxRPCRequest) (*memoryToolCommit, error) {
+func (h *Handler) prepareMemoryToolCallState(ctx context.Context, session db.CodeSession, call sandboxToolRequest) (*memoryToolCallState, error) {
 	if !isMemoryToolMutation(call) || session.SessionExternalID == "" {
 		return nil, nil
 	}
@@ -74,20 +72,17 @@ func (h *Handler) prepareMemoryToolCommit(ctx context.Context, session db.CodeSe
 		if !strings.HasPrefix(target, mount.MountPath+"/") {
 			continue
 		}
-		storeID, memoryPath := mount.MemoryStoreExternalID, strings.TrimPrefix(target, mount.MountPath)
-		load := func(ctx context.Context) (memoryToolVersion, error) {
-			return h.loadMemoryToolVersion(ctx, session, storeID, memoryPath)
-		}
-		before, err := load(ctx)
+		state := &memoryToolCallState{StoreID: mount.MemoryStoreExternalID, MemoryPath: strings.TrimPrefix(target, mount.MountPath), SessionID: session.SessionExternalID}
+		before, err := h.loadMemoryToolVersion(ctx, session, state.StoreID, state.MemoryPath)
 		if err != nil {
 			return nil, err
 		}
-		commit := &memoryToolCommit{BeforeID: before.ID, SessionID: session.SessionExternalID, Load: load}
+		state.BeforeID = before.ID
 		if strings.EqualFold(call.Params.Name, "write") && call.Params.Arguments.Content != nil {
 			digest := sha256.Sum256([]byte(*call.Params.Arguments.Content))
-			commit.ExpectedSHA256 = hex.EncodeToString(digest[:])
+			state.ExpectedSHA256 = hex.EncodeToString(digest[:])
 		}
-		return commit, nil
+		return state, nil
 	}
 	return nil, fmt.Errorf("Memory mutation target has no file path")
 }
@@ -106,34 +101,4 @@ func (h *Handler) loadSandboxMemoryVersion(ctx context.Context, session db.CodeS
 		result.SessionID = version.CreatedBy.SessionID
 	}
 	return result, nil
-}
-
-type sandboxToolCompletion struct {
-	ID     json.RawMessage `json:"id"`
-	Result *struct {
-		IsError    bool   `json:"isError"`
-		ResultType string `json:"resultType"`
-	} `json:"result"`
-}
-
-func (c *memoryToolCommit) confirm(ctx context.Context, call sandboxRPCRequest, payload []byte) ([]byte, error) {
-	if c == nil {
-		return payload, nil
-	}
-	var result sandboxToolCompletion
-	if json.Unmarshal(payload, &result) != nil || !bytes.Equal(bytes.TrimSpace(result.ID), bytes.TrimSpace(call.ID)) || result.Result == nil || result.Result.IsError || (result.Result.ResultType != "" && result.Result.ResultType != "complete") {
-		return payload, nil
-	}
-	if err := c.wait(ctx); err != nil {
-		failure := sandboxMemoryToolResult{JSONRPC: "2.0", ID: call.ID}
-		failure.Result.ResultType = result.Result.ResultType
-		failure.Result.IsError = true
-		failure.Result.Content = []sandboxMemoryErrorText{{Type: "text", Text: "Memory mutation was executed, but its immutable version commit could not be confirmed. Read the authoritative Memory state before retrying."}}
-		body, marshalErr := json.Marshal(failure)
-		if marshalErr != nil {
-			return nil, marshalErr
-		}
-		return body, err
-	}
-	return payload, nil
 }

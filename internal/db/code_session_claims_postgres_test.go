@@ -185,11 +185,21 @@ func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	}
 	var requested sql.NullTime
 	var attempts int
+	if err := database.QueryRowContext(ctx, `select worker_claim_attempts from code_sessions where external_id = $1`, codeSessionID).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts == 0 {
+		t.Fatal("event stream connect before the worker reported state reset claim attempts")
+	}
+	idle := "idle"
+	if _, err := store.UpdateCodeSessionWorkerState(ctx, codeSessionID, UpdateCodeSessionWorkerStateInput{WorkerEpoch: third.WorkerEpoch, WorkerStatus: &idle}); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.QueryRowContext(ctx, `select worker_claim_requested_at, worker_claim_attempts from code_sessions where external_id = $1`, codeSessionID).Scan(&requested, &attempts); err != nil {
 		t.Fatal(err)
 	}
 	if requested.Valid || attempts != 0 {
-		t.Fatalf("after register and connect: requested=%v attempts=%d", requested, attempts)
+		t.Fatalf("after register and worker state: requested=%v attempts=%d", requested, attempts)
 	}
 
 	execClaimTest(t, ctx, database, `update code_sessions set worker_lease_expires_at = now() - interval '5 seconds' where external_id = $1`, codeSessionID)

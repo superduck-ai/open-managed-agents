@@ -61,7 +61,7 @@ export async function consoleApi<T>(path: string, options: RequestOptions = {}):
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
 
-  if (options.body && !headers.has('Content-Type')) {
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   applyConsoleRequestContext(headers, options.context);
@@ -226,6 +226,9 @@ async function toApiError(response: Response): Promise<ApiError> {
     }
     if (typeof payload.code === 'string') {
       code = payload.code;
+    }
+    if (typeof payload.error_code === 'string') {
+      code = payload.error_code;
     }
     if (typeof payload.message === 'string') {
       message = payload.message;

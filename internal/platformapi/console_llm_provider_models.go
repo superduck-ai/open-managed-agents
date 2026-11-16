@@ -34,9 +34,9 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 	}
 }
 
-func previewConsoleOrganizationLLMProviderModels(client *http.Client) http.HandlerFunc {
+func previewConsoleOrganizationLLMProviderModels(database *db.DB, client *http.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := visibleOrgUUID(w, r); !ok {
+		if _, _, ok := llmProviderScope(w, r, database); !ok {
 			return
 		}
 		previewProviderModels(w, r, client)
@@ -81,14 +81,13 @@ func previewProviderModels(w http.ResponseWriter, r *http.Request, client *http.
 
 func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, scope, ok := llmProviderScope(w, r, database)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
 		provider, err := database.GetLLMProvider(
 			r.Context(),
 			orgUUID,
-			scope.UUID,
 			strings.TrimSpace(chi.URLParam(r, "providerId")),
 		)
 		if errors.Is(err, db.ErrNotFound) {
@@ -99,11 +98,14 @@ func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Servic
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
+		syncProviderFromUpstream(w, r, database, secretService, client, provider, actor, persist)
 	}
 }
 
-func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *db.DB, secretService *secrets.Service, client *http.Client, provider db.LLMProvider, persist bool) {
+func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *db.DB, secretService *secrets.Service, client *http.Client, provider db.LLMProvider, actor consoleLLMProviderActor, persist bool) {
+	if !authorizeLLMProviderManagement(w, actor, provider) {
+		return
+	}
 	if secretService == nil || provider.SecretEnvelope == nil {
 		internalError(w, "LLM provider encryption is unavailable")
 		return
@@ -129,7 +131,7 @@ func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *
 	}
 	modelIDs := llmproviders.MergeModelIDs(provider.Models.IDs(), liveIDs, maxLLMProviderModels)
 	if slices.Equal(provider.Models.IDs(), modelIDs) {
-		writeJSON(w, http.StatusOK, formatLLMProvider(provider))
+		writeJSON(w, http.StatusOK, formatLLMProvider(provider, actor))
 		return
 	}
 	provider.Models = provider.Models.WithIDs(modelIDs)
@@ -139,7 +141,7 @@ func syncProviderFromUpstream(w http.ResponseWriter, r *http.Request, database *
 		internalError(w, "failed to update LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, formatLLMProvider(updated))
+	writeJSON(w, http.StatusOK, formatLLMProvider(updated, actor))
 }
 
 func formatPreviewModels(ids []string) previewLLMProviderModelsResponse {

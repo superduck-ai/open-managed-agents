@@ -1,8 +1,6 @@
 import { productIcons } from '@/shared/icons/product-icons';
 
-import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { Button } from '../../shared/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -13,10 +11,9 @@ type LLMProviderRequiredProps = {
 };
 
 export function LLMProviderRequired({ compact = false, onConfigure }: LLMProviderRequiredProps) {
-  const { account } = useAuth();
   const { msg } = useI18n();
   const { orgUuid } = useWorkspace();
-  const canConfigureModels = canManageLLMProviders(account, orgUuid);
+  const canConfigureModels = Boolean(orgUuid);
 
   return (
     <Empty

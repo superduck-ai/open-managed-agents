@@ -1,0 +1,10 @@
+{
+  "commands": [
+    "soffice",
+    "pdftoppm"
+  ],
+  "modules": [
+    "openpyxl"
+  ],
+  "scope": "XLSX 编辑、公式重算与预览"
+}

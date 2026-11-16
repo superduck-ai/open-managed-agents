@@ -163,7 +163,7 @@ Files 性能基线的对象检查只读取已有 File 行，通过带 workspace 
 
 Chat 与 Files 性能基线的认证夹具通过同一 Go `-overlay` 使用基线构建生成的 API Key Mapper 查询和扫描实现，避免当前新增的 `runtime_user_uuid` 列进入旧 schema。认证夹具只解析测试凭据范围，所有计时请求仍由未修改的基线后端处理，不向基线数据库应用候选迁移；查询和扫描必须一并替换，候选或基线缺少任一指定函数都拒绝生成 overlay，不能保留半套候选实现，也不能仅删去 SELECT 列。overlay 实现计入两套 workload 摘要，不放宽负载或性能阈值。
 
-Chat 性能基线的测试夹具仍使用当前 workload，但通过 Go `-overlay` 将测试进程内的 Code Session、Session、Session Thread 和 Session Resource File 生成 Mapper 替换为基线构建生成的 SQL 实现。它们只用于准备、激活和清理夹具，避免候选分支的统计函数或列进入旧数据库。隔离 Worker 的 Provider 夹具显式设置 `default` slug，复用当前 LLM Provider Mapper；工作区 Provider SQL 与当前基线一致，要求基线包含迁移 90 的 slug schema。组织 Provider 方法不参与基线夹具，不覆盖该 Mapper，以免旧生成实现无法满足当前新增的组织接口。基线后端二进制在 overlay 之前按原提交独立构建，所有计时请求仍经过真实后端 HTTP；候选运行与其他非性能场景不使用 overlay。缺少基线 Mapper 或接口不兼容会直接失败，不能回退到候选 SQL。overlay 实现计入 Chat workload 摘要，旧摘要的 baseline 不可用于新负载。
+Chat 性能基线的测试夹具仍使用当前 workload，但通过 Go `-overlay` 将测试进程内的 Code Session、Session、Session Thread 和 Session Resource File 生成 Mapper 替换为基线构建生成的 SQL 实现。它们只用于准备、激活和清理夹具，避免候选分支的统计函数或列进入旧数据库。隔离 Worker 的 Provider 夹具显式设置 `default` slug，通过目标后端的公开 Console API 查询、创建、更新和清理，不直接复用候选分支的 Provider Mapper 访问基线数据库。当前后端的工作区兼容路径返回组织目录，因此夹具要求隔离组织的 Provider 目录为空，且只清理本次创建的连接。Provider Mapper 不进入 overlay；基线仍需支持夹具使用的公开 Provider API 与 slug 合同。基线后端二进制在 overlay 之前按原提交独立构建，所有计时请求仍经过真实后端 HTTP；候选运行与其他非性能场景不使用 overlay。缺少基线 Mapper 或接口不兼容会直接失败，不能回退到候选 SQL。overlay 实现计入 Chat workload 摘要，旧摘要的 baseline 不可用于新负载。
 
 ```mermaid
 flowchart LR
@@ -182,3 +182,5 @@ flowchart LR
 `chat brain-images` 使用显式的 `VERIFY_BE_VISION_PROVIDERS` 私有配置路径与 `VERIFY_BE_VISION_MODEL`，doctor 校验配置和唯一模型归属。其他场景仍清除继承的模型环境，不改变其脚本上游。凭据只在本次隔离 workspace 中保存，报告只记录模型 ID 与 backend，不记录 API key。
 
 该场景验证随机颜色消息图片、真实 Worker/FUSE Read 第二张不同图片，以及原生引用与 MinIO 字节完整性。三个 proof 为 message_image_seen、read_image_seen、native_images_persisted。使用真实模型的次数与耗时不构成质量、价格或性能基准；源代码指纹和清理要求不变。
+
+`chat brain-tools` 使用显式 `VERIFY_BE_MODEL_PROVIDERS` 与 `VERIFY_BE_MODEL`，由真实文本模型、DSH、Linux ARM64 Manager、生产 Runner 和 FUSE 执行六个内置工具。doctor 校验私有配置和唯一模型归属。公开工具事件、容器文件字节和 PostgreSQL 调用终态必须同时匹配；随后在同一真实 Manager 上检查幂等提交、对象结果、用户取消和 deadline 的进程退出与部分输出；报告不把此场景标为脚本模型。详见 [Brain 验证](../../../.agents/skills/verify-be/features/brain.md#真实模型的六个内置工具)。

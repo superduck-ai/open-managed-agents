@@ -1,4 +1,3 @@
-import { AgentChannels } from '../channels/AgentChannels';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
@@ -396,22 +395,8 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
           >
             {msg('managedAgents.observability.title', 'Observability')}
           </TabsTrigger>
-          <TabsTrigger
-            value="channels"
-            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
-          >
-            {msg('managedAgents.channels.title', 'Channels')}
-          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="channels" className="mt-0">
-          <AgentChannels
-            key={`${workspaceId}:${agent.id}`}
-            agentId={agent.id}
-            workspaceId={workspaceId}
-            canEdit={canEdit}
-          />
-        </TabsContent>
         <TabsContent value="config" className="mt-0">
           {detailTab === 'config' ? (
             configLoadError ? (
@@ -728,15 +713,22 @@ function AgentSkillsList({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="truncate text-sm font-semibold text-foreground">{skill.displayTitle}</span>
-                        <span className="hidden text-xs text-muted-foreground sm:inline">
-                          (<code className="truncate font-mono">{skill.idLabel}</code>)
-                        </span>
+                        {skill.displayTitle !== skill.idLabel ? (
+                          <span className="hidden text-xs text-muted-foreground sm:inline">
+                            (<code className="truncate font-mono">{skill.idLabel}</code>)
+                          </span>
+                        ) : null}
                         <Badge
                           variant="secondary"
                           className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal text-muted-foreground bg-secondary/80"
                         >
                           {formatAgentSkillSource(skill.source, msg)}
                         </Badge>
+                        {skill.metadataUnavailable ? (
+                          <Badge variant="destructive" className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal">
+                            {msg('managedAgents.agents.detail.skillUnavailableBadge', 'Unavailable')}
+                          </Badge>
+                        ) : null}
                       </div>
                       <SkillVersionBadges requestedVersion={skill.requestedVersion} msg={msg} />
                     </div>

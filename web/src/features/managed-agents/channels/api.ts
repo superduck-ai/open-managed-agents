@@ -1,3 +1,6 @@
+import type { gitResourceBody } from '../resources/git-resource';
+
+export type ChannelGitRepository = ReturnType<typeof gitResourceBody> & { tokenConfigured?: boolean };
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 
 export interface Channel {
@@ -8,11 +11,15 @@ export interface Channel {
   enabled: boolean;
   connected: boolean;
   binding_status: 'bound' | 'unbound';
+  memory_store_id?: string | null;
+  vault_id?: string | null;
+  git_repository?: ChannelGitRepository | null;
   app_id?: string;
   include_thinking: boolean;
   include_tool_calls: boolean;
   reply_in_thread: boolean;
   pending_pairings: number;
+  created_at?: string;
 }
 export interface ChannelInput {
   name: string;
@@ -20,6 +27,9 @@ export interface ChannelInput {
   include_thinking: boolean;
   include_tool_calls: boolean;
   reply_in_thread: boolean;
+  memory_store_id?: string | null;
+  vault_id?: string | null;
+  git_repository?: ChannelGitRepository | null;
   app_id?: string;
   app_secret?: string;
 }
@@ -31,8 +41,9 @@ export interface Pairing {
   status: 'pending' | 'approved' | 'rejected';
 }
 export interface ChannelQr {
-  status: 'pending' | 'bound' | 'expired' | 'error';
+  status: 'pending' | 'bound' | 'expired' | 'error' | 'unknown';
   url: string;
   expires_at: string;
 }
+export type ChannelAuthorization = ChannelQr & { id: string; app_id?: string };
 export const channelApi = anthropicBetaApi.agents.channels;

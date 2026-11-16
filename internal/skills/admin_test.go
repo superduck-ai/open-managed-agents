@@ -14,19 +14,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestSystemSkillVersionValidation(t *testing.T) {
-	for _, value := range []string{"", "latest", "..", "../other", ".hidden", "a/b", "中文", strings.Repeat("a", 65)} {
-		if validSystemVersion(value, false) {
-			t.Errorf("accepted invalid version %q", value)
-		}
-	}
-	for _, value := range []string{"1", "1.2.0", "20261101", "v2-beta_1"} {
-		if !validSystemVersion(value, false) {
-			t.Errorf("rejected version %q", value)
-		}
-	}
-}
-
 func TestSystemSkillArchiveRejectsSymlinksAndTraversal(t *testing.T) {
 	for _, entry := range []string{"demo/link", "../SKILL.md"} {
 		var buffer bytes.Buffer
@@ -59,7 +46,6 @@ func TestSystemSkillErrorsPreservePublicBoundary(t *testing.T) {
 	}{
 		{errSystemSkillDenied, 403, "platform_access_denied"},
 		{db.ErrNotFound, 404, "not_found"},
-		{db.ErrSystemSkillRevision, 409, "revision_conflict"},
 		{db.ErrVersionConflict, 409, "version_conflict"},
 		{db.ErrInvalidState, 409, "state_conflict"},
 		{db.ErrSystemSkillNameMismatch, 400, "skill_name_mismatch"},

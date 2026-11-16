@@ -71,7 +71,7 @@ func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
 			prompt += "\nAgent 系统提示词：" + *agent.System
 		}
 	}
-	text, err := h.complete(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, "", caseGenerationSystemPrompt, prompt)
+	text, err := h.complete(r.Context(), principal.OrganizationUUID, "", caseGenerationSystemPrompt, prompt)
 	if err != nil {
 		return err
 	}
@@ -223,12 +223,12 @@ func nextSessionEventCursor(page int, hasMore bool, lastID string) (*db.SessionE
 	return &db.SessionEventPageCursor{ExternalID: lastID}, nil
 }
 
-func (h *Handler) complete(ctx context.Context, organizationUUID, workspaceUUID, modelID, system, user string) (string, error) {
+func (h *Handler) complete(ctx context.Context, organizationUUID, modelID, system, user string) (string, error) {
 	if h.model == nil {
 		return "", unavailable(modelMissingMessage, errModelMissing)
 	}
 	text, err := h.model.Complete(ctx, CompletionRequest{
-		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, Model: modelID, System: system, User: user,
+		OrganizationUUID: organizationUUID, Model: modelID, System: system, User: user,
 	})
 	if err != nil {
 		if err == errModelMissing {

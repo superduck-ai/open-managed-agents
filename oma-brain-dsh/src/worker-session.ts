@@ -8,8 +8,15 @@ export async function openWorkerSession(
   retire: (session: CcrSession) => Promise<void>,
   stage: (stage: TaskAdmissionStage) => void,
 ): Promise<void> {
+  let inbound: Promise<void> | undefined;
+  const startInbound = () => {
+    if (inbound) return;
+    inbound = consumeInbound(client, session).finally(() => retire(session));
+    watch(inbound);
+  };
+  session.onRecoveryBlocked(startInbound);
   stage("open_session");
   await session.open();
   stage("start_inbound");
-  watch(consumeInbound(client, session).finally(() => retire(session)));
+  startInbound();
 }

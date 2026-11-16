@@ -7,7 +7,9 @@ Skills 资源现在分成两类：
 - `source: "anthropic"`：全局只读 builtin skill，由管理员导入到数据库 catalog，并把 `.skill` archive 存在对象存储。
 - `source: "custom"`：workspace 自定义 skill，继续使用现有 `skills` / `skill_versions` 表和对象存储。
 
-临时 `assets/skills/public` 只作为管理员 seed 工具的输入目录，不是服务运行时依赖，也不进入 git。
+项目公共技能维护在仓库根目录 `skills/`，包括源码、`catalog.json`、嵌入入口和上游来源说明。服务启动时在数据库迁移与对象存储就绪后通过 `skills.SyncBundledSkills` 自动加载，默认提供 `xlsx`、`pptx`、`pdf` 和 `docx` 四个技能。源码随程序嵌入，运行时不依赖本地源码目录或独立离线 seed CLI。清单移除技能不自动删除已有数据库记录或历史版本；需要停止目录展示时由超管下架。
+
+项目预置记录使用 `builtin_skills.bundled=true`，`bundled_version` 保存项目当前底本版本；超管可在管理后台上传覆盖、换图标、切换默认版本和上下架，技能本身不可删除。初次注册上架，重启保留图标、上下架与上传覆盖，相同包不增加版本。项目更新时推进底本；当前使用底本的技能同步切换，上传覆盖继续生效。恢复预置时切回最新底本，保留历史版本和对象。手动上传的系统技能可由超管软删除，删除不回收历史包；权限与修订边界见 [系统 Skill 管理](system-skills-administration.md)。
 
 ## 数据模型
 
@@ -40,52 +42,23 @@ Skills 资源现在分成两类：
 
 ```mermaid
 flowchart LR
-  A["Admin assets dir"] --> B["cmd/seed-builtin-skills"]
-  B --> C["Validate .skill archive"]
+  A["Embedded skills/ catalog"] --> B["SyncBundledSkills / Admin Import"]
+  B --> C["Validate archive"]
   C --> D["Upload archive to S3-compatible storage"]
   C --> E["Parse SKILL.md metadata"]
   D --> F["builtin_skill_versions"]
   E --> F
   F --> G["builtin_skills.latest_version"]
-  G --> H["/v1/skills source=anthropic"]
+  G --> H["/v1/skills & Console catalog"]
 ```
 
-## Seed 工具
+## 内置技能同步
 
-命令：
+已移除独立的 `cmd/seed-builtin-skills` 离线工具与 `SeedBuiltinSkills` 双链路，项目预置技能与后台上传统一维护 `builtin_skills` / `builtin_skill_versions` 表：
 
-```bash
-go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions /path/to/versions.txt
-```
-
-参数：
-
-- `--dir` 必填，只扫描目录下的 `*.skill` archive。
-- `--versions` 可选，支持 JSON object 或 `skill_id=version` 行格式。生产导入推荐显式指定平台版本号。
-- `--prune` 可选，软删除本次目录中缺失的 builtin skill/version；默认只 upsert，不删除旧项。
-
-CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `database.auto_migrate` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
-
-Archive 校验规则：
-
-- 单个 archive 解包后必须只有一个顶层目录。
-- 顶层目录必须包含 `SKILL.md`。
-- 路径必须是安全相对路径，禁止绝对路径、空路径、`..` 和 NUL。
-- 忽略 `__MACOSX`、`.DS_Store`、`._*` 这类系统文件。
-- 总大小限制为 8 MiB。
-
-对象存储 key：
-
-```text
-builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
-```
-
-幂等规则：
-
-- 缺省版本号由 archive 内容 sha 派生；生产导入推荐通过 `--versions` 显式指定平台版本号。
-- 同一个 `skill_id + version + sha256` 重跑只刷新 catalog，不产生语义变化，并保留已存在 active version 的 `created_at`，避免版本排序被幂等重跑改变。
-- 同一个 `skill_id + version` 但内容 sha 不同会返回冲突错误，管理员需要换新版本号。
-- `--prune` 只软删除 DB row，不立即删除对应对象。已启动 Session 可能仍通过具体 version UUID 的 Filestore skill 投影借用该 archive；物理删除必须由后续 reference-aware catalog GC 在确认无活动投影后执行。
+- 启动时通过 `SyncBundledSkills` 扫描嵌入目录 `catalog.json`，打包为 `bundled-{sha[:32]}` 版本并上传至对象存储 `builtin-skills/bundled/{skill_id}/{sha256}.zip`；
+- 已存在且被管理员上传覆盖（`latest_version != bundled_version`）的预置技能保留覆盖版本与管理员选择的图标/上下架状态；
+- 已移除离线 `--prune` 入口，历史已使用过的版本包仍保留在对象存储中供运行中会话快照读取。
 
 ## API 行为
 
@@ -129,7 +102,7 @@ Skill。版本删除和新增沿用 Skill 行锁，最后版本保护和删除�
 回滚该迁移要求先处理正式版产生的重名数据，不能静默删除或重命名已有 Skill。
 
 旧版删除完全部版本后，正式 retrieve 返回 400，正式列表不包含该 Skill；可继续上传新版本或直接
-删除 Skill。分页游标带契约标记，不允许跨新旧契约使用。软删除不立即删除 archive，以保证已经
+删除 Skill。分页游标带契约标记，不允许跨新旧契约使用。删除自定义 Skill 时，事务内先检查当前工作区未删除且未归档 Agent 的最新版本（含自身 `skills`，以及 coordinator 的 `agents` 和 CMA 已启用的 `subagents/workflows.predefined_agents` 固定引用的子 Agent 版本中的技能）是否引用该 Skill；若存在活跃引用则返回 `409 Conflict` 阻止删除，未被当前活跃 Agent 引用的历史版本或已归档 Agent 不拦截。拦截提示列出受影响 Agent 的名称与 ID；用户需从这些 Agent 移除技能，或移除子 Agent 引用、切换到不使用该技能的子 Agent 版本后再删除。软删除不立即删除 archive，以保证已经
 启动的 Session 仍能读取钉住版本。
 
 契约来源：[官方迁移说明](https://platform.claude.com/docs/en/build-with-claude/skills-guide#migrate-from-skills-2025-10-02)。
@@ -158,4 +131,4 @@ Builtin 写操作保持只读：
 
 ## 超管管理入口
 
-系统技能的在线导入、版本发布、默认切换与上下架见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于运维导入，不由页面自动触发。
+系统技能的在线导入、版本发布、默认切换与上下架见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于额外的运维导入，不由页面自动触发；项目预置技能由服务启动流程加载。

@@ -10,6 +10,7 @@
         workspace_uuid,
         created_by_api_key_uuid,
         display_title,
+        icon_key,
         latest_version,
         source,
         created_at,
@@ -33,6 +34,7 @@
             workspace_uuid,
             created_by_api_key_uuid,
             display_title,
+        icon_key,
             latest_version,
             source,
             created_at,
@@ -43,6 +45,7 @@
             #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID},
             #{params.DisplayTitle},
+            COALESCE(NULLIF(#{params.IconKey}, ''), 'blocks'),
             #{params.LatestVersion},
             'custom',
             #{params.CreatedAt},
@@ -71,6 +74,46 @@
         FOR UPDATE
     </select>
 
+    <select id="ListReferencingActiveAgents" resultType="skillReferencingAgentRow">
+        SELECT external_id, name
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        AND (
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(skills) AS s
+                WHERE s->>'type' = 'custom'
+                AND s->>'skill_id' = #{externalID}
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(
+                    CASE multiagent->>'type'
+                        WHEN 'coordinator' THEN multiagent->'agents'
+                        WHEN 'multiagent_20261001' THEN
+                            CASE WHEN multiagent->'subagents'->>'type' = 'enabled'
+                                THEN COALESCE(multiagent->'subagents'->'predefined_agents', '[]')
+                                ELSE '[]' END
+                            || CASE WHEN multiagent->'workflows'->>'type' = 'enabled'
+                                THEN COALESCE(multiagent->'workflows'->'predefined_agents', '[]')
+                                ELSE '[]' END
+                        ELSE '[]'
+                    END
+                ) AS ref
+                JOIN agent_versions av
+                    ON av.workspace_uuid = agents.workspace_uuid
+                    AND av.agent_external_id = ref->>'id'
+                    AND av.version = CAST(ref->>'version' AS integer)
+                CROSS JOIN LATERAL jsonb_array_elements(av.skills) AS s
+                WHERE s->>'type' = 'custom'
+                AND s->>'skill_id' = #{externalID}
+            )
+        )
+        ORDER BY updated_at DESC, uuid DESC
+    </select>
+
     <select id="ListPage" resultType="skillRow">
         SELECT
         <include refid="columns"/>
@@ -93,6 +136,7 @@
     <update id="UpdateLatestVersionByExternalID" result="returning" resultType="skillRow">
         UPDATE skills
         SET latest_version = #{params.LatestVersion},
+            icon_key = COALESCE(#{params.IconKey}, icon_key),
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -118,5 +162,11 @@
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND uuid = #{skillUUID}
+    </update>
+    <update id="UpdateIcon" result="returning" resultType="skillRow">
+        UPDATE skills SET icon_key = #{iconKey}, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+        AND source = 'custom' AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>
     </update>
 </mapper>

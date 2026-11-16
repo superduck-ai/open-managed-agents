@@ -83,12 +83,7 @@ function CreateAgentEditorLoading({
     <CreateAgentPageLayout workspaceId={workspaceId} busy={error ? undefined : true}>
       {noModels ? (
         <>
-          <LLMProviderRequired
-            compact
-            onConfigure={() =>
-              window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
-            }
-          />
+          <LLMProviderRequired compact onConfigure={() => window.location.assign('/settings/llm')} />
           <div className="flex justify-end">
             <Button type="button" variant="outline" onClick={onClose}>
               {msg('common.cancel', 'Cancel')}

@@ -23,6 +23,7 @@ _Create your first agent from a template in the console._
 - Execute commands and file operations in isolated sandboxes through an E2B-compatible interface, including e2b-local for local development.
 - Run the Brain separately from the sandbox. Persist conversation and execution state so replacement workers can resume sessions.
 - Mount uploads, Skills, memory, and outputs through Filestore and FUSE, with session-specific paths and permissions.
+- Load the [bundled office and presentation Skills](./skills/README.md) at startup; administrators can upload overrides or change listing status, and restore the bundled version without removing the Skill. Other uploaded system Skills can be deleted.
 - Keep upstream credentials behind platform proxies, handle tool approvals, and connect private MCP services through outbound tunnels.
 - Inspect sessions, tool calls, latency, and usage in the React console.
 
@@ -72,7 +73,7 @@ curl --fail http://localhost:38080/v1/models \
   -H 'X-Api-Key: sk-ant-local-default'
 ```
 
-Open the [console](http://localhost:28080). Before the first model call, configure a provider and its model IDs on the workspace's **LLM Models** page. Use an API key from that same workspace; `sk-ant-local-default` belongs to the default seeded development workspace. The model list can be empty until a provider is configured.
+Open the [console](http://localhost:28080). Before the first model call, configure a provider and its model IDs on the organization's **LLM Models** page at `/settings/llm`. All workspaces in the organization share this catalog. Use an API key from the workspace making the request; `sk-ant-local-default` belongs to the default seeded development workspace. The model list can be empty until a provider is configured.
 
 To create an agent, replace `provider-slug/model-id` with an ID returned by `/v1/models`:
 
@@ -93,7 +94,7 @@ For startup diagnostics, use `docker compose ps` and `docker compose logs --tail
 
 Point an Anthropic SDK at OMA and use your workspace API key. These examples create an agent; execution uses Sessions and their Events API. Install an SDK version that includes the Managed Agents beta resources.
 
-Set a model ID from your workspace:
+Set a model ID from your organization's catalog:
 
 ```bash
 export OMA_MODEL_ID="provider-slug/model-id"
@@ -171,7 +172,7 @@ For individual service restarts, use `just restart-server`, `just restart-brain`
 
 | Resource      | Endpoint                                    | Purpose                            |
 | ------------- | ------------------------------------------- | ---------------------------------- |
-| Models        | `GET /v1/models`                            | List configured workspace models   |
+| Models        | `GET /v1/models`                            | List configured organization models   |
 | Agents        | `/v1/agents`, `POST /v1/agents:search`      | Define and find agents             |
 | Sessions      | `/v1/sessions`                              | Run tasks and exchange events      |
 | Environments  | `/v1/environments`                          | Configure execution environments   |

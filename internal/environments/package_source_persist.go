@@ -97,9 +97,9 @@ if [ -z "$oma_npmrc" ] && command -v npm > /dev/null 2>&1; then oma_npmrc=$(npm 
 	return script.String()
 }
 
-func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string, preinstalled bool) {
+func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string) {
 	script := packageSourcePersistScript(r.cfg.EnvironmentPackages)
-	if preinstalled || script == "" {
+	if script == "" {
 		return
 	}
 	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
@@ -107,7 +107,11 @@ func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string, pr
 		Timeout: packageSourcePersistTimeout,
 	})
 	if err == nil && result.ExitCode != 0 {
-		err = fmt.Errorf("exit code %d", result.ExitCode)
+		if stderr := truncateSandboxCommandOutput(result.Stderr); stderr != "" {
+			err = fmt.Errorf("exit code %d: %s", result.ExitCode, stderr)
+		} else {
+			err = fmt.Errorf("exit code %d", result.ExitCode)
+		}
 	}
 	if err != nil {
 		r.logger.WarnContext(ctx, "persist package sources failed", "sandbox_id", sandboxID, "error", err)

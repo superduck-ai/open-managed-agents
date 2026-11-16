@@ -88,7 +88,7 @@ Summary and failed record details are written to stdout; logs and final errors t
 		return err
 	}
 	defer database.Close()
-	return migrate(ctx, database, service, *from, *to, *apply, stdout)
+	return migrate(ctx, database, service, *from, *to, *apply, stdout, logger)
 }
 
 func validProvider(name string) bool {

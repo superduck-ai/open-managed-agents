@@ -398,6 +398,14 @@ func decodeVaultIDList(raw []byte) ([]string, error) {
 	return ids, nil
 }
 
+func (d *DB) GetScopedCodeSession(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (CodeSession, bool, error) {
+	row, found, err := NewCodeSessionMapper(d.mapperDB).FindScopedByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
+	if err != nil || !found {
+		return CodeSession{}, found, err
+	}
+	return row.session(), true, nil
+}
+
 func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, bool, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
 	row, found, err := mapper.FindByExternalID(ctx, externalID)

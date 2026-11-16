@@ -44,8 +44,7 @@ type RuntimeModel struct {
 }
 
 func (c Catalog) RuntimeModels() (map[string]RuntimeModel, error) {
-	providers := append(slices.Clone(c.providers), c.organization...)
-	for _, provider := range providers {
+	for _, provider := range c.providers {
 		if !ValidBackend(provider.APIBackend) {
 			return nil, ErrBackendMismatch
 		}

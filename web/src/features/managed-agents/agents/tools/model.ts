@@ -66,6 +66,7 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'web_fetch', description: 'Fetch URL content' },
     { name: 'web_search', description: 'Search the web and return sources' },
     { name: 'ask_user_question', description: 'Ask the user a structured question' },
+    { name: 'get_port_url', description: 'Get the session port URL for a sandbox port' },
   ],
 };
 
@@ -78,6 +79,7 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
   ask_user_question: 'managedAgents.agents.createDialog.builtInTool.askUserQuestion',
   bash: 'managedAgents.agents.createDialog.builtInTool.bash',
   edit: 'managedAgents.agents.createDialog.builtInTool.edit',
+  get_port_url: 'managedAgents.agents.createDialog.builtInTool.getPortUrl',
   glob: 'managedAgents.agents.createDialog.builtInTool.glob',
   grep: 'managedAgents.agents.createDialog.builtInTool.grep',
   read: 'managedAgents.agents.createDialog.builtInTool.read',
@@ -87,6 +89,12 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
 };
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
+
+const EXPLICIT_ONLY_BUILT_IN_TOOLS = new Set(['ask_user_question']);
+
+export function isExplicitOnlyBuiltInTool(name: string) {
+  return EXPLICIT_ONLY_BUILT_IN_TOOLS.has(name);
+}
 
 const FALLBACK_MCP_SERVERS: McpDirectoryServer[] = [
   {
@@ -410,7 +418,7 @@ function toolPermissionForName(
   if (override) {
     return effectiveToolPermission(override, fallback);
   }
-  if (allowLegacyToolName && toolName === 'ask_user_question') {
+  if (allowLegacyToolName && isExplicitOnlyBuiltInTool(toolName)) {
     return 'always_deny';
   }
   return effectiveToolPermission(optionalRecordValue(toolset.default_config), fallback);

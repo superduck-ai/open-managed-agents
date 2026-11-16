@@ -55,16 +55,16 @@ test("unknown non-read-only outcomes are not retried and return conservative err
   expect(f.bridge).not.toHaveProperty("recordResult");
 });
 
-test("read-only failures retry once before returning a tool error", async () => {
+test("read-only failures preserve the original call without executing again", async () => {
   const f = fixture();
   let attempts = 0;
   f.sandbox.call = async () => { attempts++; throw new Error("unavailable"); };
   await expect(f.execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec)).rejects.toThrow("Read-only tool outcome is unknown");
-  expect(attempts).toBe(2);
+  expect(attempts).toBe(1);
 });
 
 test("user and shutdown cancellation preserve uncertainty without a second journal", async () => {
-  for (const [reason, text] of [[{ kind: "user" }, "Tool call interrupted."], [SHUTDOWN_CANCEL, "outcome is unknown"]] as const) {
+  for (const [reason, text] of [[{ kind: "user" }, "Tool call interrupted."], [SHUTDOWN_CANCEL, "aborted"]] as const) {
     const f = fixture();
     const abort = new AbortController();
     f.sandbox.call = async () => { abort.abort(reason); throw new Error("aborted"); };
@@ -88,17 +88,16 @@ test("approved argument changes remain visible without duplicating tool results"
   expect(f.executions).toBe(1);
 });
 
-test("read-only retry preserves its originating child thread identity", async () => {
+test("read-only execution preserves its originating child thread identity", async () => {
   const f = fixture();
   const threads: (string | undefined)[] = [];
   f.sandbox.call = async (_tool, _args, _signal, threadId) => {
     threads.push(threadId);
-    if (threads.length === 1) throw new Error("transient read failure");
     return { content: [{ type: "text", text: "confirmed" }] };
   };
   const execution = new ToolExecution(f.sandbox, f.bridge, undefined, "child-scope");
   expect(await execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec)).toBe("confirmed");
-  expect(threads).toEqual(["child-scope", "child-scope"]);
+  expect(threads).toEqual(["child-scope"]);
 });
 
 

@@ -1,3 +1,6 @@
+import { OAuthProvidersPage } from '../features/platform-admin/oauth/OAuthProvidersPage';
+import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
+import { FileDetailsPage } from '../features/dashboard/FileDetailsPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
 import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
@@ -17,14 +20,17 @@ import { LoginPage } from '../features/auth/LoginPage';
 import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
-import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
+import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
+import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
+import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
+import { channelSessionsReturnTo } from '../features/managed-agents/sessions/sessionReturn';
+import { LegacyLLMSettingsRedirect, LegacySettingsRedirect } from './layout/LegacySettingsRedirect';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
 import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
-import { WorkspaceTelemetryPage } from '../features/telemetry-destinations/WorkspaceTelemetryPage';
 import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
 import { normalizeReturnTo } from '../shared/auth/redirects';
 
@@ -63,6 +69,11 @@ const platformSkillsRoute = createRoute({
     skill: typeof search.skill === 'string' ? search.skill : undefined,
   }),
   component: SystemSkillsPage,
+});
+const platformOAuthRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'oauth',
+  component: OAuthProvidersPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -139,6 +150,17 @@ const workspaceFilesRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/files',
   component: () => <DashboardPage section="files" />,
+});
+
+const workspaceFileDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/files/$fileId',
+  component: FileDetailsPage,
+});
+const llmModelsAliasRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'llm-models',
+  component: LegacyLLMSettingsRedirect,
 });
 
 const skillsRoute = createRoute({
@@ -222,7 +244,7 @@ const apiKeysRoute = createRoute({
 const workspaceLLMModelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/llm-models',
-  component: LLMModelsPage,
+  component: LegacyLLMSettingsRedirect,
 });
 
 const quickstartRoute = createRoute({
@@ -256,6 +278,7 @@ const sessionDetailSearch = (search: Record<string, unknown>) => ({
     typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
       ? search.trace_id.trim()
       : undefined,
+  returnTo: channelSessionsReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined) ?? undefined,
 });
 
 const evaluationsRoute = createRoute({
@@ -329,6 +352,66 @@ const workspaceEnvironmentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/environments/$environmentId',
   component: () => <ManagedAgentsPage section="environments" />,
+});
+
+const channelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels',
+  component: ChannelsPage,
+});
+
+const channelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const channelDetailSearch = (search: Record<string, unknown>) => ({
+  tab: search.tab === 'sessions' ? ('sessions' as const) : undefined,
+});
+
+const channelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
+  component: ChannelDetailPage,
+});
+
+const channelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
+});
+
+const workspaceChannelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels',
+  component: ChannelsPage,
+});
+
+const workspaceChannelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const workspaceChannelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
+  component: ChannelDetailPage,
+});
+
+const workspaceChannelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
 });
 
 const credentialVaultsRoute = createRoute({
@@ -454,7 +537,7 @@ const limitsRoute = createRoute({
 const membersRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'members',
-  component: () => <DashboardPage section="members" />,
+  component: () => <LegacySettingsRedirect to="/settings/members" />,
 });
 
 const billingRoute = createRoute({
@@ -526,7 +609,7 @@ const webhooksRoute = createRoute({
 const telemetryRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'telemetry',
-  component: () => <WorkspaceSettingsRedirect resource="telemetry" />,
+  component: () => <LegacySettingsRedirect to="/settings/telemetry" />,
 });
 
 const settingsWorkspaceMcpTunnelsRoute = createRoute({
@@ -547,6 +630,24 @@ const tagsRoute = createRoute({
   component: () => <DashboardPage section="tags" />,
 });
 
+const settingsWorkspaceLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/llm',
+  component: LegacyLLMSettingsRedirect,
+});
+
+const settingsLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/llm',
+  component: LLMModelsPage,
+});
+
+const settingsOrganizationLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/llm/organization',
+  component: LegacyLLMSettingsRedirect,
+});
+
 const settingsWorkspaceKeysRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/keys',
@@ -562,41 +663,41 @@ const settingsWorkspaceWebhooksRoute = createRoute({
 const settingsWorkspaceTelemetryRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/telemetry',
-  component: WorkspaceTelemetryPage,
+  component: () => <LegacySettingsRedirect to="/settings/telemetry" />,
 });
 
 const settingsOrganizationRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/organization',
   component: OrganizationSettingsPage,
 });
 
 const settingsBillingRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/billing',
   component: () => <Navigate to="/billing" replace />,
 });
 
 const settingsLimitsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/limits',
   component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsMembersRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/members',
   component: () => <OrganizationSettingsPage section="members" />,
 });
 
 const settingsServiceAccountsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/service-accounts',
   component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsFallbackRoute = createRoute({
-  getParentRoute: () => protectedRoute,
+  getParentRoute: () => consoleRoute,
   path: 'settings/$setting',
   component: () => <OrganizationSettingsPage />,
 });
@@ -607,6 +708,7 @@ const routeTree = rootRoute.addChildren([
     platformOrganizationDetailRoute,
     platformAdministratorsRoute,
     platformSkillsRoute,
+    platformOAuthRoute,
   ]),
   loginRoute,
   invitationsRoute,
@@ -620,6 +722,8 @@ const routeTree = rootRoute.addChildren([
       workspacePlaygroundRoute,
       filesRoute,
       workspaceFilesRoute,
+      workspaceFileDetailRoute,
+      llmModelsAliasRoute,
       skillsRoute,
       skillNewRoute,
       skillDetailRoute,
@@ -656,6 +760,14 @@ const routeTree = rootRoute.addChildren([
       environmentsRoute,
       workspaceEnvironmentsRoute,
       workspaceEnvironmentDetailRoute,
+      channelsRoute,
+      channelCreateRoute,
+      channelDetailRoute,
+      channelEditRoute,
+      workspaceChannelsRoute,
+      workspaceChannelCreateRoute,
+      workspaceChannelDetailRoute,
+      workspaceChannelEditRoute,
       credentialVaultsRoute,
       workspaceCredentialVaultsRoute,
       workspaceCredentialVaultDetailRoute,
@@ -687,15 +799,18 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
+      settingsWorkspaceLLMRoute,
+      settingsLLMRoute,
+      settingsOrganizationLLMRoute,
       settingsWorkspaceWebhooksRoute,
       settingsWorkspaceTelemetryRoute,
+      settingsFallbackRoute,
+      settingsServiceAccountsRoute,
+      settingsMembersRoute,
+      settingsLimitsRoute,
+      settingsBillingRoute,
+      settingsOrganizationRoute,
     ]),
-    settingsOrganizationRoute,
-    settingsBillingRoute,
-    settingsLimitsRoute,
-    settingsMembersRoute,
-    settingsServiceAccountsRoute,
-    settingsFallbackRoute,
   ]),
 ]);
 

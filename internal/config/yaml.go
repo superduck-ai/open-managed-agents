@@ -249,9 +249,11 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		{name: "llm_provider_presets_file", value: &cfg.LLMProviderPresetsFile},
 		{name: "environment_runner.manager_path", value: &cfg.EnvironmentRunner.ManagerPath},
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},
+		{name: "environment_runner.manager_artifact.path", value: &cfg.EnvironmentRunner.ManagerArtifact.Path},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},
 		{name: "code_session.upstream_proxy_ca_key_file", value: &cfg.CodeSession.UpstreamProxyCAKeyFile},
 		{name: "code_session.brain_claim_token_file", value: &cfg.CodeSession.BrainClaimTokenFile},
+		{name: "session_ports.label_key_file", value: &cfg.SessionPorts.LabelKeyFile},
 	}
 	if v := cfg.Vault.MasterKey.HashicorpVault; v != nil {
 		paths = append(paths, struct {
@@ -293,6 +295,18 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 	return nil
 }
 
+func resolveSessionPortsAddresses(cfg *Config) error {
+	if cfg.SessionPorts.InternalAdvertiseAddr == "" {
+		return nil
+	}
+	expanded, err := expandEnvironment(strings.TrimSpace(cfg.SessionPorts.InternalAdvertiseAddr), "session_ports.internal_advertise_addr")
+	if err != nil {
+		return err
+	}
+	cfg.SessionPorts.InternalAdvertiseAddr = expanded
+	return nil
+}
+
 func expandConfiguredPath(value, name string) (string, error) {
 	expanded := strings.TrimSpace(value)
 	if expanded == "~" || strings.HasPrefix(expanded, "~/") {
@@ -309,8 +323,12 @@ func expandConfiguredPath(value, name string) (string, error) {
 		return "", fmt.Errorf("expand %s: user-specific home paths are not supported: %q", name, value)
 	}
 
+	return expandEnvironment(expanded, name)
+}
+
+func expandEnvironment(value, name string) (string, error) {
 	missing := ""
-	expanded = os.Expand(expanded, func(key string) string {
+	expanded := os.Expand(value, func(key string) string {
 		resolved, ok := os.LookupEnv(key)
 		if !ok && missing == "" {
 			missing = key

@@ -5,7 +5,6 @@ import { PermanentAdmissionError } from "../src/claim.ts";
 import { validateAssignment } from "../src/assignment.ts";
 import { createOmaCcrClient } from "../src/oma-ccrv2.ts";
 import { assignment } from "./backend.ts";
-import { sandboxEndpoint } from "../src/oma-sandbox/config.ts";
 import { canonicalTraceParent } from "../src/observability/trace-context.ts";
 
 test("registration rejects conflicts and stale epochs", async () => {
@@ -118,7 +117,7 @@ test("claim without trace context sends no traceparent", async () => {
  expect(JSON.stringify(result.mcp_config)).not.toContain("traceparent");
 });
 
-test("claim trace context reaches registration, MCP and later session requests", async () => {
+test("claim trace context reaches registration and later session requests", async () => {
  const a = assignment();
  const traceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
  const task = {session_id:a.session_id, worker_epoch:a.worker_epoch, ingress_token:a.ingress_token, model_token:a.model_token, trace_parent:traceParent};
@@ -130,7 +129,7 @@ test("claim trace context reaches registration, MCP and later session requests",
  const result = await registerWorkerTask(api, task);
  expect(calls.map((call) => call.headers.get("traceparent"))).toEqual([traceParent, traceParent]);
  expect(result.trace_parent).toBe(traceParent);
- expect(sandboxEndpoint(result.mcp_config).headers.traceparent).toBe(traceParent);
+ expect(result.mcp_config).toEqual({});
  api.assignments.set(result.session_id, result);
  const client = createOmaCcrClient(api);
  await client.register(result.session_id, task.ingress_token);

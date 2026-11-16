@@ -41,7 +41,7 @@ export async function saveToolOutput(text: string, sandbox: SandboxExecutor, sig
   const path = `/tmp/tool-outputs/mcp_${crypto.randomUUID()}.txt`;
   const write = sandboxToolDefinitions().find(tool => tool.name === "Write")!;
   await sandbox.provision?.(signal);
-  const saved = await sandbox.call(write, { file_path: path, content: text }, signal, threadId);
+  const saved = await sandbox.call(write, { file_path: path, content: text }, signal, threadId, `output-${crypto.randomUUID()}`);
   if (saved.isError) throw new Error("Sandbox output persistence failed");
   signal.throwIfAborted();
   return path;

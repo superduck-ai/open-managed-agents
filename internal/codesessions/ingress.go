@@ -725,7 +725,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		CodeSessionID:       record.ExternalID,
 		SessionIngressToken: auth.ExtractAPIKey(r),
 		APIBaseURL:          h.cfg.CodeSession.SandboxAPIBaseURL,
-	}, h.cfg)
+	}, h.cfg, h.service.builtinTools())
 	if err != nil {
 		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
 		return
@@ -752,7 +752,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIdentity, cfg config.Config) (map[string]any, error) {
+func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIdentity, cfg config.Config, catalog builtinToolCatalog) (map[string]any, error) {
 	var metadata struct {
 		Config json.RawMessage `json:"config"`
 	}
@@ -779,8 +779,8 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
-		"runtime_tools":            runtimeBuiltinTools(permissions.Tools),
-		"runtime_tool_permissions": runtimeToolPolicies(permissions.Tools),
+		"runtime_tools":            catalog.runtimeTools(permissions.Tools),
+		"runtime_tool_permissions": catalog.toolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],
 		"outcomes":                 arrayConfigValue(config["outcomes"]),
 		"custom_system_prompt":     stringField(config, "custom_system_prompt"),

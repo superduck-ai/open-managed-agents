@@ -31,24 +31,8 @@ type doctorResult struct {
 
 func doctor(ctx context.Context, root, worker, selected string, apiPort int) (doctorResult, error) {
 	result := doctorResult{Versions: map[string]string{}, Images: map[string]string{}, APIPort: apiPort}
-	if selected == "chat.brain-images" {
-		model, err := configuredVisionModel()
-		if err != nil {
-			return result, err
-		}
-		result.Versions["vision_model"] = model
-	}
-	if usesBrain(selected) {
-		path := os.Getenv("OMA_BRAIN_BINARY")
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
-			return result, errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Rust executable")
-		}
-		digest, err := fileSHA256(path)
-		if err != nil {
-			return result, err
-		}
-		result.Versions["brain_binary_sha256"] = digest
+	if err := recordScenarioPrerequisites(&result, selected); err != nil {
+		return result, err
 	}
 	for _, name := range []string{"go", "docker", "bash", "git", "tar"} {
 		if _, err := exec.LookPath(name); err != nil {
@@ -172,6 +156,37 @@ func checkBrainWorker(ctx context.Context, root, image string) error {
 	help, err := capture(ctx, root, "docker", "run", "--rm", "--pull=never", "--entrypoint", "/usr/local/bin/environment-manager", image, "task-run", "--help")
 	if err != nil || !strings.Contains(help, "--claude-agent-version") || !strings.Contains(help, "--claude-path") {
 		return errors.New("Brain scenario requires environment-manager task-run with --claude-agent-version and --claude-path in the sandbox image")
+	}
+	return nil
+}
+
+func recordScenarioPrerequisites(result *doctorResult, selected string) error {
+	if selected == "chat.brain-images" {
+		model, err := configuredVisionModel()
+		if err != nil {
+			return err
+		}
+		result.Versions["vision_model"] = model
+	}
+	if selected == "chat.brain-tools" {
+		model, err := configuredRealModel("VERIFY_BE_MODEL_PROVIDERS", "VERIFY_BE_MODEL")
+		if err != nil {
+			return err
+		}
+		result.Versions["tool_model"] = model
+	}
+
+	if usesBrain(selected) {
+		path := os.Getenv("OMA_BRAIN_BINARY")
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+			return errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Rust executable")
+		}
+		digest, err := fileSHA256(path)
+		if err != nil {
+			return err
+		}
+		result.Versions["brain_binary_sha256"] = digest
 	}
 	return nil
 }

@@ -50,8 +50,12 @@ func Load() (Config, error) {
 	cfg.Telemetry.OTLP.LogsStream = strings.TrimSpace(cfg.Telemetry.OTLP.LogsStream)
 
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
+	normalizeEnvironmentManagerArtifact(&cfg.EnvironmentRunner.ManagerArtifact)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
+		return Config{}, err
+	}
+	if err := resolveSessionPortsAddresses(&cfg); err != nil {
 		return Config{}, err
 	}
 	_, err = ReadLLMProviderPresetCatalog(cfg.LLMProviderPresetsFile)
@@ -144,6 +148,9 @@ func validate(cfg Config) error {
 	if err := validateTelemetryConfig(cfg.Telemetry); err != nil {
 		return err
 	}
+	if err := validateSessionPorts(cfg.Env, cfg.SessionPorts); err != nil {
+		return err
+	}
 	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession); err != nil {
 		return err
 	}
@@ -154,6 +161,9 @@ func validate(cfg Config) error {
 		return err
 	}
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
+		return err
+	}
+	if err := validateEnvironmentManagerArtifact(cfg.EnvironmentRunner.ManagerArtifact); err != nil {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
@@ -352,16 +362,21 @@ func validateTunnelDomainSuffix(value string) error {
 	if value == "" {
 		return errors.New("tunnel.domain_suffix is required")
 	}
+	return validateLowercaseDNSName("tunnel.domain_suffix", value)
+}
+
+func validateLowercaseDNSName(field, value string) error {
+	invalid := fmt.Errorf("%s must be a lowercase DNS name", field)
 	if value != strings.ToLower(value) || strings.TrimSpace(value) != value || len(value) > 253 {
-		return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+		return invalid
 	}
 	for _, label := range strings.Split(value, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+			return invalid
 		}
 		for _, char := range label {
 			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
-				return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+				return invalid
 			}
 		}
 	}

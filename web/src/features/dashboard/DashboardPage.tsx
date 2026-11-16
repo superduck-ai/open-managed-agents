@@ -13,7 +13,7 @@ import { FilesPage } from './files';
 import { DashboardHome } from './home';
 import { RetiredConsolePage } from './RetiredConsolePage';
 import { currentSkillId } from './model';
-import { CreateSkillPage, SkillDetailPage, SkillsPage } from './skills';
+import { SkillsPage } from '../skills/WorkspaceSkillsPage';
 
 type DashboardPageProps = {
   section?: string;
@@ -22,7 +22,7 @@ type DashboardPageProps = {
 export { BatchesPage } from './batches';
 export { ConsolePlaceholderPage, MembersPage } from './feature-pages';
 export { FilesPage } from './files';
-export { CreateSkillPage, SkillDetailPage, SkillsPage } from './skills';
+export { SkillsPage };
 
 export function DashboardPage({ section = 'dashboard' }: DashboardPageProps) {
   if (section === 'api-keys') {
@@ -41,9 +41,9 @@ export function DashboardPage({ section = 'dashboard' }: DashboardPageProps) {
     case 'skills':
       return <SkillsPage />;
     case 'skill-new':
-      return <CreateSkillPage />;
+      return <SkillsPage initialCreateOpen />;
     case 'skill-detail':
-      return <SkillDetailPage skillId={currentSkillId()} />;
+      return <SkillsPage initialSkillId={currentSkillId()} />;
     case 'batches':
       return <BatchesPage />;
     case 'members':

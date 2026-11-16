@@ -48,6 +48,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"github.com/superduck-ai/open-managed-agents/skills"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -113,12 +114,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err != nil {
 		return fmt.Errorf("open nats client: %w", err)
 	}
-	defer func() {
-		if err := natsConnection.Drain(); err != nil {
-			logger.Warn("drain nats connection", "error", err)
-			natsConnection.Close()
-		}
-	}()
+	defer drainNATS(natsConnection, logger)
 	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
@@ -130,22 +126,20 @@ func run(bootstrap *slog.Logger) (err error) {
 	}
 	logger.Info("nats messaging ready", "jetstream", true)
 
-	storageClient, err := storage.New(cfg.Storage)
+	storageClient, objectStore, err := initializeStorage(ctx, cfg, database, logger)
 	if err != nil {
-		return fmt.Errorf("create object storage client: %w", err)
-	}
-	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
-	if err != nil {
-		return fmt.Errorf("bind object storage bucket: %w", err)
-	}
-	if err := objectStore.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure object store bucket: %w", err)
+		return err
 	}
 	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		return fmt.Errorf("open tunnel broker: %w", err)
 	}
 	defer tunnelBroker.Close()
+
+	sessionPorts, err := openSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
+	if err != nil {
+		return fmt.Errorf("configure session ports: %w", err)
+	}
 
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
@@ -181,7 +175,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
-		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes)
+		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).
+		WithSessionPorts(sessionPorts.settings)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
@@ -260,6 +255,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			ToolCallNotifications:  natsConnection,
+			ToolCallContext:        ctx,
 			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
@@ -286,6 +283,9 @@ func run(bootstrap *slog.Logger) (err error) {
 			TunnelBroker:           tunnelBroker,
 			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
 			WorkerEventAcks:        workerEventAcks,
+			SessionPorts:           sessionPorts.settings,
+			SessionPortRegistry:    sessionPorts.registry,
+			SessionPortRouter:      sessionPorts.router,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
@@ -390,6 +390,26 @@ func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, 
 	return stop, nil
 }
 
+func initializeStorage(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) (storage.Client, storage.ObjectStore, error) {
+	storageClient, err := storage.New(cfg.Storage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create object storage client: %w", err)
+	}
+	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		return nil, nil, fmt.Errorf("bind object storage bucket: %w", err)
+	}
+	if err := objectStore.Ensure(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ensure object store bucket: %w", err)
+	}
+	count, err := skillsapi.SyncBundledSkills(ctx, database, objectStore, catalog.Files)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load bundled skills: %w", err)
+	}
+	logger.InfoContext(ctx, "bundled skills ready", "count", count)
+	return storageClient, objectStore, nil
+}
+
 func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) error {
 	if cfg.Database.AutoMigrate {
 		if err := database.Migrate(ctx); err != nil {
@@ -457,4 +477,11 @@ func startTelemetryExport(ctx context.Context, conn *nats.Conn, database *db.DB,
 		return nil, nil, fmt.Errorf("start telemetry export worker: %w", err)
 	}
 	return telemetryexport.NewExporter(database, queue), stop, nil
+}
+
+func drainNATS(connection *nats.Conn, logger *slog.Logger) {
+	if err := connection.Drain(); err != nil {
+		logger.Warn("drain nats connection", "error", err)
+		connection.Close()
+	}
 }

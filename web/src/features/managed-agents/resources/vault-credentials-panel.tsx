@@ -4,7 +4,7 @@ import { cn } from '../../../shared/lib/utils';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
-import { ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
   DataTableRow,
   DataTableCell,
@@ -33,9 +33,9 @@ import {
 import { AgentStatusBadge, ConfirmEntityDialog } from '../components/common';
 import { managedColumnLabel } from '../labels';
 import { type CredentialFormValues, type VaultApiResponse, type VaultCredentialApiResponse } from '../types';
-import { compactEntityId, errorMessage } from '../utils';
+import { compactEntityId, errorMessage, objectRecord } from '../utils';
 import { CredentialDialog } from './dialogs';
-import { credentialAuthLabel } from './model';
+import { credentialAuthLabel, credentialAuthTypeLabel } from './model';
 
 function vaultCredentialDateLabel(
   value: string,
@@ -53,7 +53,7 @@ function credentialMatchesSearch(credential: VaultCredentialApiResponse, search:
   if (!needle) {
     return true;
   }
-  return credential.id.toLowerCase().includes(needle);
+  return credential.id.toLowerCase().includes(needle) || credential.display_name.toLowerCase().includes(needle);
 }
 
 export function VaultCredentialsPanel({
@@ -92,6 +92,8 @@ export function VaultCredentialsPanel({
     data: [],
   });
   const [search, setSearch] = useState('');
+  const [authType, setAuthType] = useState('all');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [internalDialog, setInternalDialog] = useState<{
     mode: 'create' | 'edit';
     credential?: VaultCredentialApiResponse;
@@ -136,11 +138,26 @@ export function VaultCredentialsPanel({
   }, [refreshKey, vault.id, workspaceId]);
 
   const visibleCredentials = useMemo(
-    () => state.data.filter((credential) => !credential.archived_at && credentialMatchesSearch(credential, search)),
-    [search, state.data],
+    () =>
+      state.data.filter(
+        (credential) =>
+          !credential.archived_at &&
+          credentialMatchesSearch(credential, search) &&
+          (authType === 'all' || objectRecord(credential.auth).type === authType),
+      ),
+    [authType, search, state.data],
   );
 
-  const columns = ['ID', 'Name', 'Auth', 'Status', 'Updated'].map((column) => managedColumnLabel(column, msg));
+  const authOptions = [
+    { value: 'all', label: msg('common.all', 'All') },
+    ...['mcp_oauth', 'static_bearer', 'environment_variable', 'env_oauth'].map((value) => ({
+      value,
+      label: credentialAuthTypeLabel(value, msg),
+    })),
+  ];
+  const columns = ['ID', 'Name', 'Auth', 'Status', 'Created', 'Updated'].map((column) =>
+    managedColumnLabel(column, msg),
+  );
 
   const submit = async (values: CredentialFormValues, credential?: VaultCredentialApiResponse) => {
     const updated = credential
@@ -195,8 +212,22 @@ export function VaultCredentialsPanel({
           <ResourceSearchField
             id="vault-credential-search"
             value={search}
-            placeholder={msg('managedAgents.credentialVaults.credentials.searchPlaceholder', 'Find credential by ID')}
+            placeholder={msg(
+              'managedAgents.credentialVaults.credentials.searchPlaceholder',
+              'Find credential by name or ID',
+            )}
             onChange={setSearch}
+          />
+          <ResourceFilterDropdown
+            label={managedColumnLabel('Auth', msg)}
+            valueLabel={authOptions.find((option) => option.value === authType)!.label}
+            options={authOptions}
+            value={authType}
+            menu="auth"
+            open={filterOpen}
+            menuWidthClass="w-56"
+            onOpenChange={(menu) => setFilterOpen(menu !== null)}
+            onSelect={setAuthType}
           />
         </div>
       ) : null}
@@ -267,6 +298,9 @@ export function VaultCredentialsPanel({
                     <AgentStatusBadge archived={Boolean(credential.archived_at)} />
                   </DataTableCell>
                   <DataTableCell className="h-11 truncate px-3">
+                    {vaultCredentialDateLabel(credential.created_at, formatters.date)}
+                  </DataTableCell>
+                  <DataTableCell className="h-11 truncate px-3">
                     {vaultCredentialDateLabel(credential.updated_at, formatters.date)}
                   </DataTableCell>
                   <DataTableCell edge="end" className="px-2">
@@ -317,7 +351,7 @@ export function VaultCredentialsPanel({
         <ResourceListState
           icon={LockKeyhole}
           title={
-            search.trim()
+            search.trim() || authType !== 'all'
               ? msg('managedAgents.credentialVaults.credentials.searchEmpty', 'No credentials match your filters.')
               : msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')
           }

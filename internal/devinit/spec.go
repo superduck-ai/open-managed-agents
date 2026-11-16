@@ -13,6 +13,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
@@ -56,6 +57,7 @@ type ModelProvidersSpec struct {
 }
 
 type ProviderSpec struct {
+	Models     db.LLMModels
 	Slug       string
 	Name       string
 	APIBackend string
@@ -328,14 +330,15 @@ func (s Spec) validate() error {
 }
 
 type rawProvider struct {
-	Slug       string   `yaml:"slug"`
-	Name       string   `yaml:"name"`
-	APIBackend string   `yaml:"api_backend"`
-	BaseURL    string   `yaml:"base_url"`
-	APIKey     string   `yaml:"api_key"`
-	APIKeyEnv  string   `yaml:"api_key_env"`
-	APIKeyFile string   `yaml:"api_key_file"`
-	ModelIDs   []string `yaml:"model_ids"`
+	Models     []rawProviderModel `yaml:"models"`
+	Slug       string             `yaml:"slug"`
+	Name       string             `yaml:"name"`
+	APIBackend string             `yaml:"api_backend"`
+	BaseURL    string             `yaml:"base_url"`
+	APIKey     string             `yaml:"api_key"`
+	APIKeyEnv  string             `yaml:"api_key_env"`
+	APIKeyFile string             `yaml:"api_key_file"`
+	ModelIDs   []string           `yaml:"model_ids"`
 }
 
 type rawProvidersFile struct {
@@ -437,8 +440,15 @@ func resolveProvider(path string, provider rawProvider) (ProviderSpec, error) {
 		}
 	}
 	modelIDs := make([]string, 0, len(provider.ModelIDs))
+	models, err := resolveProviderModels(provider)
+	if err != nil {
+		return ProviderSpec{}, err
+	}
+	if models != nil {
+		provider.ModelIDs = models.IDs()
+	}
 	seenModel := map[string]bool{}
-	for _, modelID := range provider.ModelIDs {
+	for index, modelID := range provider.ModelIDs {
 		modelID = strings.TrimSpace(modelID)
 		if modelID == "" || len(modelID) > 255 {
 			return ProviderSpec{}, errors.New("model_ids entries must be 1-255 characters")
@@ -447,12 +457,16 @@ func resolveProvider(path string, provider rawProvider) (ProviderSpec, error) {
 			return ProviderSpec{}, fmt.Errorf("model id %q is duplicated", modelID)
 		}
 		seenModel[modelID] = true
+		if models != nil {
+			models[index].ID = modelID
+		}
 		modelIDs = append(modelIDs, modelID)
 	}
 	if len(modelIDs) == 0 || len(modelIDs) > maxModelIDsPerProvider {
 		return ProviderSpec{}, fmt.Errorf("model_ids must contain 1-%d entries", maxModelIDsPerProvider)
 	}
 	return ProviderSpec{
+		Models:     models,
 		Slug:       slug,
 		Name:       provider.Name,
 		APIBackend: backend,

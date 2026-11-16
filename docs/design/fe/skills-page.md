@@ -1,126 +1,86 @@
-# Skills Page
+# 技能页面
 
-## 页面模型
+## 页面与权限
 
-模块空状态复用共享 `productIcons.skills`，与侧栏技能图标使用同一 Central 图形；创建和更新弹窗中的上传压缩包图标继续表示文件内容，不随模块图标替换。
+工作区与超管技能页采用同一套紧凑卡片、图标选择器和两步导入组件，位于 `web/src/features/skills`。页面不显示场景分类、产出、复制 ID 或版本管理快捷按钮。名称与描述来自服务端，不依赖硬编码技能目录。
 
-Skills 页面是单页管理器：
+| 页面 | 卡片操作 | 详情 |
+| --- | --- | --- |
+| 工作区系统内置技能 | 无操作菜单 | 名称、图标、描述、文件目录、SKILL.md 正文、ID、时间与版本，只读 |
+| 工作区自定义技能 | 更新技能、下载技能、更换图标、删除技能 | 保留已有信息、文件目录和 SKILL.md 正文，图标可改，技能可删除；版本记录只读 |
+| 超管项目预置技能 | 更新技能、下载技能、更换图标、上架或下架；有覆盖时可恢复预置版本 | 默认展示包内容，保留版本与操作记录，技能不可删除 |
+| 超管手动上传技能 | 更新技能、下载技能、更换图标、上架或下架、删除 | 默认展示包内容，保留版本与操作记录 |
 
-- 列表展示所有可用 skill。
-- 详情通过 query param 打开：`/skills?skill={id}`。
-- 创建、更新和删除都在当前页面内用 dialog/sheet 完成。
+卡片主体和右上角操作按钮为同级元素，打开菜单不打开详情。已有操作菜单提供下载技能，可直接下载当前可用版本 ZIP，复用详情下载接口；没有可用版本时不显示下载项。下载不打开详情、不更改技能，失败显示错误。鼠标点击与关闭详情后的指针焦点不添加黑框；卡片仅在 focus-visible 时使用共享 ring 令牌的 0.5px 内侧轮廓和轻底色，文件树按钮沿用共享按钮的键盘焦点样式。两端使用同一内容区容器：页头、来源页签、筛选栏与卡片共同限制在最多 1600px 并居中，避免仅卡片区域变窄。栅格按扣除导航与页面边距后的容器宽度分档：不足 600px 为一列、600px 起两列、960px 起三列、1320px 起四列；同档卡片均分可用空间，最大四列，间距为 16px。跨档换列允许合理宽度变化，不再要求固定 360px；名称和描述字号不随屏幕缩小。搜索与排序在窄屏同行收缩；来源页签允许较长文案在按钮内换行，所有页签保持同一行和一致高度，计数不挤出可用宽度。最后一行或单项筛选仍保留当前列结构。卡片保持 16px 内边距与至少 136px 高度。官方依据、CSS 视口与验收矩阵见 [响应式布局研究](skills-responsive-layout-research.md)。工作区卡片将来源作为名称下方的轻量文字，不单设底部标签行；描述保留两行，筛选栏已有来源计数，不重复展示总数。超管卡片展示名称、ID、状态和更新时间，沿用同一紧凑卡片。卡片图标为 28px 底座内的 16px Lucide 图形；选择面板为 8 列、3 行，点选后提交，成功后收起，不添加保存或取消行。失败显示服务端错误，不能声称已保存。已有技能变更后使相关列表和详情查询失效，工作区切换后重置分页及弹窗。
 
-旧的 `/skills/{id}` 入口仍可进入同一个页面，并会把状态同步为 `?skill={id}`，避免路由调用方承受无关迁移成本。
-
-```mermaid
-stateDiagram-v2
-  [*] --> List
-  List --> Drawer: click row or ?skill=id
-  Drawer --> List: close drawer
-  List --> CreateDialog: Create skill
-  Drawer --> UpdateDialog: custom Update
-  Drawer --> DeleteConfirm: custom Delete
-```
+图标采用固定的 24 个 Lucide key。`icon_key` 存在技能记录中，与 ZIP 内容、版本内容分离；默认值为 `blocks`。不使用 localStorage 保存正式技能元数据。不允许普通用户修改系统技能图标；手动上传的系统图标由超管维护，项目预置图标来自源码清单，工作区读取同一字段。
 
 ## 列表
 
-列表使用 shadcn `Table`，列为：
+工作区保留全部技能、系统内置、自定义三个来源页签，提供名称、用途或 ID 搜索和默认、名称、最近更新排序。Console catalog 接口在服务端组合可用系统技能与当前工作区自定义技能，返回描述、图标、筛选计数和总数；每页 12 条，按稳定次序分页。来源筛选不影响其他页签的查询计数。系统目录只包含已上架且具有有效默认版本的技能，工作区预览与下载接口同样只暴露已上架系统技能。搜索、筛选、排序与翻页加载期间保留同一工作区的上一批结果，并标记网格忙碌；旧请求通过 AbortSignal 取消。切换工作区时不使用上一工作区的占位结果。
 
-- `ID`
-- `Name`
-- `Source`
-- `Latest version`
-- `Updated`
-- actions
+超管仅有全部状态、已上架、已下架三个页签，使用已有名称/ID 搜索、offset 分页和 revision 并发检查。列表保留名称、ID、状态与更新时间，不展示内部版本标识，不设置草稿页签或草稿状态。
 
-`source` 行为：
+超管详情的版本列表由服务端先过滤已发布版本再分页，has_more 与展示范围一致；前端直接展示返回结果，仅在结果为空时显示暂无可用版本，不再客户端过滤草稿。
 
-- `anthropic` 显示 `Anthropic` badge，无 update/delete action。
-- `custom` 显示 `Custom` badge，显示 update/delete action menu。
+超管列表与详情不显示“项目预置 / 手动上传”来源标签；操作权限继续依据服务端 bundled 标志，不根据技能名称猜测来源。预置技能可更新、选择图标和切换版本，但不提供删除技能入口；default_version 与 bundled_version 不同时在外层菜单显示“恢复预置版本”，确认后切回当前项目底本。重启和项目升级保留上传覆盖。后端保护预置记录不可删除。上传技能的删除位于外层更多菜单，确认时提交被确认记录的 revision，发生修订冲突（409）时刷新目录并禁用确认删除按钮，其他失败保留错误和原修订号；成功刷新两端技能目录并关闭对应详情。
 
-分页沿用后端 cursor，当前页 token 保存在页面状态中；切换 workspace 时重置分页。
+保留当前页面的 `?skill={id}` 详情入口及旧 `/skills/{id}` 兼容入口。详情选中状态与前进、后退统一由 TanStack Router 管理，保留其余查询参数，不再维护独立的 history/popstate 状态。加载、失败、无结果和重试复用共享控件；页面不展示演示数据或虚构计数。浅色、深色及窄屏使用同一语义颜色和组件。
 
-## Drawer
+## 详情内容
 
-详情 drawer 使用 shadcn `Sheet`，并由 `?skill=<id>` 驱动：
+两端详情采用与 Agent 快速查看一致的右侧浮动卡片：四周至少 8px 留白、最大宽度 480px、圆角和四边细边框，不使用贴边的全高侧栏。小屏保留左右间距，标题和底部操作固定，正文在卡片内滚动。沿用 Base UI 的非模态查看、Escape、焦点恢复和退出生命周期，退出完成后才清除选中技能。
 
-- header 展示 display title、source badge、updated 时间和短 ID。
-- `Description` 来自 latest version metadata。
-- `Versions` 展示版本号、创建时间、`Latest` badge。
-- custom version 提供删除按钮；builtin version 只读。
+工作区详情默认读取当前版本的文件目录与 SKILL.md；超管内容页复用相同展示组件。目录保留技能包路径层级，可整体折叠。初始展开最外层根文件夹，显示根目录文件（含 SKILL.md）与子文件夹；子文件夹默认收起，点击后逐层展开或收起。目录折叠不改变已选文件的预览内容。目录滚动复用共享 4px 细滚动条，使用透明轨道与中性浅色滑块，悬停时轻微加深。默认选中根目录 SKILL.md，点击文件后在下方切换为对应文件的原文预览，选中项使用中性底色标识，不提供编辑或执行。文本按内容检测，不依赖扩展名；支持 UTF-8 文本（含 Python、Java 等代码），二进制和非 UTF-8 文件提示无法预览，超过 256 KiB 的文件单独提示大小限制。请求失败可重试，切换文件不保留上一文件的正文。文件预览使用独立的 0.5px 细边框代码块，紧凑文件栏显示相对路径与语言名称，正文使用浅色画布和等宽字体。Markdown、Python、Java、JavaScript、TypeScript、JSON、YAML 与 Shell 复用 Highlight.js 和共享明暗语法色令牌，未知类型退回纯文本。高亮只生成转义后的语法标记，不执行用户内容，完整原文的 textContent 不变；保留 YAML frontmatter、标题符号、列表标记和原始换行，禁用字体连字以保证连续符号按原字符显示；长行自动折行，不渲染 Markdown、HTML、图片或链接。预览正文最高 480px，且不超过当前视口高度的 55%；长内容在正文内独立滚动，复用 4px 轻量滚动条，文件栏保留在正文上方；短内容按实际高度展示，不裁剪原文。简介仍来自技能元数据。两端详情标题栏均提供下载 ZIP 图标按钮，下载与关闭按钮放在同一水平操作行并使用相同尺寸，下载当前技能版本的完整原包，目录结构与二进制文件均保留；超管内容页切换到历史版本不改变标题栏下载默认版本的语义。预览限制不裁剪下载内容。内容加载失败单独显示错误并支持重试，不以空内容代替失败。
 
-关闭 drawer 先完成220ms的Sheet退出，保留当前技能及版本内容；退出完成后再移除 query param，并把旧的 `/skills/{id}` 入口归一回 `/skills`；浏览器前进/后退通过 `popstate` 同步 UI 状态。
+## 两步导入
 
-## Agent detail 展示
+```mermaid
+flowchart LR
+  Select[选择 ZIP、SKILL 包或文件夹] --> Check[服务端检查和配置名称、图标]
+  Check -->|检查失败| Retry[重试或移除]
+  Retry --> Check
+  Check -->|导入或更新| Saved[刷新列表与详情]
+```
 
-Agent detail 的 `Agent` tab 先使用 agent 详情接口返回的 `skills` 数组建立稳定列表，再按 `skill.skill_id` 并行请求 `/v1/skills/{skill_id}?beta=true` 补全元数据。
+两端直接共用 `SkillImportDialog`，由轻量适配器调用各自接口：
 
-- `skills` section 与 `MCPs and tools` section 平级展示。
-- `skills` 为空或缺失时，保留 `Skills` 标题，并在描述槽显示 `No skills configured.`。
-- `skills` 非空时，使用紧凑列表展示；默认行只展示 skill 名称、原始 `skill_id` 和版本信息（agent 引用版本，以及可用时的 latest version）。
-- `Skill` 主文案优先使用 Skills API 返回的 `display_title`；若无法获取，则降级为 agent snapshot 中的 `display_title` / `name` / `title` / `skill_id`。
-- 每行保留原始 `skill_id`，并提供复制按钮，避免长 ID 作为主视觉但仍可用于调试。
-- 每一行是一个折叠面板（Collapsible），默认折叠，只展示最关键的 Skill 名称、原始 `skill_id`、版本 Badge 和 Skill 来源/类型 Badge。
-- 点击行内区域或右侧的 Chevron 图标可以展开面板，展开后以精美的两列网格（Grid）展示详细元数据，包括：ID（带复制按钮）、Source、Agent version、Latest version、Created、Updated 和 Metadata 状态。
-- `Source` 在外层（折叠行）和展开的详情面板内均会展示，优先使用 Skills API 的 `source`；API 失败时降级到 agent snapshot 的 `source` 或非 `skill` 的 `type`。
-- Agent 引用版本使用 agent snapshot 中的 `version`；缺失时显示 `agent latest`。`latest <version>` 和更新时间来自 Skills API。
-- System prompt、MCPs and tools、Skills 等核心板块的宽度统一到最大宽度（不再限制为 `760px`），从而在宽屏下展现出更一致、更具空间感和现代感的设计。
-- 单个 skill 元数据请求失败不会影响 agent 详情加载；该行继续显示 snapshot 信息，并在展开的详情面板中标记 `Metadata unavailable`。
+1. 选择技能包或文件夹；支持拖入及目录相对路径，最多 20 个独立包，单个包或文件夹最大 8 MiB。更新只选择一个技能。
+2. 后端检查技能包后，第一行显示文件名、检查状态和移除，第二行配置图标和名称。没有步骤说明、第三次确认、手填版本或发布勾选。已存在技能不重命名。
 
-## 上传流
+前端只做格式、大小和目录根 SKILL.md 检查，真正的解包、安全路径、元数据及更新名称一致性由后端执行。同名自定义技能导入失败时提示修改名称或使用更新技能，不向用户展示 display_title 等内部字段名。检查不写入对象或技能记录；提交再次验证包，不信任前一步响应。工作区创建与更新和超管导入均再次检查 SKILL.md 的 256 KiB 预览上限，超出时在写入对象和元数据前返回 413；SDK 原有包大小合同不变。目录中的空参考文件合法，空 archive 不允许。
 
-Create / Update 使用 shadcn `Dialog`，交互遵循 Claude 平台 reverse engineering 文档：
+导入配置中的图标与技能创建或版本更新在同一持久化事务内保存。工作区创建与更新沿用现有技能存储能力，版本由后端生成；超管自动生成内部版本并立即成为默认版本，新技能默认下架，更新保留原有上架状态。
 
-- 没有表单字段，只上传 `.zip`、`.skill` 或目录。
-- 8 MiB 总大小限制。
-- 支持拖拽目录，读取 WebKit filesystem entries 后保留相对路径。
-- 支持点击选择 archive 文件，也支持点击选择目录（使用 `webkitdirectory` / `directory` input 属性）。
-- 单 archive 直接作为一个 `files[]` 上传。
-- 目录上传要求所有文件在同一个顶层目录下，并包含顶层 `SKILL.md`。
-- display title 自动从 archive 文件名或顶层目录推断。
-- Create 模式始终是纯创建语义，提交 `POST /v1/skills?beta=true`。如果 `display_title` 与已有 custom skill 冲突，展示后端 400 错误，并提示用户从已有 skill 的 actions menu 使用 Update 上传新版本。
+批量包分别提交。成功项标记完成，失败项保留错误，重试不重新提交已完成项。退出组件后不继续提交后续包。提交或检查期间禁止关闭，成功退出完成后才打开详情。
 
-Create 成功后：
+## Console 接口
 
-- invalidates skills list。
-- 关闭 dialog。
-- 打开新 skill drawer。
+工作区路径为 `/api/console/organizations/{orgUuid}/workspaces/{workspaceId}/skills`，挂在平台登录与 CSRF 中间件下，解析目标工作区并检查资源使用权限。
 
-Update 成功后：
+- `GET /`：query、source、sort、limit、offset；返回 data、total_count、counts。
+- `GET /{id}/versions/{version}/preview`：返回技能元数据（`id`、`display_title`、`icon_key`、`source`、`description`、`latest_version`、`updated_at`）以及文件目录与 SKILL.md，工作区详情抽屉直接通过 `version=latest` 单次请求渲染；沿用系统技能读取和自定义技能工作区隔离，校验对象 SHA256，正文预览最大 256 KiB，保留既有技能包 30 MiB 兼容上限。
+- 预览接口增加 `?path={完整包内路径}`：返回 path、content、previewable、reason，只允许读取包内已有文件；文本最大 256 KiB，二进制返回 binary、超限返回 too_large，不存在的路径返回 404。`?download=1` 返回完整 ZIP 附件；两种读取均验证对象 SHA256，禁止缓存。超管 `/{id}/versions/{version}/content` 支持相同参数，并沿用超管权限。SDK `/v1` 合同不变。
+- `POST /inspect`：检查包，更新时附目标 skill_id。
+- `POST /`：创建，multipart files[]、display_name、icon_key。
+- `POST /{id}/versions`：更新包与图标，multipart files[]、icon_key。
+- `PATCH /{id}/icon`：更新自定义技能图标。
+- `DELETE /{id}`：原子删除技能与版本，保留对象生命周期原有回收策略。
 
-- invalidates skill、versions 和 list query。
-- 关闭 dialog。
-- 保持当前 skill drawer，刷新 version 列表和 latest metadata。
+原有 `/v1/skills` 的 SDK 兼容行为保留给 API 调用，工作区 Console 详情页不再调用 `/v1/skills`；错误响应统一走全局 `ErrorAdapter.Wrap`。Console 上传保持 8 MiB 限制，不借用稳定 SDK 接口的 30 MiB 限额。系统技能不能通过工作区写入口修改。
 
-## 删除
+## 删除与验证
 
-删除 skill 使用 shadcn `AlertDialog`：
+删除技能必须确认目标和后果。处理期间阻止重复提交和 Escape；失败保留目标和错误并聚焦错误，取消不删除。不要求用户逐个删除版本。
 
-- title：`Confirm deleting {name}`
-- description：说明现有代码引用会立即失效，且操作不可撤销。
-- confirm 时调用 `DELETE /v1/skills/{skill_id}?beta=true`；skill 和 versions 的删除由后端在同一删除语义内处理。
-- 删除失败时确认框保持打开并展示错误信息。
+技能仍被活动智能体引用时，工作区与超管删除弹窗共用错误转换逻辑，按当前界面语言展示原因及先移除引用再删除的操作提示，保留服务端返回的智能体名称和 ID。若技能由子智能体使用，提示移除对应子智能体引用，或切换到不含该技能的子智能体版本后再删除。未知错误继续保留服务端信息。
 
-Builtin skill 和 builtin version 不显示删除入口；后端仍会强制返回 read-only error。
+验证覆盖组件行为、两步 multipart、图标选择、部分失败重试、只读内置、删除错误恢复、来源和搜索；数据库验证覆盖迁移、图标读写、版本与图标原子保存、目录可见性及租户范围。浏览器另外检查菜单/弹层、明暗主题、窄屏、键盘与长名称。结构测试不替代真实运行 Skill 的验收。
 
-## 验收路径
+## Agent 详情
 
-SuperDuck 手动验收覆盖：
+Agent 详情保留原有技能引用展示，不因管理页改版改变引用、执行或版本绑定。原始 skill_id、来源、Agent 引用版本与 latest 元数据沿用现有查询和降级规则；本次不调整 Agent 页面中的复制功能。
 
-- Skills list：列、source badge、pagination、builtin/custom actions 差异。
-- Create empty state：dropzone、8MB 文案、disabled Create skill。
-- Create file state：archive summary、check icon、remove upload、enabled Create skill。
-- Create duplicate custom title：发送 `POST /v1/skills?beta=true` 后展示后端冲突错误，不发送 versions endpoint。
-- Drawer：query param、description、versions、close。
-- Agent detail：`skills` 空态显示 `No skills configured.`；非空态展示紧凑 skills 列表，默认只包含可读名称、原始 `skill_id` 和版本信息；跟随鼠标的 hover 浮窗展示 source、created / updated 时间和 metadata 状态。
-- Actions menu：custom Update/Delete，builtin 无 menu。
-- Update empty state：说明文案和 dropzone。
-- Update success：dialog 关闭，drawer 版本列表刷新。
-- Delete confirm：简洁标题、正文中完整目标名称、Cancel/Delete；短屏固定标题和操作，目标及错误在正文内换行滚动；失败将错误聚焦至可见区域。退出期间保留待删除技能名称和错误，父页面清空选择后不显示空名称。处理中拒绝 Escape，失败保留当前确认，下一次打开使用新技能和当前错误状态。版本删除确认独立成组件，保留原版本号及错误至退出完成；已有独立隔离样本对照，不代表真实版本删除链路已验收。
-- Console errors 和 `/v1/skills` network 请求。
+超管详情移除概览、版本与操作记录页签，直接展示操作按钮（上传新版本、上下架）与包内容（目录与 SKILL.md 原文），顶部提供 ZIP 下载按钮。普通技能详情同样直接展示简介、包内容、ZIP 下载与自定义技能删除入口，不再展示只读版本列表。重复导入使用对应界面语言提示已有版本，保持原有幂等行为。
 
-上传弹窗在退出完成后清理文件选择、错误及文件输入，避免淡出时闪回空上传区。提交中关闭、取消和移除上传均禁用，并拒绝 Escape；失败保留已选文件及错误。上传成功后立即保留接口返回的结果并关闭弹窗；`onUploaded` 在 Base UI 的退出完成回调中执行，再打开新技能详情或刷新版本列表，避免上传弹窗与新详情同时切入。API 请求与 payload 不变，不使用定时器延迟。
-
-## 列表 ID 展示
-
-技能列表 ID 交给共享 CopyIdCell 按单元格宽度截断一次，不先生成含省略号的字符串再由 CSS 二次截断。复制和可访问标签仍使用完整 ID；详情侧栏的紧凑身份展示不受影响。
+选择技能文件夹时优先使用浏览器的只读目录选择器，递归读取文件并保留相对路径，随后进入既有检查与配置步骤；不支持时回退到 webkitdirectory 文件选择。取消选择不弹错误、不再次打开选择框；选择或拖入空文件夹（未读取到有效文件）时提示未找到 SKILL.md 并停留在选择步骤。原生文件访问授权由浏览器控制，网页不关闭或绕过。拖入文件夹和 ZIP 导入保持原有行为。

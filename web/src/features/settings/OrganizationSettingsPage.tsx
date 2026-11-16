@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { TelemetryDestinationsPage } from '../telemetry-destinations/TelemetryDestinationsPage';
-import { useLocation, useNavigate } from '@tanstack/react-router';
+import { useLocation } from '@tanstack/react-router';
 import { Copy, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
 import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
@@ -32,7 +31,6 @@ import {
   settingsSectionFromPath,
   type SettingsPageSection,
 } from './feature-pages';
-import { OrganizationLLMSettingsPage } from './OrganizationLLMSettingsPage';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 import { RetiredConsolePage } from '../dashboard/RetiredConsolePage';
@@ -59,8 +57,6 @@ const emptyForm: FormState = {
 };
 
 export function OrganizationSettingsPage({ section = 'organization' }: { section?: SettingsPageSection }) {
-  const { account, logout } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
   const resolvedSection = section === 'organization' ? settingsSectionFromPath(location.pathname) : section;
 
@@ -68,31 +64,16 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
     return <WorkspaceSettingsRedirect resource="keys" />;
   }
 
-  const handleNavigate = async (href: string) => {
-    await navigate({ href });
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    await navigate({ to: '/login', search: { returnTo: '/' } });
-  };
-
   return (
-    <SettingsShell
-      account={account}
-      currentPath={location.pathname}
-      onLogout={handleLogout}
-      onNavigate={handleNavigate}
-    >
+    <>
       {resolvedSection === 'profile' ? <ProfileSettingsPage /> : null}
       {resolvedSection === 'appearance' ? <AppearanceSettingsPage /> : null}
       {resolvedSection === 'organization' ? <OrganizationSettingsContent /> : null}
-      {resolvedSection === 'llm' ? <OrganizationLLMSettingsPage /> : null}
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
       {resolvedSection === 'telemetry' ? <TelemetryDestinationsPage /> : null}
       {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}
-    </SettingsShell>
+    </>
   );
 }
 
@@ -250,7 +231,7 @@ export function OrganizationSettingsContent() {
     (organizationQuery.isLoading || profileQuery.isLoading) && (!organizationQuery.data || !profileQuery.data);
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="organization-settings-page">
+    <section className="w-full max-w-3xl" data-testid="organization-settings-page">
       <ResourcePageHeader contentGap="content" title={organizationTitle} />
       <div className="space-y-7">
         <div className="space-y-7">

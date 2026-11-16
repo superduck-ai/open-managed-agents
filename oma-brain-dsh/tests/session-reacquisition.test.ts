@@ -160,7 +160,7 @@ test("invalid remote history fails reacquisition without changing the existing l
   expect([...backend.publicLog.values()]).toEqual(publicEvents);
 });
 
-test("completed-block journals restore unpublished output in recorded order on another Brain", async () => {
+test("completed-block journals restore independent output and omit unsettled proxy blocks on another Brain", async () => {
   const { backend, rootA, rootB } = await fixture();
   const first = await mount(backend, rootA);
   backend.modelScript = [textEvents("initial reply")];
@@ -182,6 +182,6 @@ test("completed-block journals restore unpublished output in recorded order on a
   const second = await mount(backend, rootB);
   expect(second.session.restoredFromRemote).toBe(true);
   expect([...backend.publicLog.values()].filter(event => outputs.some(output => output.uuid === event.uuid))).toEqual(outputs);
-  expect(backend.publicLog.has("sevt_proxy_owned")).toBe(true);
+  expect(backend.publicLog.has("sevt_proxy_owned")).toBe(false);
   expect(backend.requests).toHaveLength(requests);
 });

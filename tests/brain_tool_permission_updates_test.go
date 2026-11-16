@@ -3,10 +3,9 @@
 package tests
 
 import (
-	"io"
+	"fmt"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"uuid"
 )
@@ -14,15 +13,12 @@ import (
 func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
 	for _, policy := range []string{"deny", "ask"} {
 		t.Run(policy, func(t *testing.T) {
-			var forwarded atomic.Int32
-			app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				forwarded.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}`)
-			}))
+			app, worker, _, token := newBrainToolCallApp(t, `{"model":"claude-opus-4-6","name":"policy-update"}`)
+			calls := 0
 			call := func() *http.Response {
-				response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp",
-					strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo ok"}}}`), token, false)
+				calls++
+				response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/threads/root/tool-calls",
+					strings.NewReader(fmt.Sprintf(`{"call_id":"call_%d","tool":"bash","input":{"command":"echo ok"}}`, calls)), token, false)
 				response.Body.Close()
 				return response
 			}
@@ -43,8 +39,8 @@ func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
 			if initial := readPolicy(); initial != "allow" {
 				t.Fatalf("initial policy=%q", initial)
 			}
-			if response := call(); response.StatusCode != http.StatusOK || forwarded.Load() != 1 {
-				t.Fatalf("initial call status=%d forwarded=%d", response.StatusCode, forwarded.Load())
+			if response := call(); response.StatusCode != http.StatusAccepted {
+				t.Fatalf("initial call status=%d forwarded=%d", response.StatusCode, calls)
 			}
 			if _, err := app.db.SetSessionStatus(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, "idle"); err != nil {
 				t.Fatal(err)
@@ -63,10 +59,10 @@ func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
 			if policy == "deny" {
 				renewals := len(app.sandboxTimeouts.snapshotCalls())
 				response := call()
-				if response.StatusCode != http.StatusForbidden || response.Header.Get("X-Oma-Sandbox-Not-Forwarded") != "true" {
+				if response.StatusCode != http.StatusForbidden {
 					t.Fatalf("denied call status=%d marker=%q", response.StatusCode, response.Header.Get("X-Oma-Sandbox-Not-Forwarded"))
 				}
-				if forwarded.Load() != 1 || len(app.sandboxTimeouts.snapshotCalls()) != renewals {
+				if len(app.sandboxTimeouts.snapshotCalls()) != renewals {
 					t.Fatal("updated denial forwarded or renewed the sandbox")
 				}
 			}
@@ -75,12 +71,7 @@ func TestBrainToolPermissionsFollowSessionUpdates(t *testing.T) {
 }
 
 func TestBrainOutputWriteRespectsChildPolicy(t *testing.T) {
-	var forwarded atomic.Int32
-	app, worker, _, token := newBrainMCPProxyApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		forwarded.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"saved"}]}}`)
-	}))
+	app, worker, _, token := newBrainToolCallApp(t, `{"model":"claude-opus-4-6","name":"output-policy"}`)
 	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
 	if err != nil || !found {
 		t.Fatalf("primary: %v", err)
@@ -94,13 +85,13 @@ func TestBrainOutputWriteRespectsChildPolicy(t *testing.T) {
 	if _, err := app.db.CreateSessionThreadIfAbsent(t.Context(), child); err != nil {
 		t.Fatal(err)
 	}
-	for _, thread := range []string{child.ExternalID, ""} {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write","arguments":{"file_path":"/tmp/tool-outputs/test.txt","content":"web output"}}}`))
+	for _, thread := range []string{child.ExternalID, "root"} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v2/ccr-sessions/"+worker.ExternalID+"/threads/"+thread+"/tool-calls", strings.NewReader(`{"call_id":"output","tool":"write","input":{"file_path":"/tmp/tool-outputs/test.txt","content":"web output"}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
 		request.Header.Set("Authorization", "Bearer "+token)
-		if thread != "" {
+		if thread != "root" {
 			request.Header.Set("X-OMA-Session-Thread-ID", thread)
 		}
 		response, err := app.client.Do(request)
@@ -108,15 +99,12 @@ func TestBrainOutputWriteRespectsChildPolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 		response.Body.Close()
-		want := http.StatusOK
-		if thread != "" {
+		want := http.StatusAccepted
+		if thread != "root" {
 			want = http.StatusForbidden
 		}
 		if response.StatusCode != want {
 			t.Fatalf("thread=%q status=%d want=%d", thread, response.StatusCode, want)
 		}
-	}
-	if forwarded.Load() != 1 {
-		t.Fatalf("forwarded=%d", forwarded.Load())
 	}
 }

@@ -3,6 +3,7 @@
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
 | HTTP/MCP 出口缺少公共 Session Header 或请求透传异常 | [出口合同](../../../../docs/design/be/ccrv2/upstream-proxy-and-model-runtime.md#出站公共-session-header) | `chat egress`，真实 PostgreSQL、HTTP 接收端、24 组并发 HTTP/直连 MCP 请求；无需 Worker |
+| 真实模型的六个内置工具与持久调用结果 | [Brain](brain.md#真实模型的六个内置工具) | `chat.brain-tools`，显式私有模型配置 |
 | 消息图片或 Read 图片无法被视觉模型识别 | [Brain 图片](brain.md#真实视觉模型与图片) | `chat brain-images`，显式私有模型配置 |
 | DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
@@ -22,7 +23,7 @@
 | Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |
 
-The upstream model is scripted except for the explicitly configured chat.brain-images scenario. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.
+The upstream model is scripted except for the explicitly configured chat.brain-images and chat.brain-tools scenarios. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.
 
 ## Files
 

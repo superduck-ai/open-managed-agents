@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -14,16 +15,14 @@ func (h *Handler) authorizeRuntimeSession(w http.ResponseWriter, r *http.Request
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
-	claims, err := h.service.authenticateRuntimeCredential(r.Context(), token, "")
-	if err != nil {
+	claims, err := h.service.authorizeRuntimeCredential(r.Context(), token, "")
+	if errors.Is(err, errRuntimeCredentialInvalid) || errors.Is(err, errRuntimeCredentialUnavailable) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
-	if claims.Role == "worker" {
-		if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
-			h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(err))
-			return SessionCredentialClaims{}, "", false
-		}
+	if err != nil {
+		h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(err))
+		return SessionCredentialClaims{}, "", false
 	}
 	return claims, token, true
 }

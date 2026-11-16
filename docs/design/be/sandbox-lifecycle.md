@@ -25,11 +25,12 @@ Worker 会把“是否允许新领取”作为显式条件传给事务；关闭�
 
 ## 数据与回收协议
 
-只保留两个新增字段，不新增独立的运行时状态机或消息 outbox：
+只保留下列新增字段，不新增独立的运行时状态机或消息 outbox：
 
 | 表 | 字段 | 语义 |
 | --- | --- | --- |
 | code_sessions | idle_since | 连续 idle 起点；heartbeat 不刷新，重复 idle 保留，业务输入、非 idle 状态和凭证轮换清空 |
+| code_sessions | port_last_access_at | 最近一次经端口网关的访问（见 `session-port-access.md`）；在 `idle_timeout` 内的 Session 不被领取回收，端口访问不清空 `idle_since` |
 | environment_sandboxes | stop_reason | idle 回收使用 `idle_timeout`，Session 归档使用 `session_archived`，用于识别删除重试及已回收记录 |
 
 复用已有的沙箱状态：
@@ -43,7 +44,7 @@ stateDiagram-v2
 
 1. 扫描候选，仅作为提示，不授权删除。
 2. 按 organization UUID、workspace UUID、sandbox UUID 定位不可变的沙箱记录。
-3. 事务按 Session → Code Session → Work / Sandbox 锁定，复查 idle 时间、cloud 类型、
+3. 事务按 Session → Code Session → Work / Sandbox 锁定，复查 idle 时间、端口访问时间（`port_last_access_at` 为空或早于 cutoff）、cloud 类型、
    活跃且未归档的父 Session和 Work 状态；不查询 JetStream backlog 或 PostgreSQL 事件表。
 4. 条件领取成功后保留 `idle_since` 作为并发输入 fence，递增 worker epoch、撤销旧 lease 和 OAuth hash，
    沙箱改为 stopping。

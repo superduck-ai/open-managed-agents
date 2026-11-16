@@ -55,6 +55,7 @@ func defaultConfig() Config {
 		},
 		TranscriptArchive: TranscriptArchiveConfig{DryRun: true, TerminalSweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 168 * time.Hour, SoftDeleteWindow: 336 * time.Hour, TargetSegmentRawBytes: 8388608, DeleteBatchRows: 500, MaxRowsPerJob: 50000},
 		SandboxLifecycle:  SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
+		SessionPorts:      defaultSessionPortsConfig(),
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,

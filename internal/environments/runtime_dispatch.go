@@ -33,10 +33,7 @@ func (r *Runner) sandboxMCPEndpoint(ctx context.Context, sandboxID string) (stri
 	if !ok {
 		return "", errSandboxEndpointUnsupported
 	}
-	port, path := r.cfg.EnvironmentRunner.SandboxMCPPort, r.cfg.EnvironmentRunner.SandboxMCPPath
-	if port == 0 {
-		port = 3001
-	}
+	port, path := r.cfg.EnvironmentRunner.EffectiveSandboxMCPPort(), r.cfg.EnvironmentRunner.SandboxMCPPath
 	if path == "" {
 		path = "/mcp"
 	}

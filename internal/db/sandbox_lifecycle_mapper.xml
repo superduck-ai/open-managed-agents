@@ -16,7 +16,7 @@
             AND sandbox.work_uuid = work.uuid
         LEFT JOIN LATERAL (
             SELECT code.uuid, code.external_id, code.status, code.deleted_at,
-                code.worker_status, code.idle_since
+                code.worker_status, code.idle_since, code.port_last_access_at
             FROM code_sessions code
             WHERE code.organization_uuid = work.organization_uuid
                 AND code.workspace_uuid = work.workspace_uuid AND code.environment_uuid = work.environment_uuid
@@ -37,6 +37,7 @@
             OR (sandbox.state = 'running'
                 AND cs.status = 'active' AND cs.deleted_at IS NULL
                 AND cs.worker_status = 'idle' AND cs.idle_since &lt;= #{cutoff}
+                AND (cs.port_last_access_at IS NULL OR cs.port_last_access_at &lt;= #{cutoff})
                 AND work.state = 'active' AND work.deleted_at IS NULL)
         </if>)
         ORDER BY sandbox.uuid LIMIT #{limit}
@@ -65,6 +66,7 @@
         WHERE cs.uuid = #{codeSessionUUID}
             AND cs.status = 'active' AND cs.deleted_at IS NULL
             AND cs.worker_status = 'idle' AND cs.idle_since &lt;= #{cutoff}
+            AND (cs.port_last_access_at IS NULL OR cs.port_last_access_at &lt;= #{cutoff})
             AND EXISTS (SELECT 1 FROM sessions s JOIN environments env ON env.uuid = s.environment_uuid
                 AND env.organization_uuid = s.organization_uuid AND env.workspace_uuid = s.workspace_uuid
                 WHERE s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid

@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
@@ -43,6 +44,7 @@ type Service struct {
 	attachmentFiles        sessionAttachmentFiles
 	attachmentHTTP         *http.Client
 	attachmentMaxBytes     int64
+	sessionPorts           *sessionports.Settings
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {

@@ -52,6 +52,7 @@ type yamlConfig struct {
 	Storage                StorageConfig              `yaml:"storage"`
 	Batch                  BatchConfig                `yaml:"batch"`
 	SandboxLifecycle       SandboxLifecycleConfig     `yaml:"sandbox_lifecycle"`
+	SessionPorts           SessionPortsConfig         `yaml:"session_ports"`
 	E2B                    E2BConfig                  `yaml:"e2b"`
 	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
 	CodeSession            yamlCodeSessionConfig      `yaml:"code_session"`
@@ -171,6 +172,7 @@ func newYAMLConfig() yamlConfig {
 		EnvironmentPackages:   defaults.EnvironmentPackages,
 		TranscriptArchive:     defaults.TranscriptArchive,
 		SandboxLifecycle:      defaults.SandboxLifecycle,
+		SessionPorts:          defaults.SessionPorts,
 		EnvironmentRunner:     defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
@@ -236,6 +238,7 @@ func (input yamlConfig) resolve() Config {
 		EnvironmentPackages:   input.EnvironmentPackages,
 		TranscriptArchive:     input.TranscriptArchive,
 		SandboxLifecycle:      input.SandboxLifecycle,
+		SessionPorts:          input.SessionPorts,
 		EnvironmentRunner:     input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,

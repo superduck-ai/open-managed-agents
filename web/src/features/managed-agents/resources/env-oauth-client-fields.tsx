@@ -1,5 +1,6 @@
 import { type Ref, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ApiError } from '../../../shared/api/client';
 import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { useAuth } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
@@ -71,21 +72,29 @@ export function EnvOAuthClientFields({
     async save() {
       const record = query.data!;
       if (clientId.trim() === record.client_id && !clientSecret.trim()) return;
-      const saved = await updateWorkspaceOAuthProvider(
-        orgUuid,
-        workspaceId,
-        providerId,
-        {
-          expected_version: record.version,
-          client_id: clientId.trim(),
-          ...(clientSecret.trim() ? { client_secret: clientSecret.trim() } : {}),
-        },
-        csrfToken,
-      );
-      queryClient.setQueryData(queryKey, saved);
-      setClientId(null);
-      setClientSecret('');
-      onSaved(saved);
+      try {
+        const saved = await updateWorkspaceOAuthProvider(
+          orgUuid,
+          workspaceId,
+          providerId,
+          {
+            expected_version: record.version,
+            client_id: clientId.trim(),
+            ...(clientSecret.trim() ? { client_secret: clientSecret.trim() } : {}),
+          },
+          csrfToken,
+        );
+        queryClient.setQueryData(queryKey, saved);
+        setClientId(null);
+        setClientSecret('');
+        onSaved(saved);
+      } catch (error) {
+        if ((error as ApiError).code === 'oauth_provider_version_conflict') {
+          setClientId(clientId);
+          await query.refetch();
+        }
+        throw error;
+      }
     },
   }));
   const fields = [
@@ -107,7 +116,10 @@ export function EnvOAuthClientFields({
       label: msg('platformAdmin.oauthManagement.clientSecret', 'Client secret'),
       type: 'password',
       value: clientSecret,
-      setValue: setClientSecret,
+      setValue: (value: string) => {
+        setClientId(clientId);
+        setClientSecret(value);
+      },
       invalid: attempted && missingSecret,
       placeholder:
         query.data?.has_client_secret && clientId.trim() === query.data.client_id

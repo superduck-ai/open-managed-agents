@@ -861,3 +861,137 @@ test.each([null, 'Client ID', 'Client secret'])('客户端配置在一级凭据�
   expect(submit).not.toHaveBeenCalled();
   queries.clear();
 });
+
+test.each(['clients', 'definition'])('版本冲突刷新后保留客户端输入和凭据草稿，可手动重试：%s', async (target) => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  let record = {
+    id: 'poap_conflict',
+    provider_key: 'custom:poap_conflict',
+    name: 'Team OAuth',
+    enabled: true,
+    configured: true,
+    version: 1,
+    client_id: 'original-client',
+    has_client_secret: true,
+    authorize_endpoint: 'https://auth.example.test/authorize',
+    token_endpoint: 'https://auth.example.test/token',
+    scope: 'read',
+    default_secret_name: '',
+    default_allowed_hosts: [],
+  };
+  const updates: Record<string, unknown>[] = [];
+  const starts: Record<string, unknown>[] = [];
+  let details = 0;
+  globalThis.fetch = mock(async (url, options) => {
+    if (String(url).includes('/vault-auth/start')) {
+      starts.push(JSON.parse(String(options?.body)));
+      return Response.json({ oauth_flow_id: 'flow_conflict', authorize_url: 'https://auth.example.test/authorize' });
+    }
+    if (!String(url).includes('/env-oauth/providers')) return Response.json([]);
+    if (options?.method === 'PATCH') {
+      const input = JSON.parse(String(options.body));
+      updates.push(input);
+      if (updates.length === 1) {
+        record = { ...record, version: 2, client_id: 'remote-client', scope: 'remote-scope' };
+        return Response.json(
+          { error: { code: 'oauth_provider_version_conflict', message: 'conflict' } },
+          { status: 409 },
+        );
+      }
+      expect(input.expected_version).toBe(2);
+      record = {
+        ...record,
+        name: input.name ?? record.name,
+        client_id: input.client_id ?? record.client_id,
+        scope: input.scope ?? record.scope,
+        version: 3,
+      };
+      return Response.json(record);
+    }
+    if (String(url).includes('/poap_conflict?')) {
+      details++;
+      return Response.json(record);
+    }
+    return Response.json([{ ...record, id: record.provider_key, workspace_scoped: true }]);
+  }) as typeof fetch;
+  const popup = { closed: false, location: { href: '' }, close: mock(() => {}) };
+  window.open = mock(() => popup) as unknown as typeof window.open;
+  const queries = new QueryClient();
+  const submit = mock(async () => {});
+  render(
+    <QueryClientProvider client={queries}>
+      <AuthHarness>
+        <CredentialDialog
+          orgUuid="org_fixture"
+          workspaceId="default"
+          vaultId="vlt_fixture"
+          onClose={() => {}}
+          onSubmit={submit}
+        />
+      </AuthHarness>
+    </QueryClientProvider>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Team OAuth (Workspace)' }));
+  fireEvent.change(within(dialog).getByPlaceholderText('Example credential'), {
+    target: { value: 'Credential draft' },
+  });
+  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'MY_TOKEN' } });
+  fireEvent.click(within(dialog).getByRole('radio', { name: 'Unrestricted' }));
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  fireEvent.click(within(dialog).getByRole('button', { name: /Client configuration/ }));
+  const clientId = await within(dialog).findByLabelText('Client ID');
+  await waitFor(() => expect((clientId as HTMLInputElement).value).toBe('original-client'));
+  const secret = within(dialog).getByLabelText('Client secret');
+  fireEvent.change(secret, { target: { value: 'draft-secret' } });
+  if (target === 'clients') {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    await within(dialog).findByText(
+      'The provider configuration changed. Your input is preserved; review it and try again.',
+    );
+  } else {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
+    const editor = await screen.findByRole('form', { name: 'Edit OAuth provider' });
+    fireEvent.change(within(editor).getByLabelText('Name'), { target: { value: 'Provider draft' } });
+    fireEvent.change(within(editor).getByLabelText(/Scope/), { target: { value: 'draft-scope' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+    await within(editor).findByText(
+      'The provider configuration changed. Your input is preserved; review it and try again.',
+    );
+    expect((within(editor).getByLabelText('Name') as HTMLInputElement).value).toBe('Provider draft');
+    expect((within(editor).getByLabelText(/Scope/) as HTMLInputElement).value).toBe('draft-scope');
+  }
+  await waitFor(() => expect(details).toBe(2));
+  expect(updates).toHaveLength(1);
+  expect(starts).toHaveLength(0);
+  expect((clientId as HTMLInputElement).value).toBe('original-client');
+  expect((secret as HTMLInputElement).value).toBe('draft-secret');
+  expect((within(dialog).getByPlaceholderText('Example credential') as HTMLInputElement).value).toBe(
+    'Credential draft',
+  );
+  expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('MY_TOKEN');
+  expect(within(dialog).getByRole('radio', { name: 'Unrestricted' }).getAttribute('aria-checked')).toBe('true');
+  if (target === 'clients') {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(updates[1]).toMatchObject({
+      expected_version: 2,
+      client_id: 'original-client',
+      client_secret: 'draft-secret',
+    });
+  } else {
+    const editor = screen.getByRole('form', { name: 'Edit OAuth provider' });
+    await waitFor(() =>
+      expect(within(editor).getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false),
+    );
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('form', { name: 'Edit OAuth provider' })).toBeNull());
+    expect(updates[1]).toMatchObject({ expected_version: 2, name: 'Provider draft', scope: 'draft-scope' });
+    expect(updates[1]).not.toHaveProperty('client_secret');
+  }
+  expect(submit).not.toHaveBeenCalled();
+  queries.clear();
+});

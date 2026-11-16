@@ -1,6 +1,7 @@
 import { type ComponentProps, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ApiError } from '../../../shared/api/client';
 import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { useAuth } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
@@ -29,10 +30,11 @@ export function WorkspaceOAuthProviderForm({
   const { msg } = useI18n();
   const { csrfToken } = useAuth();
   const errorMessage = usePlatformAdminError();
+  const queryClient = useQueryClient();
   const { name, authorizeEndpoint, tokenEndpoint, scope } = initialOAuthProviderFormValues(provider);
   const [values, setValues] = useState({ name, authorizeEndpoint, tokenEndpoint, scope });
   const patch = (next: Partial<typeof values>) => setValues((current) => ({ ...current, ...next }));
-  const mutation = useMutation({
+  const mutation = useMutation<OAuthProviderRecord, ApiError>({
     mutationFn: () => {
       const input = {
         name: values.name.trim(),
@@ -53,6 +55,11 @@ export function WorkspaceOAuthProviderForm({
     onMutate: () => onPendingChange(true),
     onSettled: () => onPendingChange(false),
     onSuccess: onSaved,
+    onError: async (error) => {
+      if (error.code === 'oauth_provider_version_conflict' && provider) {
+        await queryClient.refetchQueries({ queryKey: ['workspace-oauth-provider', orgUuid, workspaceId, provider.id] });
+      }
+    },
   });
   const ready = [values.name, values.authorizeEndpoint, values.tokenEndpoint].every((value) => value.trim());
   const fields = [
@@ -124,7 +131,12 @@ export function WorkspaceOAuthProviderForm({
       </div>
       {mutation.error ? (
         <p role="alert" className="text-sm text-destructive">
-          {errorMessage(mutation.error)}
+          {mutation.error.code === 'oauth_provider_version_conflict'
+            ? msg(
+                'managedAgents.credentialVaults.credentialDialog.providerVersionConflict',
+                'The provider configuration changed. Your input is preserved; review it and try again.',
+              )
+            : errorMessage(mutation.error)}
         </p>
       ) : null}
       <div className="flex justify-end gap-2">

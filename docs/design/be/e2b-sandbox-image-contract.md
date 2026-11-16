@@ -10,8 +10,8 @@
 
 - `/opt/rclone/rclone-filestore` 存在、是 Linux 可执行文件，并支持 `multimount --config <path>`。
 - Sandbox 具有 rclone-filestore 创建五个固定 FUSE mount、以及最多 8 个 `/mnt/memory/{slug}` 附加 mount 所需的设备、capability 和 mount namespace 权限。
-- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。配置 `environment_runner.manager_artifact` 后，镜像内的 Manager 只作为未配置制品时的回退，见下文“Environment Manager 独立升级”。
-- 配置 Manager 制品时，镜像必须提供 `sh`、`sha256sum`、`cut`、`chmod`、`mv`，并允许 Runner 写入和执行 `/tmp/oma/environment-manager/`。
+- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。配置 `environment_runner.manager_artifact` 后，可以下发制品，或在声明目标版本时复用版本足够新的 Manager，见下文“Environment Manager 独立升级”。
+- 配置 Manager 制品时，镜像必须提供 `sh`、`sha256sum`、`cut`、`chmod`、`mv`、`ln`、`mktemp`、`rm`、`rmdir`，并允许 Runner 写入和执行 `/opt/env-runner/`，以及修改 `manager_path` 所在目录。
 - `rclone-filestore multimount` 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能在配置包含 memory store 时创建 `/mnt/memory/{slug}`；同时必须能写入 `/tmp`，且允许 Runner 在本地盘创建 `/mnt/memory`。
 - Runner 必须能创建 `/mnt/session`，并将 `/mnt/session/outputs` 软链到 `/mnt/user-data/outputs`。标准输出路径若已存在，只接受目标一致的软链或空目录；其他内容停止启动并保留数据。
 - 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
@@ -28,12 +28,27 @@ Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Ru
 
 ## Environment Manager 独立升级
 
-真实制品回归使用 `chat public`，分别设置 `OMA_MANAGER_ARTIFACT_MODE=path` 和 `url`，并通过 `OMA_MANAGER_ARTIFACT_PATH` 指定已构建的 Linux 二进制。测试先验证校验失败会停止 Work 并清理 Sandbox，再使用正确制品完成公开会话启动、真实挂载和聊天回合。镜像内 Manager 路径在该回归中设为无效值，以确认实际使用外置制品。执行入口与边界见 `.agents/skills/verify-be/features/public-start.md`。
+真实制品回归使用 `chat public`，分别设置 `OMA_MANAGER_ARTIFACT_MODE=path` 和 `url`，并通过 `OMA_MANAGER_ARTIFACT_PATH` 指定已构建的 Linux 二进制。测试先验证校验失败会停止 Work 并清理 Sandbox，再使用正确制品完成公开会话启动、真实挂载和聊天回合。镜像内 Manager 路径在该回归中设为无效值，以确认实际使用外置制品。 设置 `OMA_MANAGER_ARTIFACT_VERSION` 为制品真实版本时，还会验证旧版本升级、相等/更高版本跳过上传、SHA 目录复用后切换软链，并检查选中二进制的校验和、镜像原文件未变化和真实聊天回合。执行入口与边界见 `.agents/skills/verify-be/features/public-start.md`。
 
 Environment Manager 可以独立于镜像发布。部署在 `environment_runner.manager_artifact` 中配置一个 Linux 可执行制品，二选一：
 
 - `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。读取完成后再次检查大小与修改时间，读取期间被原地改写（如 `cp` 覆盖）则本次加载失败且不缓存，下一次启动重新读取。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。
 - `url`：HTTP(S) 下载地址，必须同时提供 `sha256`。由 API 服务下载并校验，按进程缓存；下载不设总时长上限，连续 `60s` 未收到数据视为卡住并失败；更换版本时同时修改 `url`/`sha256` 并重启服务。Sandbox 不需要访问该地址。
+
+可选的 `manager_artifact.version` 声明制品的完整语义版本，例如 `0.1.0` 或 `1.0.0-rc.2`。API 主机可能运行在 macOS 或使用不同 CPU 架构，因此不在 API 主机执行 Linux 制品来读取版本。未填写该字段时保持原行为，每次安装配置的制品。
+
+填写 `version` 后，Runner 在上传前先对 Sandbox 中的 `manager_path`（默认 `/usr/local/bin/environment-manager`）执行 `--version`，单次探测最多 10 秒。识别 `environment-manager <version>` 和兼容名称 `environment-runner <version>`；以语义版本规则比较，正确处理数字段和预发布版本。已有版本大于或等于声明版本时，直接使用该路径，不上传或替换文件；此时不要求本地制品可读，也不等待制品加载。URL 的启动预加载仍按原生命周期执行。
+
+已有二进制不存在、不可执行、探测失败、版本无法识别或版本较旧时继续原安装流程；调用上下文已取消时停止处理。加载并校验制品后，还会对其 SHA-256 安装路径执行相同版本探测，避免重复上传同一 Sandbox 中已安装的版本。需要安装时，除 SHA-256 校验外，还要求制品 `--version` 返回的版本字段与声明的 `version` 完全一致，确认成功后才原子激活；声明错误不会替换已有目标文件。
+
+```yaml
+environment_runner:
+  manager_artifact:
+    path: /srv/oma/environment-manager_linux_arm64
+    version: "0.1.1"
+```
+
+Git 提交、构建时间和 SemVer build metadata 不决定版本大小。历史构建使用 `0.1.0`，此次配套 Rust 制品升为 `0.1.1`；之后不同提交构建出的同版本二进制仍会按本规则复用，发布需要升级的代码时必须递增包版本。要强制按制品内容替换或回滚，移除 `version`，继续使用原有 SHA-256 安装流程。版本复用刻意允许已有较新二进制与配置制品的 SHA-256 不同。
 
 两种模式的制品都以 `<sha256>` 命名缓存在 API 主机临时目录（`os.TempDir()` 下的 `oma-environment-manager-*`）中，而不是常驻进程内存；上传时从该文件流式写入 Sandbox（E2B envd 支持时使用 octet-stream，不在内存中整体缓冲）。新版本生效后删除旧缓存文件，已打开该文件的上传不受影响。同一进程任意时刻最多一次加载在进行，`path` 模式的重新读取同样不在锁内执行，并发启动等待同一次结果。
 
@@ -72,11 +87,17 @@ flowchart TD
     N -->|no| P["packages"]
     N -->|yes| C{"manager_artifact configured?"}
     C -->|no| I["Use manager_path from image"]
-    C -->|yes| L["Load cached artifact file on API host (sha256 verified)"]
-    L --> S["Stream via Files API to /tmp/oma/environment-manager/<sha>/environment-manager.partial"]
-    S --> A["chmod 0755, sha256sum check, --version smoke test, mv -f"]
+    C -->|yes| V{"version declared and manager_path version >= required?"}
+    V -->|yes| U["Use selected Manager path"]
+    V -->|no| L["Load cached artifact file on API host (sha256 verified)"]
+    L --> T{"version declared and SHA install path version >= required?"}
+    T -->|yes| K["Atomically switch manager_path symlink"]
+    K -->|ok| U
+    K -->|fail| F
+    T -->|no| S["Stream via Files API to /opt/env-runner/<sha>/environment-manager.partial"]
+    S --> A["chmod 0755, sha256sum check, --version and declared version check, mv -f"]
     A -->|fail| F["Fail work and kill Sandbox"]
-    A -->|ok| U
+    A -->|ok| K
     L -->|fail| F
     I --> P
     U --> P
@@ -87,10 +108,10 @@ flowchart TD
 
 约束与失败语义：
 
-- 配置了制品就 fail-closed：读取、下载、校验、上传、`--version` 冒烟或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到镜像内版本，避免同一部署混跑未知版本。
-- 安装路径按 SHA-256 区分，激活使用同目录 `mv -f`，Manager 不会看到半写入文件。新 Sandbox 的 `/tmp` 不含该文件，因此每次都直接上传，不做预先探测。
+- 未通过版本复用时，制品安装保持 fail-closed：读取、下载、校验、上传、`--version` 冒烟、声明版本核对或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到旧版本。
+- 安装路径为 `/opt/env-runner/<sha256>/environment-manager`，按 SHA-256 区分。校验成功后通过同目录 `mv -f` 激活文件，再在入口目录创建临时软链并原子替换 `manager_path`，默认 `/usr/local/bin/environment-manager`。镜像原有的 `/opt/env-runner/environment-manager` 保留。自定义 `manager_path` 也会被替换为软链，包括原本是普通文件的情况；目录入口会被拒绝。校验或软链切换失败时原入口不变，已经写入的 SHA 文件可留待重试。仅当声明 `version` 且版本探测满足条件时跳过上传；未声明时不做版本探测。
 - E2B 暂停后自动恢复的 Sandbox 会恢复原进程内存，正在运行的 Manager 不会被替换；新版本在该 Session 下一次创建 replacement Sandbox 时生效。
-- 日志只记录 `sandbox_id`、`manager_sha256` 与大小，不记录制品 URL 中可能存在的查询参数。
+- 安装日志记录 `sandbox_id`、`manager_sha256` 与大小；复用日志记录 `sandbox_id`、`manager_path`、`manager_version` 和 `required_manager_version`，不记录原始版本输出或制品 URL 中可能存在的查询参数。
 
 ## Runner 创建的临时状态
 

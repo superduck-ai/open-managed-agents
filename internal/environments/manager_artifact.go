@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	managerArtifactInstallRoot   = "/tmp/oma/environment-manager"
+	managerArtifactInstallRoot   = "/opt/env-runner"
 	managerArtifactBinaryName    = "environment-manager"
 	managerArtifactMaxBytes      = 512 << 20
 	managerArtifactIdleTimeout   = time.Minute
@@ -315,20 +315,42 @@ func managerArtifactInstallPath(sha string) string {
 	return path.Join(managerArtifactInstallRoot, sha, managerArtifactBinaryName)
 }
 
-func managerArtifactActivateCommand(target, sha string) string {
+func managerArtifactActivateCommand(target, sha, version string) string {
 	staging := shellQuote(target + ".partial")
 	quoted := shellQuote(target)
-	return "set -eu\n" +
+	command := "set -eu\n" +
 		"chmod 0755 " + staging + "\n" +
 		"actual=$(sha256sum -- " + staging + " | cut -d ' ' -f 1)\n" +
 		"if [ \"$actual\" != " + shellQuote(sha) + " ]; then rm -f -- " + staging + "; printf 'environment-manager checksum mismatch: %s\\n' \"$actual\" >&2; exit 1; fi\n" +
-		staging + " --version >/dev/null\n" +
-		"mv -f -- " + staging + " " + quoted
+		"version=$(" + staging + " --version)\n"
+	if version != "" {
+		command += "actual=$(printf '%s\\n' \"$version\" | cut -d ' ' -f 2)\n" +
+			"if [ \"$actual\" != " + shellQuote(version) + " ]; then rm -f -- " + staging + "; printf 'environment-manager version mismatch: %s\\n' \"$actual\" >&2; exit 1; fi\n"
+	}
+	return command + "mv -f -- " + staging + " " + quoted
+}
+
+func managerArtifactLinkCommand(target, entry string) string {
+	return "set -eu\n" +
+		"test ! -d " + shellQuote(entry) + "\n" +
+		"staging=$(mktemp -d " + shellQuote(path.Join(path.Dir(entry), ".environment-manager-link.XXXXXX")) + ")\n" +
+		"trap 'rm -f -- \"$staging/link\"; rmdir -- \"$staging\"' EXIT\n" +
+		"ln -s -- " + shellQuote(target) + " \"$staging/link\"\n" +
+		"mv -f -- \"$staging/link\" " + shellQuote(entry)
 }
 
 func (r *Runner) installEnvironmentManager(ctx context.Context, sandboxID string) (string, error) {
 	if r.managerArtifacts == nil {
 		return "", nil
+	}
+	managerPath := r.cfg.EnvironmentRunner.ManagerPath
+	if managerPath == "" {
+		managerPath = defaultEnvironmentManagerPath
+	}
+	if reusable, err := r.reuseEnvironmentManager(ctx, sandboxID, managerPath); err != nil {
+		return "", err
+	} else if reusable {
+		return managerPath, nil
 	}
 	artifact, err := r.managerArtifacts.Load(ctx)
 	if err != nil {
@@ -336,14 +358,25 @@ func (r *Runner) installEnvironmentManager(ctx context.Context, sandboxID string
 	}
 	defer artifact.File.Close()
 	target := managerArtifactInstallPath(artifact.SHA256)
-	if err := r.provider.WriteFileFrom(ctx, sandboxID, target+".partial", artifact.File); err != nil {
-		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_upload", errEnvironmentManagerInstall, err)
+	reusable, err := r.reuseEnvironmentManager(ctx, sandboxID, target)
+	if err != nil {
+		return "", err
 	}
-	if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactActivateCommand(target, artifact.SHA256), managerArtifactActivateLimit); err != nil {
-		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
+	if !reusable {
+		if err := r.provider.WriteFileFrom(ctx, sandboxID, target+".partial", artifact.File); err != nil {
+			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_upload", errEnvironmentManagerInstall, err)
+		}
+		if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactActivateCommand(target, artifact.SHA256, r.managerArtifacts.cfg.Version), managerArtifactActivateLimit); err != nil {
+			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
+		}
+	}
+	if target != managerPath {
+		if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactLinkCommand(target, managerPath), managerArtifactActivateLimit); err != nil {
+			return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
+		}
 	}
 	r.logger.InfoContext(ctx, "environment manager artifact installed", "sandbox_id", sandboxID, "manager_sha256", artifact.SHA256, "size_bytes", artifact.Size)
-	return target, nil
+	return managerPath, nil
 }
 
 func (r *Runner) environmentManagerConfig(managerPath string) config.Config {

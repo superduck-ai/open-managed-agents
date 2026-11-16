@@ -1,10 +1,12 @@
-import { ChevronDown, Download, FileText, LoaderCircle } from 'lucide-react';
+import { ChevronDown, Download, Eye, FileCode2, FileText, Globe, Image, LoaderCircle, Table2 } from 'lucide-react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Card } from '../../../shared/ui/card';
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
-import { SessionFileContext } from './SessionFileContext';
+import { SessionFileContext, useSessionFiles } from './SessionFileContext';
+import { SessionFilePreview } from './SessionFilePreview';
+import { sessionFilePreviewKind, type SessionFilePreviewKind } from './sessionFilePreviewModel';
 import { sessionOutputFilePaths, type SessionOutputFile } from './sessionOutputModel';
 import { sessionStatusIsLive } from './sessionDetailModel';
 import type { SessionApiResponse } from '../types';
@@ -31,12 +33,17 @@ export function SessionOutputFiles({
 function SessionOutputFilesContent({ session, workspaceId, refreshKey, children }: SessionOutputFilesProps) {
   const { msg } = useI18n();
   const { files, error, refresh } = useSessionOutputFiles(session, workspaceId, refreshKey);
+  const [previewId, setPreviewId] = useState<string>();
+  const outputFiles = sessionOutputFilePaths(files, session.resources);
+  const previewFile = outputFiles.find((file) => file.id === previewId);
+  const previewKind = previewFile && sessionFilePreviewKind(previewFile);
   return (
     <SessionFileContext.Provider
       value={{
-        files: sessionOutputFilePaths(files, session.resources),
+        files: outputFiles,
         workspaceId,
         running: sessionStatusIsLive(session.status) && !session.archived_at,
+        openPreview: setPreviewId,
       }}
     >
       {error ? (
@@ -49,15 +56,27 @@ function SessionOutputFilesContent({ session, workspaceId, refreshKey, children 
         </div>
       ) : null}
       {children}
+      {previewFile && previewKind ? (
+        <SessionFilePreview
+          key={previewFile.id}
+          file={previewFile}
+          kind={previewKind}
+          workspaceId={workspaceId}
+          onClose={() => setPreviewId(undefined)}
+        />
+      ) : null}
     </SessionFileContext.Provider>
   );
 }
 
 export function SessionOutputFileList({ files, workspaceId }: { files: SessionOutputFile[]; workspaceId: string }) {
   const { msg } = useI18n();
+  const openPreview = useSessionFiles()?.openPreview;
   if (!files.length) return null;
   const cards = (items: SessionOutputFile[]) =>
-    items.map((file) => <SessionOutputFileCard key={file.id} file={file} workspaceId={workspaceId} />);
+    items.map((file) => (
+      <SessionOutputFileCard key={file.id} file={file} workspaceId={workspaceId} openPreview={openPreview} />
+    ));
   return (
     <Card
       role="region"
@@ -93,36 +112,84 @@ export function SessionOutputFileList({ files, workspaceId }: { files: SessionOu
   );
 }
 
-function SessionOutputFileCard({ file, workspaceId }: { file: SessionOutputFile; workspaceId: string }) {
+const PREVIEW_ICONS: Record<SessionFilePreviewKind, typeof FileText> = {
+  code: FileCode2,
+  csv: Table2,
+  docx: FileText,
+  html: Globe,
+  image: Image,
+  markdown: FileText,
+  pdf: FileText,
+  xlsx: Table2,
+};
+
+function SessionOutputFileCard({
+  file,
+  workspaceId,
+  openPreview,
+}: {
+  file: SessionOutputFile;
+  workspaceId: string;
+  openPreview?: (fileId: string) => void;
+}) {
   const { msg } = useI18n();
   const formatters = useFormatters();
   const { download, downloading } = useSessionFileDownload(workspaceId);
+  const previewKind = openPreview ? sessionFilePreviewKind(file) : null;
+  const Icon = previewKind ? PREVIEW_ICONS[previewKind] : FileText;
   const typeLabel = /\.([a-z0-9]{1,8})$/i.exec(file.filename)?.[1].toUpperCase() ?? file.mime_type;
+  const downloadLabel = msg('files.downloadAria', 'Download {filename}', { filename: file.filename });
+  const downloadIcon = downloading ? (
+    <LoaderCircle className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+  ) : (
+    <Download className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+  );
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      disabled={downloading}
-      aria-busy={downloading}
-      aria-label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
-      title={file.path ?? file.filename}
-      className="h-auto min-w-0 justify-start gap-3 rounded-xl border-0 bg-background/85 px-3 py-2.5 text-left font-normal hover:bg-background dark:hover:bg-background"
-      onClick={() => void download(file)}
-    >
-      <FileText className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium text-foreground">{file.filename}</span>
-        <span className="truncate text-xs text-muted-foreground">{file.path}</span>
-        <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span className="min-w-0 truncate">{typeLabel}</span>
-          <span className="shrink-0">{formatters.bytes(file.size_bytes)}</span>
+    <div className="flex min-w-0 items-center rounded-xl bg-background/85 hover:bg-background">
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={!previewKind && downloading}
+        aria-busy={!previewKind && downloading}
+        aria-label={
+          previewKind ? msg('files.previewAria', 'Preview {filename}', { filename: file.filename }) : downloadLabel
+        }
+        title={file.path ?? file.filename}
+        className="group/card h-auto min-w-0 flex-1 justify-start gap-3 rounded-xl border-0 px-3 py-2.5 text-left font-normal hover:bg-transparent dark:hover:bg-transparent"
+        onClick={() => (previewKind ? openPreview?.(file.id) : void download(file))}
+      >
+        <Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm font-medium text-foreground">{file.filename}</span>
+          <span className="truncate text-xs text-muted-foreground">{file.path}</span>
+          <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <span className="min-w-0 truncate">{typeLabel}</span>
+            <span className="shrink-0">{formatters.bytes(file.size_bytes)}</span>
+          </span>
         </span>
-      </span>
-      {downloading ? (
-        <LoaderCircle className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
-      ) : (
-        <Download className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-      )}
-    </Button>
+        {previewKind ? (
+          <Eye
+            className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-visible/card:opacity-100 motion-reduce:transition-none"
+            aria-hidden
+          />
+        ) : (
+          downloadIcon
+        )}
+      </Button>
+      {previewKind ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="mr-2 shrink-0"
+          disabled={downloading}
+          aria-busy={downloading}
+          aria-label={downloadLabel}
+          onClick={() => void download(file)}
+        >
+          {downloadIcon}
+        </Button>
+      ) : null}
+    </div>
   );
 }

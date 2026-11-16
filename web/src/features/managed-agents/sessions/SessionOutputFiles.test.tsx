@@ -8,6 +8,7 @@ import { resetTestDom } from '../../../test/setup';
 import type { FileMetadataApiResponse, SessionApiResponse } from '../types';
 import { useSessionFiles } from './SessionFileContext';
 import { SessionOutputFileList, SessionOutputFiles } from './SessionOutputFiles';
+import { MarkdownTranscriptContent } from './SessionTranscriptContent';
 import { sessionFilesQueryKey } from './sessionFiles';
 
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
@@ -113,7 +114,7 @@ test('renders all scoped pages, excludes uploads, and deduplicates files outside
   await screen.findByRole('button', { name: 'Download extra.pdf' });
   expect(screen.getAllByRole('button', { name: 'Download result.csv' })).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Download input.csv' })).toBeNull();
-  const outputCard = screen.getByRole('button', { name: 'Download result.csv' });
+  const outputCard = screen.getByRole('button', { name: 'Preview result.csv' });
   expect(within(outputCard).getByText('CSV')).toBeTruthy();
   expect(within(outputCard).getByText('0 B')).toBeTruthy();
   expect(requests).toHaveLength(2);
@@ -240,4 +241,156 @@ test('discovers files published after the idle refresh without opening resources
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   files = [file('file_late', 'late.txt')];
   await screen.findByRole('button', { name: 'Download late.txt' }, { timeout: 2500 });
+});
+
+test('keeps unsupported file types as a single download card', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  globalThis.fetch = async () => page([file('file_deck', 'deck.pptx')]);
+  renderOutputs();
+  await screen.findByRole('button', { name: 'Download deck.pptx' });
+  expect(screen.queryByRole('button', { name: 'Preview deck.pptx' })).toBeNull();
+});
+
+test('reports a failed preview load and still offers the download', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  globalThis.fetch = async (input) =>
+    String(input).includes('/content?')
+      ? Response.json({ error: { type: 'api_error', message: 'Content offline' } }, { status: 500 })
+      : page([file('file_output')]);
+  renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview result.csv' }));
+  const preview = await screen.findByTestId('session-file-preview');
+  expect((await within(preview).findByRole('alert')).textContent).toContain('Content offline');
+  expect(within(preview).getByRole('button', { name: 'Download result.csv' })).toBeTruthy();
+});
+
+test('previews a table from the card and closes without downloading', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const clicked = mock(() => undefined);
+  window.HTMLAnchorElement.prototype.click = clicked;
+  globalThis.fetch = async (input) =>
+    String(input).includes('/content?') ? new Response('name,total\n"Doe, Jane",42') : page([file('file_output')]);
+  renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview result.csv' }));
+  const preview = await screen.findByTestId('session-file-preview');
+  expect((await within(preview).findByRole('columnheader', { name: 'total' })).textContent).toBe('total');
+  expect(within(preview).getByRole('cell', { name: 'Doe, Jane' })).toBeTruthy();
+  fireEvent.click(within(preview).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByTestId('session-file-preview')).toBeNull());
+  expect(clicked).not.toHaveBeenCalled();
+});
+
+test('loads HTML previews in a script-only sandboxed frame with no referrer', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  URL.createObjectURL = mock(() => 'blob:preview_page');
+  globalThis.fetch = async (input) =>
+    String(input).includes('/content?') ? new Response('<p>page</p>') : page([file('file_page', 'page.html')]);
+  renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview page.html' }));
+  const preview = await screen.findByTestId('session-file-preview');
+  const frame = await waitFor(() => {
+    const element = preview.querySelector('iframe');
+    if (!element) throw new Error('frame not rendered');
+    return element;
+  });
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+  expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+  expect(frame.hasAttribute('srcdoc')).toBe(false);
+  expect(frame.getAttribute('src')).toBe('blob:preview_page');
+});
+
+test('cancels the content request when the preview closes while loading', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let contentSignal: AbortSignal | null | undefined;
+  globalThis.fetch = async (input, init) => {
+    if (!String(input).includes('/content?')) return page([file('file_output')]);
+    contentSignal = init?.signal;
+    return new Promise<Response>(() => undefined);
+  };
+  renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview result.csv' }));
+  const preview = await screen.findByTestId('session-file-preview');
+  expect(within(preview).getByRole('status').textContent).toBe('Loading...');
+  await waitFor(() => expect(contentSignal).toBeDefined());
+  fireEvent.click(within(preview).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(contentSignal?.aborted).toBe(true));
+});
+
+test('keeps an open preview when the output list refreshes with a new file', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let files = [file('file_output')];
+  globalThis.fetch = async (input) => (String(input).includes('/content?') ? new Response('name\nkept') : page(files));
+  const { client } = renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview result.csv' }));
+  const preview = await screen.findByTestId('session-file-preview');
+  await within(preview).findByRole('cell', { name: 'kept' });
+  files = [file('file_output'), file('file_new', 'new.txt')];
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: sessionFilesQueryKey('workspace_outputs', 'sesn_outputs') });
+  });
+  await screen.findByRole('button', { name: 'Preview new.txt', hidden: true });
+  expect(within(screen.getByTestId('session-file-preview')).getByRole('cell', { name: 'kept' })).toBeTruthy();
+});
+
+test('loads PDF previews without a referrer and reports images that cannot be decoded', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  URL.createObjectURL = mock(() => 'blob:preview_binary');
+  globalThis.fetch = async (input) =>
+    String(input).includes('/content?')
+      ? new Response('not really binary')
+      : page([file('file_pdf', 'report.pdf'), file('file_image', 'chart.png')]);
+  renderOutputs();
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview report.pdf' }));
+  const frame = await waitFor(() => {
+    const element = screen.getByTestId('session-file-preview').querySelector('iframe');
+    if (!element) throw new Error('frame not rendered');
+    return element;
+  });
+  expect(frame.hasAttribute('sandbox')).toBe(false);
+  expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+  fireEvent.click(within(screen.getByTestId('session-file-preview')).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByTestId('session-file-preview')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Preview chart.png' }));
+  const image = await within(await screen.findByTestId('session-file-preview')).findByRole('img');
+  expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+  fireEvent.error(image);
+  expect(within(screen.getByTestId('session-file-preview')).getByRole('alert')).toBeTruthy();
+  expect(
+    within(screen.getByTestId('session-file-preview')).getByRole('button', { name: 'Download chart.png' }),
+  ).toBeTruthy();
+});
+
+test('opens the preview from a transcript link, offers copy, and toggles the expanded size', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const clicked = mock(() => undefined);
+  window.HTMLAnchorElement.prototype.click = clicked;
+  const session = {
+    ...makeSession(),
+    resources: [{ type: 'file', file_id: 'file_code', mount_path: '/outputs/main.py' }],
+  } as unknown as SessionApiResponse;
+  globalThis.fetch = async (input) =>
+    String(input).includes('/content?') ? new Response('print(42)') : page([file('file_code', 'main.py')]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <I18nProvider initialLocale="en">
+        <SessionOutputFiles session={session} workspaceId="workspace_outputs" refreshKey={0}>
+          <MarkdownTranscriptContent value="See [main.py](/outputs/main.py)" />
+        </SessionOutputFiles>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  const link = await waitFor(() => {
+    const element = screen.getByRole('link', { name: 'main.py' });
+    if (element.getAttribute('href') !== '#download-file') throw new Error('file not resolved');
+    return element;
+  });
+  fireEvent.click(link);
+  const preview = await screen.findByTestId('session-file-preview');
+  await waitFor(() => expect(preview.querySelector('pre')?.textContent).toBe('print(42)'));
+  expect(clicked).not.toHaveBeenCalled();
+  expect(within(preview).getByRole('button', { name: 'Copy' })).toBeTruthy();
+  const expand = within(preview).getByRole('button', { name: 'Expand preview' });
+  fireEvent.click(expand);
+  expect(within(preview).getByRole('button', { name: 'Restore size' }).getAttribute('aria-pressed')).toBe('true');
 });

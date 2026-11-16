@@ -28,6 +28,8 @@ Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Ru
 
 ## Environment Manager 独立升级
 
+真实制品回归使用 `chat public`，分别设置 `OMA_MANAGER_ARTIFACT_MODE=path` 和 `url`，并通过 `OMA_MANAGER_ARTIFACT_PATH` 指定已构建的 Linux 二进制。测试先验证校验失败会停止 Work 并清理 Sandbox，再使用正确制品完成公开会话启动、真实挂载和聊天回合。镜像内 Manager 路径在该回归中设为无效值，以确认实际使用外置制品。执行入口与边界见 `.agents/skills/verify-be/features/public-start.md`。
+
 Environment Manager 可以独立于镜像发布。部署在 `environment_runner.manager_artifact` 中配置一个 Linux 可执行制品，二选一：
 
 - `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。读取完成后再次检查大小与修改时间，读取期间被原地改写（如 `cp` 覆盖）则本次加载失败且不缓存，下一次启动重新读取。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。

@@ -118,6 +118,7 @@ func TestChatPublicStart(t *testing.T) {
 	var calls atomic.Int32
 	model := chatModelFixture(t, previewSeen, &calls, false)
 	configureChatModel(t, e, model.URL)
+	verifyPublicManagerArtifactRejection(t, e)
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
 	provider.failNext.Store(true)
@@ -193,7 +194,7 @@ func registerPublicSandboxCleanup(t *testing.T, e *liveEnv, f *liveSession) {
 	})
 }
 
-func startPublicRunner(t *testing.T, e *liveEnv) (*chatDockerProvider, func()) {
+func startPublicRunner(t *testing.T, e *liveEnv, configure ...func(*config.Config)) (*chatDockerProvider, func()) {
 	t.Helper()
 	cfg, err := config.Load()
 	requireOK(t, err)
@@ -204,6 +205,10 @@ func startPublicRunner(t *testing.T, e *liveEnv) (*chatDockerProvider, func()) {
 	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID"), image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t}
 	cfg.EnvironmentRunner.Enabled = true
 	cfg.EnvironmentRunner.Concurrency = 2
+	configurePublicManagerArtifact(t, &cfg)
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)
 	runner, err := environments.NewRunner(environments.RunnerDependencies{DB: e.database, Provider: provider, Config: cfg, CodeSessions: e.service, Skills: skillsapi.NewRuntimeResolver(e.database), FilestoreTokens: credentials})

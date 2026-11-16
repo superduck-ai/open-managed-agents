@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestPreviewableImage(t *testing.T) {
+	for _, mime := range []string{"image/png", "image/jpeg", "image/gif", "image/webp"} {
+		if !previewableImage(mime) {
+			t.Fatalf("previewableImage(%q) = false", mime)
+		}
+	}
+	for _, mime := range []string{"", "text/plain", "application/pdf", "image/svg+xml"} {
+		if previewableImage(mime) {
+			t.Fatalf("previewableImage(%q) = true", mime)
+		}
+	}
+}
+
 func TestValidateFilename(t *testing.T) {
 	for _, filename := range []string{"", strings.Repeat("n", 256), "line\nbreak.txt", "null\x00.txt", "invalid\xff.txt", "a<b", "a>b", "a:b", "a|b", "a?b", "a*b", "a\\b", "a/b"} {
 		t.Run("reject "+filename, func(t *testing.T) {

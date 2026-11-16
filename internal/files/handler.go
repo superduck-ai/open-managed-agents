@@ -293,20 +293,118 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get file before download", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
+	record, ok := h.visibleFile(w, r, principal.WorkspaceUUID, fileID, "File not found: "+fileID, "Could not download file", "get file before download")
+	if !ok {
 		return
 	}
 	if !record.Downloadable {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "File is not downloadable"))
 		return
 	}
+	h.writeStoredFile(w, r, record)
+}
+
+func (h *Handler) RegisterConsoleRoutes(router chi.Router) {
+	router.Get("/workspaces/{workspaceId}/files/{fileId}", h.consoleFileMetadata)
+	router.Get("/workspaces/{workspaceId}/files/{fileId}/content", h.consoleFileContent)
+}
+
+func (h *Handler) consoleFileContent(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consoleFilePrincipal(r)
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))
+	if err != nil {
+		h.writePreviewLookupError(w, r, err)
+		return
+	}
+	if !previewableImage(record.MimeType) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "File is not previewable"))
+		return
+	}
+	h.writeStoredFile(w, r, record)
+}
+
+func (h *Handler) consoleFileMetadata(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consoleFilePrincipal(r)
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))
+	if err != nil {
+		h.writePreviewLookupError(w, r, err)
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"filename": record.Filename})
+}
+
+func (h *Handler) previewFile(r *http.Request, workspaceUUID, fileID string) (db.FileRecord, error) {
+	record, err := h.db.GetFile(r.Context(), workspaceUUID, fileID)
+	if err == nil || !errors.Is(err, db.ErrNotFound) {
+		return record, err
+	}
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		return db.FileRecord{}, db.ErrNotFound
+	}
+	session, ok, err := h.db.GetSession(r.Context(), workspaceUUID, sessionID)
+	if err != nil {
+		return db.FileRecord{}, err
+	}
+	if !ok {
+		return db.FileRecord{}, db.ErrNotFound
+	}
+	return h.db.GetSessionAttachmentFile(r.Context(), workspaceUUID, session.UUID, fileID)
+}
+
+func (h *Handler) writePreviewLookupError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, db.ErrNotFound) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	h.logger.ErrorContext(r.Context(), "get file before preview", "error", err)
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not preview file"))
+}
+
+func consoleFilePrincipal(r *http.Request) (auth.Principal, bool) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok || chi.URLParam(r, "orgUuid") != principal.OrganizationUUID {
+		return auth.Principal{}, false
+	}
+	workspaceID := chi.URLParam(r, "workspaceId")
+	if workspaceID == "" || (workspaceID != "default" && workspaceID != principal.WorkspaceUUID && workspaceID != principal.WorkspaceExternalID) {
+		return auth.Principal{}, false
+	}
+	return principal, true
+}
+
+func (h *Handler) visibleFile(w http.ResponseWriter, r *http.Request, workspaceUUID, fileID, missingMessage, failureMessage, logEvent string) (db.FileRecord, bool) {
+	record, err := h.db.GetFile(r.Context(), workspaceUUID, fileID)
+	if err == nil {
+		return record, true
+	}
+	if errors.Is(err, db.ErrNotFound) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", missingMessage))
+		return db.FileRecord{}, false
+	}
+	h.logger.ErrorContext(r.Context(), logEvent, "error", err)
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", failureMessage))
+	return db.FileRecord{}, false
+}
+
+func previewableImage(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) writeStoredFile(w http.ResponseWriter, r *http.Request, record db.FileRecord) {
 	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "get object", "error", err)
@@ -320,11 +418,11 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		h.logger.ErrorContext(r.Context(), "download object stream failed", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes, "error", copyErr)
+		h.logger.ErrorContext(r.Context(), "download object stream failed", "file_id", record.ExternalID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes, "error", copyErr)
 		return
 	}
 	if copied != record.SizeBytes {
-		h.logger.WarnContext(r.Context(), "download object stream size mismatch", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes)
+		h.logger.WarnContext(r.Context(), "download object stream size mismatch", "file_id", record.ExternalID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes)
 	}
 }
 

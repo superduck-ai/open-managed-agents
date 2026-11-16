@@ -87,6 +87,14 @@ test('retains channel navigation after consolidating workspace paths', () => {
   expect(isActivePath('/workspaces/team/channels-other', '/channels')).toBe(false);
 });
 
+test('retains evaluation navigation on the workspace path', () => {
+  expect(consoleNavigation.some((item) => item.type === 'link' && item.href === '/evaluations')).toBe(true);
+  expect(navigationHref('/evaluations', 'team')).toBe('/workspaces/team/evaluations');
+  expect(isActivePath('/workspaces/team/evaluations', '/evaluations')).toBe(true);
+  expect(isActivePath('/workspaces/team/evaluations/datasets/ds', '/evaluations')).toBe(true);
+  expect(isActivePath('/workspaces/team/evaluations-other', '/evaluations')).toBe(false);
+});
+
 test('legacy workspace telemetry uses organization settings before redirecting', () => {
   const path = '/settings/workspaces/workspace-b/telemetry';
   expect(isSettingsPath(path)).toBe(true);

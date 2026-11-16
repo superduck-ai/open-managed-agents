@@ -88,13 +88,13 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 | GET | `/oauth/vault/env-success?code&state` | 公共回调；换票、落库、完成 flow，返回 postMessage HTML |
 
 `start` 校验：org 与 principal 一致，按 body 目标工作区重新解析成员权限并要求资源使用权限（保留组织管理员和平台管理员授权语义），workspace/vault 存在且未归档、provider 可用、secret_name 合法、
-display_name 最多 255 个字符，limited 必须有 allowed_hosts；unrestricted 省略主机时持久化空数组。同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
+display_name 最多 255 个字符，limited 必须有 allowed_hosts；unrestricted 省略主机时持久化空数组。新增请求遇到同 vault 同名活动凭证时返回 409 `credential_key_conflict`。重新授权必须显式携带匹配的 `credential_id`，目标须为同 vault、同变量名、同 provider 的活动 `env_oauth` 凭证，否则返回同一冲突错误。
 `redirect_url` 只接受固定回调路径 `/oauth/vault/env-success`：不允许 userinfo、query、fragment 或其他路径；
 非 `dev` 环境必须 HTTPS；配置了 `auth.console_url` 时 scheme 与 host 必须与之一致，避免授权码被送往其他站点。
 
 已完成 state 的顺序重放返回 `status=error`、`error_code=invalid_request`，不再次换票、不返回 credential_id、不修改 flow 或凭证；并发回调由 `processing` 认领互斥，未认领到的一方返回 `flow_in_progress`。换票 HTTP 客户端拒绝跟随 3xx，避免携带 `client_secret`、`code`、`refresh_token` 的请求体被重发到其他 origin。
 
-回调保存前再次检查同名凭证的 provider；不同 provider 返回 `credential_key_conflict`，保留既有凭证及秘密。同 provider 允许原地重新授权。
+回调保存前再次检查同名凭证及 flow 中保存的目标 ID；仅当目标 ID、变量名和 provider 匹配时原地重新授权，否则返回 `credential_key_conflict`，保留既有凭证及秘密。重新授权的目标凭证已不存在时返回 `credential_unavailable`，不回退为新建。
 
 回调保存错误按原因返回 `credential_limit_exceeded`、`credential_version_conflict`、`credential_unavailable` 或 `credential_save_failed`，不冒充换票失败。到期时间从收到换票响应后采样的时间计算。
 

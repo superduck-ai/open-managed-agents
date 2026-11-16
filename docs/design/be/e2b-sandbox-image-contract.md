@@ -10,8 +10,8 @@
 
 - `/opt/rclone/rclone-filestore` 存在、是 Linux 可执行文件，并支持 `multimount --config <path>`。
 - Sandbox 具有 rclone-filestore 创建五个固定 FUSE mount、以及最多 8 个 `/mnt/memory/{slug}` 附加 mount 所需的设备、capability 和 mount namespace 权限。
-- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。配置 `environment_runner.manager_artifact` 后，可以下发制品，或在声明目标版本时复用版本足够新的 Manager，见下文“Environment Manager 独立升级”。
-- 配置 Manager 制品时，镜像必须提供 `sh`、`sha256sum`、`cut`、`chmod`、`mv`、`ln`、`mktemp`、`rm`、`rmdir`，并允许 Runner 写入和执行 `/opt/env-runner/`，以及修改 `manager_path` 所在目录。
+- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 必须可执行；Manager 入口固定为前者，Claude 路径仍可通过 `environment_runner.claude_path` 配置。配置 `environment_runner.manager_artifact` 后，可以下发制品，或在声明目标版本时复用版本足够新的 Manager，见下文“Environment Manager 独立升级”。
+- 配置 Manager 制品时，镜像必须提供 `sh`、`sha256sum`、`cut`、`chmod`、`mv`、`ln`、`mktemp`、`rm`、`rmdir`，并允许 Runner 写入和执行 `/opt/env-runner/`，以及修改 `/usr/local/bin/` 目录。
 - `rclone-filestore multimount` 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能在配置包含 memory store 时创建 `/mnt/memory/{slug}`；同时必须能写入 `/tmp`，且允许 Runner 在本地盘创建 `/mnt/memory`。
 - Runner 必须能创建 `/mnt/session`，并将 `/mnt/session/outputs` 软链到 `/mnt/user-data/outputs`。标准输出路径若已存在，只接受目标一致的软链或空目录；其他内容停止启动并保留数据。
 - 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
@@ -28,7 +28,7 @@ Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Ru
 
 ## Environment Manager 独立升级
 
-真实制品回归使用 `chat public`，分别设置 `OMA_MANAGER_ARTIFACT_MODE=path` 和 `url`，并通过 `OMA_MANAGER_ARTIFACT_PATH` 指定已构建的 Linux 二进制。测试先验证校验失败会停止 Work 并清理 Sandbox，再使用正确制品完成公开会话启动、真实挂载和聊天回合。镜像内 Manager 路径在该回归中设为无效值，以确认实际使用外置制品。 设置 `OMA_MANAGER_ARTIFACT_VERSION` 为制品真实版本时，还会验证旧版本升级、相等/更高版本跳过上传、SHA 目录复用后切换软链，并检查选中二进制的校验和、镜像原文件未变化和真实聊天回合。执行入口与边界见 `.agents/skills/verify-be/features/public-start.md`。
+真实制品回归使用 `chat public`，分别设置 `OMA_MANAGER_ARTIFACT_MODE=path` 和 `url`，并通过 `OMA_MANAGER_ARTIFACT_PATH` 指定已构建的 Linux 二进制。测试先验证校验失败会停止 Work 并清理 Sandbox，再使用正确制品完成公开会话启动、真实挂载和聊天回合。Manager 使用固定入口 `/usr/local/bin/environment-manager`。 设置 `OMA_MANAGER_ARTIFACT_VERSION` 为制品真实版本时，还会验证旧版本升级、相等/更高版本跳过上传、SHA 目录复用后切换软链，并检查选中二进制的校验和、镜像原文件未变化和真实聊天回合。执行入口与边界见 `.agents/skills/verify-be/features/public-start.md`。
 
 Environment Manager 可以独立于镜像发布。部署在 `environment_runner.manager_artifact` 中配置一个 Linux 可执行制品，二选一：
 
@@ -37,7 +37,7 @@ Environment Manager 可以独立于镜像发布。部署在 `environment_runner.
 
 可选的 `manager_artifact.version` 声明制品的完整语义版本，例如 `0.1.0` 或 `1.0.0-rc.2`。API 主机可能运行在 macOS 或使用不同 CPU 架构，因此不在 API 主机执行 Linux 制品来读取版本。未填写该字段时保持原行为，每次安装配置的制品。
 
-填写 `version` 后，Runner 在上传前先对 Sandbox 中的 `manager_path`（默认 `/usr/local/bin/environment-manager`）执行 `--version`，单次探测最多 10 秒。识别 `environment-manager <version>` 和兼容名称 `environment-runner <version>`；以语义版本规则比较，正确处理数字段和预发布版本。已有版本大于或等于声明版本时，直接使用该路径，不上传或替换文件；此时不要求本地制品可读，也不等待制品加载。URL 的启动预加载仍按原生命周期执行。
+填写 `version` 后，Runner 在上传前先对 Sandbox 中的 固定入口 `/usr/local/bin/environment-manager`执行 `--version`，单次探测最多 10 秒。识别 `environment-manager <version>` 和兼容名称 `environment-runner <version>`；以语义版本规则比较，正确处理数字段和预发布版本。已有版本大于或等于声明版本时，直接使用该路径，不上传或替换文件；此时不要求本地制品可读，也不等待制品加载。URL 的启动预加载仍按原生命周期执行。
 
 已有二进制不存在、不可执行、探测失败、版本无法识别或版本较旧时继续原安装流程；调用上下文已取消时停止处理。加载并校验制品后，还会对其 SHA-256 安装路径执行相同版本探测，避免重复上传同一 Sandbox 中已安装的版本。需要安装时，除 SHA-256 校验外，还要求制品 `--version` 返回的版本字段与声明的 `version` 完全一致，确认成功后才原子激活；声明错误不会替换已有目标文件。
 
@@ -79,19 +79,19 @@ sequenceDiagram
     A-->>W: artifact or error (errors are not cached)
 ```
 
-制品上限为 512 MiB，必须与 Sandbox 架构匹配。未配置时 Runner 行为不变，直接使用 `manager_path`（默认镜像内 `/usr/local/bin/environment-manager`）。
+制品上限为 512 MiB，必须与 Sandbox 架构匹配。未配置时 Runner 行为不变，直接使用镜像内 `/usr/local/bin/environment-manager`。
 
 ```mermaid
 flowchart TD
     W["work_metadata"] --> N{"Needs Manager? (Cloud Session or package provisioning)"}
     N -->|no| P["packages"]
     N -->|yes| C{"manager_artifact configured?"}
-    C -->|no| I["Use manager_path from image"]
-    C -->|yes| V{"version declared and manager_path version >= required?"}
+    C -->|no| I["Use /usr/local/bin/environment-manager from image"]
+    C -->|yes| V{"version declared and fixed entry version >= required?"}
     V -->|yes| U["Use selected Manager path"]
     V -->|no| L["Load cached artifact file on API host (sha256 verified)"]
     L --> T{"version declared and SHA install path version >= required?"}
-    T -->|yes| K["Atomically switch manager_path symlink"]
+    T -->|yes| K["Atomically switch /usr/local/bin/environment-manager symlink"]
     K -->|ok| U
     K -->|fail| F
     T -->|no| S["Stream via Files API to /opt/env-runner/<sha>/environment-manager.partial"]
@@ -109,7 +109,7 @@ flowchart TD
 约束与失败语义：
 
 - 未通过版本复用时，制品安装保持 fail-closed：读取、下载、校验、上传、`--version` 冒烟、声明版本核对或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到旧版本。
-- 安装路径为 `/opt/env-runner/<sha256>/environment-manager`，按 SHA-256 区分。校验成功后通过同目录 `mv -f` 激活文件，再在入口目录创建临时软链并原子替换 `manager_path`，默认 `/usr/local/bin/environment-manager`。镜像原有的 `/opt/env-runner/environment-manager` 保留。自定义 `manager_path` 也会被替换为软链，包括原本是普通文件的情况；目录入口会被拒绝。校验或软链切换失败时原入口不变，已经写入的 SHA 文件可留待重试。仅当声明 `version` 且版本探测满足条件时跳过上传；未声明时不做版本探测。
+- 安装路径为 `/opt/env-runner/<sha256>/environment-manager`，按 SHA-256 区分。校验成功后通过同目录 `mv -f` 激活文件，再在入口目录创建临时软链并原子替换固定入口 `/usr/local/bin/environment-manager`。镜像原有的 `/opt/env-runner/environment-manager` 保留。不再提供入口路径配置；原入口是普通文件时也会替换为软链，目录入口会被拒绝。校验或软链切换失败时原入口不变，已经写入的 SHA 文件可留待重试。仅当声明 `version` 且版本探测满足条件时跳过上传；未声明时不做版本探测。
 - E2B 暂停后自动恢复的 Sandbox 会恢复原进程内存，正在运行的 Manager 不会被替换；新版本在该 Session 下一次创建 replacement Sandbox 时生效。
 - 安装日志记录 `sandbox_id`、`manager_sha256` 与大小；复用日志记录 `sandbox_id`、`manager_path`、`manager_version` 和 `required_manager_version`，不记录原始版本输出或制品 URL 中可能存在的查询参数。
 

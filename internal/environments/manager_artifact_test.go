@@ -276,9 +276,9 @@ func TestInstallEnvironmentManagerFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			runner := managerArtifactTestRunner(t, test.provider, test.artifact)
-			managerPath, err := runner.installEnvironmentManager(context.Background(), "sbx_test")
-			if !errors.Is(err, errEnvironmentManagerInstall) || managerPath != "" {
-				t.Fatalf("installEnvironmentManager() = %q, %v; want install failure", managerPath, err)
+			err := runner.installEnvironmentManager(context.Background(), "sbx_test")
+			if !errors.Is(err, errEnvironmentManagerInstall) {
+				t.Fatalf("installEnvironmentManager() = %v; want install failure", err)
 			}
 		})
 	}
@@ -449,12 +449,9 @@ func TestManagerArtifactPreloadSkipsDisabledAndFileSources(t *testing.T) {
 func TestInstallEnvironmentManagerWithoutArtifactKeepsImageBinary(t *testing.T) {
 	provider := &managerArtifactTestProvider{}
 	runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	managerPath, err := runner.installEnvironmentManager(context.Background(), "sbx_test")
-	if err != nil || managerPath != "" || len(provider.commands) != 0 || len(provider.writes) != 0 {
-		t.Fatalf("installEnvironmentManager() = %q, %v; commands=%v writes=%d", managerPath, err, provider.commands, len(provider.writes))
-	}
-	if got := runner.environmentManagerConfig(managerPath).EnvironmentRunner.ManagerPath; got != "" {
-		t.Fatalf("manager path override = %q, want unchanged config", got)
+	err := runner.installEnvironmentManager(context.Background(), "sbx_test")
+	if err != nil || len(provider.commands) != 0 || len(provider.writes) != 0 {
+		t.Fatalf("installEnvironmentManager() = %v; commands=%v writes=%d", err, provider.commands, len(provider.writes))
 	}
 }
 
@@ -463,22 +460,19 @@ func TestInstallEnvironmentManagerStreamsAndActivates(t *testing.T) {
 	sha := testArtifactSHA256(data)
 	provider := &managerArtifactTestProvider{}
 	runner := managerArtifactTestRunner(t, provider, config.EnvironmentManagerArtifactConfig{Path: writeManagerArtifactFile(t, data)})
-	managerPath, err := runner.installEnvironmentManager(context.Background(), "sbx_test")
+	err := runner.installEnvironmentManager(context.Background(), "sbx_test")
 	if err != nil {
 		t.Fatalf("installEnvironmentManager() error = %v", err)
 	}
-	want := defaultEnvironmentManagerPath
+	want := environmentManagerPath
 	target := "/opt/env-runner/" + sha + "/environment-manager"
-	if managerPath != want {
-		t.Fatalf("manager path = %q, want %q", managerPath, want)
-	}
 	if string(provider.writes[target+".partial"]) != "binary" {
 		t.Fatalf("staged writes = %v", provider.writes)
 	}
 	if len(provider.commands) != 2 || !strings.Contains(provider.commands[0], "mv -f -- '"+target+".partial' '"+target+"'") || provider.commands[1] != managerArtifactLinkCommand(target, want) {
 		t.Fatalf("commands = %v", provider.commands)
 	}
-	cfg := runner.environmentManagerConfig(managerPath)
+	cfg := runner.cfg
 	if command := environmentManagerShellCommand("cse_test", cfg); !strings.Contains(command, "exec '"+want+"' task-run") {
 		t.Fatalf("manager command does not use installed artifact:\n%s", command)
 	}

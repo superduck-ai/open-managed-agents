@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	defaultEnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	defaultClaudePath             = "/opt/claude-code/bin/claude"
-	defaultEnvironmentWorkDir     = "/home/user"
-	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
+	environmentManagerPath    = "/usr/local/bin/environment-manager"
+	defaultClaudePath         = "/opt/claude-code/bin/claude"
+	defaultEnvironmentWorkDir = "/home/user"
+	launcherSettingsPath      = "/root/.claude/launcher-settings.json"
 )
 
 func managedAgentSessionConfig(
@@ -235,14 +235,13 @@ func environmentManagerShellCommand(codeSessionID string, cfg config.Config) str
 	safeSessionID := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(codeSessionID)
 	baseDir := path.Join("/tmp/claude-code-sessions", safeSessionID)
 	logPath := path.Join(baseDir, "environment-manager.log")
-	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
 	claudePath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudePath), defaultClaudePath)
 	extraGitConfig := configuredGitSSHtoHTTPSEntries(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts)
 	gitConfigCount := environmentManagerBuiltInGitConfigCount + len(extraGitConfig)
 	commandParts := []string{
 		"set -eu",
 		"mkdir -p " + shellQuote(baseDir),
-		"if [ ! -x " + shellQuote(managerPath) + " ]; then printf '%s\\n' " + shellQuote("environment-manager binary missing or not executable: "+managerPath) + " >&2; exit 1; fi",
+		"if [ ! -x " + shellQuote(environmentManagerPath) + " ]; then printf '%s\\n' " + shellQuote("environment-manager binary missing or not executable: "+environmentManagerPath) + " >&2; exit 1; fi",
 		"export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}",
 		"export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=${CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL:-1}",
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
@@ -271,7 +270,7 @@ func environmentManagerShellCommand(codeSessionID string, cfg config.Config) str
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
-		"exec "+shellQuote(managerPath)+
+		"exec "+shellQuote(environmentManagerPath)+
 			" task-run"+
 			" --session "+shellQuote(codeSessionID)+
 			" --session-mode resume-cached"+

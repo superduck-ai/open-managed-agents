@@ -49,10 +49,9 @@ func TestInstallEnvironmentManagerUpgradesUnusableOrOlderVersion(t *testing.T) {
 				return e2bruntime.CommandResult{}, nil
 			}}
 			runner := managerArtifactTestRunner(t, provider, config.EnvironmentManagerArtifactConfig{Path: writeManagerArtifactFile(t, data), Version: "0.10.0"})
-			got, err := runner.installEnvironmentManager(t.Context(), "sandbox")
-			want := defaultEnvironmentManagerPath
-			if err != nil || got != want || len(provider.writes) != 1 || len(provider.commands) != 4 {
-				t.Fatalf("path=%s error=%v writes=%d commands=%v", got, err, len(provider.writes), provider.commands)
+			err := runner.installEnvironmentManager(t.Context(), "sandbox")
+			if err != nil || len(provider.writes) != 1 || len(provider.commands) != 4 {
+				t.Fatalf("error=%v writes=%d commands=%v", err, len(provider.writes), provider.commands)
 			}
 		})
 	}
@@ -65,9 +64,9 @@ func TestInstallEnvironmentManagerDoesNotUploadAfterCancellation(t *testing.T) {
 		return e2bruntime.CommandResult{}, context.Canceled
 	}}
 	runner := managerArtifactTestRunner(t, provider, config.EnvironmentManagerArtifactConfig{Path: "/missing", Version: "0.1.0"})
-	path, err := runner.installEnvironmentManager(ctx, "sandbox")
-	if !errors.Is(err, errEnvironmentManagerInstall) || path != "" || len(provider.writes) != 0 {
-		t.Fatalf("path=%s error=%v writes=%d", path, err, len(provider.writes))
+	err := runner.installEnvironmentManager(ctx, "sandbox")
+	if !errors.Is(err, errEnvironmentManagerInstall) || len(provider.writes) != 0 {
+		t.Fatalf("error=%v writes=%d", err, len(provider.writes))
 	}
 }
 
@@ -106,14 +105,13 @@ func TestInstallEnvironmentManagerReusesEqualOrNewerVersion(t *testing.T) {
 				return e2bruntime.CommandResult{Stdout: []byte("environment-runner " + version + " (git abc, built today)")}, nil
 			}}
 			runner := managerArtifactTestRunner(t, provider, config.EnvironmentManagerArtifactConfig{Path: "/does-not-exist", Version: "0.10.0"})
-			runner.cfg.EnvironmentRunner.ManagerPath = "/opt/manager with 'quote'"
 			var output bytes.Buffer
 			runner.logger = slog.New(slog.NewJSONHandler(&output, nil))
-			got, err := runner.installEnvironmentManager(t.Context(), "sandbox")
-			if err != nil || got != runner.cfg.EnvironmentRunner.ManagerPath || len(provider.writes) != 0 || len(provider.commands) != 1 || runner.managerArtifacts.cached != nil {
-				t.Fatalf("path=%s error=%v writes=%d commands=%v", got, err, len(provider.writes), provider.commands)
+			err := runner.installEnvironmentManager(t.Context(), "sandbox")
+			if err != nil || len(provider.writes) != 0 || len(provider.commands) != 1 || runner.managerArtifacts.cached != nil {
+				t.Fatalf("error=%v writes=%d commands=%v", err, len(provider.writes), provider.commands)
 			}
-			if provider.commands[0] != shellQuote(got)+" --version" {
+			if provider.commands[0] != shellQuote(environmentManagerPath)+" --version" {
 				t.Fatalf("unsafe probe command %q", provider.commands[0])
 			}
 			var record struct {
@@ -127,7 +125,7 @@ func TestInstallEnvironmentManagerReusesEqualOrNewerVersion(t *testing.T) {
 			if err := json.Unmarshal(output.Bytes(), &record); err != nil {
 				t.Fatal(err)
 			}
-			if record.Level != "INFO" || record.Message != "environment manager artifact reused" || record.Version != version || record.Required != "0.10.0" || record.Path != got || record.Sandbox != "sandbox" {
+			if record.Level != "INFO" || record.Message != "environment manager artifact reused" || record.Version != version || record.Required != "0.10.0" || record.Path != environmentManagerPath || record.Sandbox != "sandbox" {
 				t.Fatalf("reuse record = %+v", record)
 			}
 		})
@@ -147,9 +145,9 @@ func TestInstallEnvironmentManagerReusesPreviouslyInstalledArtifact(t *testing.T
 		return e2bruntime.CommandResult{}, nil
 	}}
 	runner := managerArtifactTestRunner(t, provider, config.EnvironmentManagerArtifactConfig{Path: writeManagerArtifactFile(t, data), Version: "0.1.0"})
-	got, err := runner.installEnvironmentManager(t.Context(), "sandbox")
-	if err != nil || got != defaultEnvironmentManagerPath || len(provider.writes) != 0 || len(provider.commands) != 3 {
-		t.Fatalf("path=%s error=%v writes=%d commands=%v", got, err, len(provider.writes), provider.commands)
+	err := runner.installEnvironmentManager(t.Context(), "sandbox")
+	if err != nil || len(provider.writes) != 0 || len(provider.commands) != 3 {
+		t.Fatalf("error=%v writes=%d commands=%v", err, len(provider.writes), provider.commands)
 	}
 }
 

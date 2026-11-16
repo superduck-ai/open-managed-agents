@@ -12,22 +12,9 @@ import (
 )
 
 func TestBuildPackageProvisionCommand(t *testing.T) {
-	tests := []struct {
-		name string
-		path string
-		want string
-	}{
-		{"default", "", "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin"},
-		{"configured path is quoted", "/opt/env manager/bin/environment-manager", "'/opt/env manager/bin/environment-manager' provision-packages --protocol v1 --stdin"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			cfg := config.Config{}
-			cfg.EnvironmentRunner.ManagerPath = test.path
-			if got := buildPackageProvisionCommand(cfg); got != test.want {
-				t.Fatalf("buildPackageProvisionCommand() = %q, want %q", got, test.want)
-			}
-		})
+	want := "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin"
+	if got := buildPackageProvisionCommand(config.Config{}); got != want {
+		t.Fatalf("buildPackageProvisionCommand() = %q, want %q", got, want)
 	}
 }
 

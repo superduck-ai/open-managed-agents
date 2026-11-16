@@ -88,6 +88,7 @@ export type OAuthProviderRecord = {
 };
 
 export type OAuthProviderInput = {
+  default_allowed_hosts?: string[];
   default_secret_name?: string;
   enabled?: boolean;
   name: string;
@@ -95,7 +96,7 @@ export type OAuthProviderInput = {
   authorize_endpoint: string;
   token_endpoint: string;
   scope: string;
-  client_id: string;
+  client_id?: string;
   client_secret?: string;
   token_endpoint_auth_method?: string;
   token_endpoint_encoding?: string;

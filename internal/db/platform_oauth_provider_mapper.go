@@ -9,6 +9,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper PlatformOAuthProviderMapper -sql ./platform_oauth_provider_mapper.xml -out ./platform_oauth_provider_mapper.sqlmap.gen.go -dialect postgres
 
 type platformOAuthProviderRow struct {
+	WorkspaceUUID              sql.NullString `db:"workspace_uuid"`
 	UUID                       string         `db:"uuid"`
 	ExternalID                 string         `db:"external_id"`
 	Name                       string         `db:"name"`
@@ -33,6 +34,8 @@ type platformOAuthProviderRow struct {
 }
 
 type upsertPlatformOAuthProviderParams struct {
+	WorkspaceUUID              string
+	DefaultAllowedHosts        string
 	UUID                       string
 	ExternalID                 string
 	Name                       string
@@ -54,6 +57,7 @@ type upsertPlatformOAuthProviderParams struct {
 }
 
 type PlatformOAuthProviderMapper interface {
+	ListAvailable(ctx context.Context, workspaceUUID string) ([]platformOAuthProviderRow, error)
 	Insert(ctx context.Context, params upsertPlatformOAuthProviderParams) (platformOAuthProviderRow, error)
 	List(ctx context.Context) ([]platformOAuthProviderRow, error)
 	FindByExternalID(ctx context.Context, externalID string) (platformOAuthProviderRow, error)

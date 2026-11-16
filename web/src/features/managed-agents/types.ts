@@ -250,6 +250,7 @@ export type VaultCredentialApiResponse = {
 };
 
 export type EnvOAuthProviderApiResponse = {
+  workspace_scoped?: boolean;
   enabled: boolean;
   logo_url?: string;
   configured: boolean;

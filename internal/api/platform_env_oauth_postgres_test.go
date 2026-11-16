@@ -656,7 +656,7 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 	if err != nil || stored.Version != builtin.Version+1 || stored.UUID != builtin.UUID {
 		t.Fatal("内置行身份或 CAS 错误")
 	}
-	rows, err := f.server.envOAuthProviders.ListProviders(t.Context())
+	rows, err := f.server.envOAuthProviders.ListProviders(t.Context(), "")
 	if err != nil || len(rows) != 1 || !slices.ContainsFunc(rows, func(row vaultsapi.EnvOAuthProviderSnapshot) bool {
 		return row.ProviderKey == "builtin:feishu" && row.Configured
 	}) || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
@@ -665,7 +665,7 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 	if err := service.Delete(t.Context(), platformadmin.Actor{}, stored.ExternalID, stored.Version); err != nil {
 		t.Fatal("平台客户端删除失败", err)
 	}
-	rows, err = f.server.envOAuthProviders.ListProviders(t.Context())
+	rows, err = f.server.envOAuthProviders.ListProviders(t.Context(), "")
 	if err != nil || len(rows) != 0 {
 		t.Fatal("删除后服务方仍在目录中", err)
 	}

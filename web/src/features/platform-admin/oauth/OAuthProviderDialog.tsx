@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
+import { Textarea } from '../../../shared/ui/textarea';
 import { Input } from '../../../shared/ui/input';
 import { Field as FormField, FieldLabel, FieldDescription } from '../../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
@@ -50,6 +51,10 @@ export function OAuthProviderDialog({
       const editable = {
         scope: values.scope.trim(),
         default_secret_name: values.defaultSecretName.trim(),
+        default_allowed_hosts: values.defaultAllowedHostsText
+          .split(/[\n,]/)
+          .map((host) => host.trim())
+          .filter(Boolean),
         logo_url: values.logoUrl.trim(),
         ...(values.clientId.trim() ? { client_id: values.clientId.trim() } : {}),
         ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
@@ -63,10 +68,7 @@ export function OAuthProviderDialog({
         token_endpoint_encoding: values.encoding,
       };
       return provider
-        ? updateOAuthProvider(client, provider.id, {
-            ...input,
-            expected_version: provider.version,
-          })
+        ? updateOAuthProvider(client, provider.id, { ...input, expected_version: provider.version })
         : createOAuthProvider(client, { ...input, client_id: values.clientId.trim() });
     },
     onSuccess: () => {
@@ -94,7 +96,7 @@ export function OAuthProviderDialog({
           <DialogDescription>
             {msg(
               'platformAdmin.oauthManagement.dialogDescription',
-              'Client ID is visible to platform administrators. Client secret is encrypted and never returned by the API.',
+              'Client secret is encrypted and never returned by the API.',
             )}
           </DialogDescription>
         </DialogHeader>
@@ -170,6 +172,19 @@ export function OAuthProviderDialog({
                   value={values.defaultSecretName}
                   placeholder="ACCESS_TOKEN"
                   onChange={(event) => patch({ defaultSecretName: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="oauth-provider-default-hosts"
+                optional
+                label={msg('platformAdmin.oauthManagement.defaultAllowedHosts', 'Default allowed hosts')}
+                className="sm:col-span-2"
+              >
+                <Textarea
+                  id="oauth-provider-default-hosts"
+                  value={values.defaultAllowedHostsText}
+                  placeholder="api.example.com"
+                  onChange={(event) => patch({ defaultAllowedHostsText: event.target.value })}
                 />
               </Field>
               <Field

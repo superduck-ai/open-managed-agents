@@ -18,7 +18,7 @@ import (
 type ProviderStore interface {
 	GetPlatformOAuthProviderByBuiltinKey(context.Context, string) (db.PlatformOAuthProvider, error)
 	GetPlatformOAuthProviderByExternalID(context.Context, string) (db.PlatformOAuthProvider, error)
-	ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error)
+	ListWorkspaceOAuthProviders(context.Context, string) ([]db.PlatformOAuthProvider, error)
 }
 
 type Resolver struct {
@@ -87,7 +87,8 @@ func (r *Resolver) ResolveEnvOAuthProvider(ctx context.Context, providerKey stri
 
 func ProviderSnapshot(provider db.PlatformOAuthProvider) vaults.EnvOAuthProviderSnapshot {
 	return vaults.EnvOAuthProviderSnapshot{
-		Enabled: provider.Enabled && !provider.Archived, Version: provider.Version, ProviderKey: ProviderKey(provider), Name: provider.Name, LogoURL: provider.LogoURL, Builtin: provider.BuiltinKey != "",
+		WorkspaceUUID: provider.WorkspaceUUID,
+		Enabled:       provider.Enabled && !provider.Archived, Version: provider.Version, ProviderKey: ProviderKey(provider), Name: provider.Name, LogoURL: provider.LogoURL, Builtin: provider.BuiltinKey != "",
 		Configured:        provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil,
 		AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint, Scope: provider.Scope,
 		TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod, TokenEndpointEncoding: provider.TokenEndpointEncoding,
@@ -95,11 +96,11 @@ func ProviderSnapshot(provider db.PlatformOAuthProvider) vaults.EnvOAuthProvider
 	}
 }
 
-func (r *Resolver) ListProviders(ctx context.Context) ([]vaults.EnvOAuthProviderSnapshot, error) {
+func (r *Resolver) ListProviders(ctx context.Context, workspaceUUID string) ([]vaults.EnvOAuthProviderSnapshot, error) {
 	if r.db == nil {
 		return nil, vaults.ErrEnvOAuthProviderUnavailable
 	}
-	rows, err := r.db.ListPlatformOAuthProviders(ctx)
+	rows, err := r.db.ListWorkspaceOAuthProviders(ctx, workspaceUUID)
 	if err != nil {
 		return nil, vaults.ErrEnvOAuthProviderUnavailable
 	}

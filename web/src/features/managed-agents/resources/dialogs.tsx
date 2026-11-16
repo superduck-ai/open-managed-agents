@@ -31,6 +31,7 @@ import { errorMessage } from '../utils';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
 import { CredentialDialogActions } from './credential-dialog-actions';
 import { OptionalCredentialFields } from './optional-credential-fields';
+import type { EnvOAuthClientFieldsHandle } from './env-oauth-client-fields';
 import { EnvOAuthCredentialFields } from './credential-env-oauth-fields';
 import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
@@ -185,6 +186,7 @@ export function CredentialDialog({
   const [workspaceServers, setWorkspaceServers] = useState<WorkspaceMCPServer[]>([]);
   const pendingOAuthFlowIdRef = useRef<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
+  const envOAuthClientRef = useRef<EnvOAuthClientFieldsHandle>(null);
   const mode = credential ? 'edit' : 'create';
   const typeSelected = mode === 'edit' || Boolean(values.authType);
   const canSubmit = credentialFormReady(values, mode, acknowledged);
@@ -194,7 +196,9 @@ export function CredentialDialog({
       (values.authType === 'env_oauth' && !values.envOAuthManualToken.trim()));
   const waitingForOAuth = (needsOAuthConnect || reauthorizing) && submitting;
   const envOAuthConfigured = Boolean(
-    envOAuthProviders?.find((provider) => provider.id === values.envOAuthProviderId)?.configured,
+    envOAuthProviders?.some(
+      (provider) => provider.id === values.envOAuthProviderId && (provider.configured || provider.workspace_scoped),
+    ),
   );
   const { showMcpUrl, showDirectoryPicker, showBearerToken, showOAuthFields, showCredentialCommitment } =
     credentialDialogTypeSteps(values, mode);
@@ -245,16 +249,20 @@ export function CredentialDialog({
       return;
     }
     let active = true;
-    void listEnvOAuthProviders(orgUuid)
+    setEnvOAuthProviders(null);
+    void listEnvOAuthProviders(orgUuid, workspaceId)
       .then((providers) => {
         if (active) {
-          setEnvOAuthProviders(providers);
+          setEnvOAuthProviders((current) => [
+            ...providers,
+            ...(current ?? []).filter((created) => !providers.some((provider) => provider.id === created.id)),
+          ]);
           setEnvOAuthProvidersError(null);
         }
       })
       .catch(() => {
         if (active) {
-          setEnvOAuthProviders([]);
+          setEnvOAuthProviders((current) => current ?? []);
           setEnvOAuthProvidersError(
             msg(
               'managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoadFailed',
@@ -266,7 +274,7 @@ export function CredentialDialog({
     return () => {
       active = false;
     };
-  }, [values.authType, orgUuid, envOAuthProvidersAttempt, msg]);
+  }, [values.authType, orgUuid, workspaceId, envOAuthProvidersAttempt, msg]);
 
   useEffect(() => {
     if (!showDirectoryPicker) {
@@ -410,6 +418,8 @@ export function CredentialDialog({
     // Keep a real popup (not a new tab). Size matters: GitHub enables Authorize via JS and
     // often leaves it unresponsive in tiny popups.
     const envOAuth = values.authType === 'env_oauth';
+    const clientFields = envOAuth ? envOAuthClientRef.current : null;
+    if (clientFields && !clientFields.validate()) return;
     const popup = window.open(
       'about:blank',
       envOAuth ? 'env-oauth' : 'vault-oauth',
@@ -432,6 +442,7 @@ export function CredentialDialog({
     try {
       // GitHub Apps require an exact callback URL match with no extra query params.
       if (envOAuth) {
+        await clientFields?.save();
         const started = await startEnvOAuthVaultAuth(
           orgUuid,
           {
@@ -583,6 +594,15 @@ export function CredentialDialog({
                   ) : null}
                   {values.authType === 'env_oauth' ? (
                     <EnvOAuthCredentialFields
+                      orgUuid={orgUuid}
+                      workspaceId={workspaceId}
+                      clientFieldsRef={envOAuthClientRef}
+                      onProviderSaved={(provider) =>
+                        setEnvOAuthProviders((current) => [
+                          ...(current ?? []).filter((item) => item.id !== provider.id),
+                          provider,
+                        ])
+                      }
                       values={values}
                       providers={envOAuthProviders ?? []}
                       providersLoading={envOAuthProviders === null}

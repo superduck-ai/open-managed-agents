@@ -1265,6 +1265,11 @@ export function vaultOAuthStartErrorMessage(error: unknown, msg: I18nMsg): strin
 
 export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
   switch (errorCode.trim()) {
+    case 'oauth_provider_version_conflict':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.providerVersionConflict',
+        'The provider configuration changed. Your input is preserved; review it and try again.',
+      );
     case 'already_exists':
       return msg(
         'managedAgents.credentialVaults.credentialDialog.oauthError.alreadyExists',

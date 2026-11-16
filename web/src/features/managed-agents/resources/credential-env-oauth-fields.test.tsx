@@ -210,3 +210,27 @@ test.each([false, true])('停用服务方仅对编辑已有凭证可见：%s', (
   fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
   expect(screen.queryAllByRole('option').some((option) => option.textContent?.includes('Example'))).toBe(editing);
 });
+
+test('同名服务方显示工作区范围并保留各自身份', () => {
+  const onChange = mock(() => {});
+  render(
+    <EnvOAuthCredentialFields
+      values={values}
+      providers={[
+        { ...providers[0], name: 'Example', workspace_scoped: false },
+        { ...providers[1], name: 'Example', workspace_scoped: true },
+      ]}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={onChange}
+    />,
+  );
+  expect(screen.getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain('Example (Workspace)');
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  expect(screen.getByRole('option', { name: 'Example' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: /Example \(Workspace\)/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole('option', { name: 'Example' }));
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ envOAuthProviderId: 'builtin:feishu' }));
+});

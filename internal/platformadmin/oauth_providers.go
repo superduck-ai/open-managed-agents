@@ -23,33 +23,37 @@ import (
 )
 
 type OAuthProviderCreateInput struct {
-	DefaultSecretName       string  `json:"default_secret_name"`
-	Enabled                 *bool   `json:"enabled"`
-	Name                    string  `json:"name"`
-	LogoURL                 string  `json:"logo_url"`
-	AuthorizeEndpoint       string  `json:"authorize_endpoint"`
-	TokenEndpoint           string  `json:"token_endpoint"`
-	Scope                   string  `json:"scope"`
-	ClientID                string  `json:"client_id"`
-	ClientSecret            string  `json:"client_secret"`
-	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method"`
-	TokenEndpointEncoding   *string `json:"token_endpoint_encoding"`
+	WorkspaceUUID           string   `json:"-"`
+	DefaultAllowedHosts     []string `json:"default_allowed_hosts"`
+	DefaultSecretName       string   `json:"default_secret_name"`
+	Enabled                 *bool    `json:"enabled"`
+	Name                    string   `json:"name"`
+	LogoURL                 string   `json:"logo_url"`
+	AuthorizeEndpoint       string   `json:"authorize_endpoint"`
+	TokenEndpoint           string   `json:"token_endpoint"`
+	Scope                   string   `json:"scope"`
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret"`
+	TokenEndpointAuthMethod *string  `json:"token_endpoint_auth_method"`
+	TokenEndpointEncoding   *string  `json:"token_endpoint_encoding"`
 }
 
 type OAuthProviderUpdateInput struct {
-	Archived                *bool   `json:"archived"`
-	DefaultSecretName       *string `json:"default_secret_name"`
-	Enabled                 *bool   `json:"enabled"`
-	ExpectedVersion         int64   `json:"expected_version"`
-	Name                    *string `json:"name"`
-	LogoURL                 *string `json:"logo_url"`
-	AuthorizeEndpoint       *string `json:"authorize_endpoint"`
-	TokenEndpoint           *string `json:"token_endpoint"`
-	Scope                   *string `json:"scope"`
-	ClientID                *string `json:"client_id"`
-	ClientSecret            *string `json:"client_secret"`
-	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method"`
-	TokenEndpointEncoding   *string `json:"token_endpoint_encoding"`
+	WorkspaceUUID           string    `json:"-"`
+	DefaultAllowedHosts     *[]string `json:"default_allowed_hosts"`
+	Archived                *bool     `json:"archived"`
+	DefaultSecretName       *string   `json:"default_secret_name"`
+	Enabled                 *bool     `json:"enabled"`
+	ExpectedVersion         int64     `json:"expected_version"`
+	Name                    *string   `json:"name"`
+	LogoURL                 *string   `json:"logo_url"`
+	AuthorizeEndpoint       *string   `json:"authorize_endpoint"`
+	TokenEndpoint           *string   `json:"token_endpoint"`
+	Scope                   *string   `json:"scope"`
+	ClientID                *string   `json:"client_id"`
+	ClientSecret            *string   `json:"client_secret"`
+	TokenEndpointAuthMethod *string   `json:"token_endpoint_auth_method"`
+	TokenEndpointEncoding   *string   `json:"token_endpoint_encoding"`
 }
 
 type OAuthProviderView struct {
@@ -155,6 +159,10 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	if err != nil {
 		return OAuthProviderView{}, err
 	}
+	hosts, err := normalizeOAuthProviderHosts(input.DefaultAllowedHosts)
+	if err != nil {
+		return OAuthProviderView{}, err
+	}
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
@@ -165,6 +173,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	}
 	now := time.Now().UTC()
 	provider := db.PlatformOAuthProvider{
+		WorkspaceUUID: input.WorkspaceUUID, DefaultAllowedHosts: hosts,
 		UUID:              uuid.NewV4().String(),
 		DefaultSecretName: secretName,
 		Enabled:           enabled,
@@ -194,8 +203,19 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		}
 		return OAuthProviderView{}, err
 	}
-	s.audit(ctx, actor, created, "create", []string{"default_secret_name", "enabled", "name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
+	s.audit(ctx, actor, created, "create", []string{"default_allowed_hosts", "default_secret_name", "enabled", "name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
 	return oauthProviderView(created, clientID), nil
+}
+
+func (s *OAuthProviderService) GetWorkspace(ctx context.Context, workspaceUUID, externalID string) (OAuthProviderView, error) {
+	provider, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
+	if err != nil {
+		return OAuthProviderView{}, mapOAuthProviderError(err)
+	}
+	if provider.WorkspaceUUID != workspaceUUID {
+		return OAuthProviderView{}, ErrNotFound
+	}
+	return s.view(ctx, provider)
 }
 
 func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (view OAuthProviderView, failure error) {
@@ -210,6 +230,9 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 			return OAuthProviderView{}, ErrNotFound
 		}
 		return OAuthProviderView{}, err
+	}
+	if current.WorkspaceUUID != input.WorkspaceUUID {
+		return OAuthProviderView{}, ErrNotFound
 	}
 	if input.ExpectedVersion < 1 {
 		return OAuthProviderView{}, invalid("必须提供 expected_version")
@@ -275,6 +298,9 @@ func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, external
 	}()
 	if err != nil {
 		return mapOAuthProviderError(err)
+	}
+	if current.WorkspaceUUID != "" {
+		return ErrNotFound
 	}
 	if expectedVersion < 1 {
 		return invalid("必须提供 expected_version")
@@ -376,7 +402,7 @@ func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider 
 		result, code = "denied", publicError(failure).Code
 	}
 	s.logger.InfoContext(ctx, "platform oauth provider audit", "actor_account_uuid", actor.AccountUUID, "actor_type", actorType,
-		"provider_uuid", provider.UUID, "provider_key", key, "action", action,
+		"workspace_uuid", provider.WorkspaceUUID, "provider_uuid", provider.UUID, "provider_key", key, "action", action,
 		"changed_fields", fields, "result", result, "error_code", code, "request_id", httpapi.RequestID(ctx))
 }
 
@@ -393,6 +419,9 @@ func (i OAuthProviderUpdateInput) changedFields() []string {
 			fields = append(fields, field.name)
 		}
 	}
+	if i.DefaultAllowedHosts != nil {
+		fields = append(fields, "default_allowed_hosts")
+	}
 	if i.Archived != nil {
 		fields = append(fields, "archived")
 	}
@@ -408,7 +437,7 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return invalid("请求 JSON 无效")
 	}
-	for _, key := range []string{"client_id", "client_secret", "default_secret_name", "enabled", "archived"} {
+	for _, key := range []string{"client_id", "client_secret", "default_secret_name", "enabled", "archived", "default_allowed_hosts"} {
 		if value, exists := fields[key]; exists && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return invalid("配置字段不能为 null")
 		}
@@ -419,6 +448,14 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 }
 
 func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthProviderUpdateInput) error {
+	if input.DefaultAllowedHosts != nil {
+		hosts, err := normalizeOAuthProviderHosts(*input.DefaultAllowedHosts)
+		if err != nil {
+			return err
+		}
+		provider.DefaultAllowedHosts = hosts
+	}
+
 	if input.Archived != nil {
 		provider.Archived = *input.Archived
 	}
@@ -537,4 +574,17 @@ func normalizeOAuthProviderSecretName(value string) (string, error) {
 		}
 	}
 	return name, nil
+}
+
+func normalizeOAuthProviderHosts(hosts []string) ([]string, error) {
+	normalized := make([]string, len(hosts))
+	for i, host := range hosts {
+		normalized[i] = strings.TrimSpace(host)
+	}
+	if len(normalized) > 0 {
+		if err := vaults.ValidateEnvOAuthNetworking("limited", normalized); err != nil {
+			return nil, invalidOAuthProviderHosts()
+		}
+	}
+	return normalized, nil
 }

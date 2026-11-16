@@ -308,3 +308,48 @@ func TestOAuthProviderArchiveAndRestorePreserveConfiguration(t *testing.T) {
 		t.Fatal("恢复归档配置失败", err)
 	}
 }
+
+func TestOAuthProviderDefaultHostsUpdate(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	hosts := []string{" api.example.test "}
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: store.provider.Version, DefaultAllowedHosts: &hosts})
+	if err != nil || len(view.DefaultAllowedHosts) != 1 || view.DefaultAllowedHosts[0] != "api.example.test" {
+		t.Fatal("默认允许主机未保存", err)
+	}
+	invalidHosts := []string{"https://api.example.test/path"}
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, DefaultAllowedHosts: &invalidHosts}); err == nil {
+		t.Fatal("默认主机允许了 URL")
+	}
+	cleared, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, DefaultAllowedHosts: new([]string{})})
+	if err != nil || len(cleared.DefaultAllowedHosts) != 0 {
+		t.Fatal("默认允许主机无法清空", err)
+	}
+}
+
+func TestPlatformOAuthProviderCannotMutateWorkspaceProvider(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	store.provider.WorkspaceUUID = "workspace"
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatal("平台更新未拒绝工作区服务方", err)
+	}
+	if err := service.Delete(t.Context(), Actor{}, store.provider.ExternalID, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatal("平台删除未拒绝工作区服务方", err)
+	}
+	if store.writes != 0 {
+		t.Fatal("工作区记录被平台管理路径修改")
+	}
+}
+
+func TestWorkspaceOAuthProviderScope(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	store.provider.WorkspaceUUID = "workspace"
+	if _, err := service.GetWorkspace(t.Context(), "other", store.provider.ExternalID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("可读取其他工作区的客户端", err)
+	}
+	if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{WorkspaceUUID: "other", ExpectedVersion: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatal("可修改其他工作区的客户端", err)
+	}
+	if store.writes != 0 {
+		t.Fatal("跨工作区修改发生写入")
+	}
+}

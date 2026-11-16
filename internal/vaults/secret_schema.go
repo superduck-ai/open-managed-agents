@@ -41,6 +41,14 @@ type environmentVariableCredentialSecret struct {
 
 func (environmentVariableCredentialSecret) credentialSecretVariant() {}
 
+type envOAuthCredentialSecret struct {
+	Type         credentialAuthType `json:"type"`
+	AccessToken  string             `json:"access_token"`
+	RefreshToken string             `json:"refresh_token,omitempty"`
+}
+
+func (envOAuthCredentialSecret) credentialSecretVariant() {}
+
 func decodeMCPOAuthCredentialSecret(raw []byte) (mcpOAuthCredentialSecret, error) {
 	var secret mcpOAuthCredentialSecret
 	if err := json.Unmarshal(raw, &secret); err != nil {
@@ -70,6 +78,17 @@ func decodeEnvironmentVariableCredentialSecret(raw []byte) (environmentVariableC
 	}
 	if secret.Type != credentialAuthTypeEnvironmentVariable {
 		return environmentVariableCredentialSecret{}, fmt.Errorf("environment_variable secret has type %q", secret.Type)
+	}
+	return secret, nil
+}
+
+func decodeEnvOAuthCredentialSecret(raw []byte) (envOAuthCredentialSecret, error) {
+	var secret envOAuthCredentialSecret
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return envOAuthCredentialSecret{}, fmt.Errorf("decode env_oauth secret: %w", err)
+	}
+	if secret.Type != credentialAuthTypeEnvOAuth {
+		return envOAuthCredentialSecret{}, fmt.Errorf("env_oauth secret has type %q", secret.Type)
 	}
 	return secret, nil
 }

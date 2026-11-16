@@ -1,3 +1,4 @@
+import { OAuthProvidersPage } from '../features/platform-admin/oauth/OAuthProvidersPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { FileDetailsPage } from '../features/dashboard/FileDetailsPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
@@ -66,6 +67,11 @@ const platformSkillsRoute = createRoute({
     skill: typeof search.skill === 'string' ? search.skill : undefined,
   }),
   component: SystemSkillsPage,
+});
+const platformOAuthRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'oauth',
+  component: OAuthProvidersPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -682,6 +688,7 @@ const routeTree = rootRoute.addChildren([
     platformOrganizationDetailRoute,
     platformAdministratorsRoute,
     platformSkillsRoute,
+    platformOAuthRoute,
   ]),
   loginRoute,
   invitationsRoute,

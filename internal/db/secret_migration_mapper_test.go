@@ -22,7 +22,7 @@ func TestSecretMigrationMapper(t *testing.T) {
 				})
 			}
 			bound := buildSecretMigrationMapperReplace(yourbatis.DialectPostgres, kind, SecretMigrationRecord{}, nil)
-			if !strings.Contains(bound.SQL, "organization_uuid") || !strings.Contains(bound.SQL, "workspace_uuid") || !strings.Contains(bound.SQL, "m.uuid =") {
+			if kind != "platform_oauth_providers" && (!strings.Contains(bound.SQL, "organization_uuid") || !strings.Contains(bound.SQL, "workspace_uuid") || !strings.Contains(bound.SQL, "m.uuid =")) {
 				t.Fatal("update lost tenant scope")
 			}
 			sensitive := 0

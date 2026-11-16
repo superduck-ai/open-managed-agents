@@ -74,3 +74,63 @@ func TestExchangeOAuthTokenEndpoint(t *testing.T) {
 		}
 	})
 }
+
+func TestExchangeOAuthTokenEndpointJSONEncoding(t *testing.T) {
+	t.Parallel()
+	var saw struct {
+		contentType string
+		body        map[string]string
+		decodeErr   error
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		saw.contentType = r.Header.Get("Content-Type")
+		saw.decodeErr = json.NewDecoder(r.Body).Decode(&saw.body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":         0,
+			"access_token": "access",
+			"expires_in":   7200,
+		})
+	}))
+	defer server.Close()
+
+	got, err := ExchangeOAuthTokenEndpoint(t.Context(), server.Client(), OAuthTokenEndpointExchange{
+		TokenEndpoint:           server.URL,
+		ClientID:                "client",
+		ClientSecret:            "secret",
+		TokenEndpointAuthMethod: "client_secret_post",
+		TokenEndpointEncoding:   "json",
+		Form: url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {"abc"},
+			"redirect_uri":  {"https://app.example.com/oauth/vault/env-success"},
+			"code_verifier": {"verifier"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	if saw.contentType != "application/json" {
+		t.Fatalf("content-type = %q", saw.contentType)
+	}
+	if saw.decodeErr != nil {
+		t.Fatalf("decode body: %v", saw.decodeErr)
+	}
+	if saw.body["grant_type"] != "authorization_code" || saw.body["code"] != "abc" || saw.body["client_secret"] != "secret" {
+		t.Fatalf("body = %v", saw.body)
+	}
+	if got.AccessToken != "access" || got.ExpiresIn != 7200 {
+		t.Fatalf("result = %#v", got)
+	}
+}
+
+func TestExchangeOAuthTokenEndpointRejectsUnknownEncoding(t *testing.T) {
+	t.Parallel()
+	_, err := ExchangeOAuthTokenEndpoint(t.Context(), http.DefaultClient, OAuthTokenEndpointExchange{
+		TokenEndpoint:         "https://auth.example.com/token",
+		TokenEndpointEncoding: "msgpack",
+		Form:                  url.Values{"grant_type": {"refresh_token"}},
+	})
+	if err == nil || err.Error() != `unsupported token endpoint encoding "msgpack"` {
+		t.Fatalf("error = %v", err)
+	}
+}

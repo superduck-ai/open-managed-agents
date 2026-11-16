@@ -33,6 +33,7 @@ type Handler struct {
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper
 	mitmEgress             *vaults.MITMEgress
+	envOAuthProviders      vaults.EnvOAuthProviderResolver
 	tunnelInvoker          TunnelInvoker
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
@@ -119,7 +120,9 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		return h
 	}
 	injector := vaults.NewInjector(h.db, secretSvc, h.logger).
-		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEnqueuer)
+		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients).
+		WithEnvOAuthProviders(h.envOAuthProviders).
+		WithWebhooks(webhookEnqueuer)
 	if refreshLease != nil {
 		injector = injector.WithRefreshLease(refreshLease)
 	}
@@ -134,6 +137,14 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		)
 	}
 	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
+	return h
+}
+
+func (h *Handler) WithEnvOAuthProviders(providers vaults.EnvOAuthProviderResolver) *Handler {
+	if h == nil {
+		return nil
+	}
+	h.envOAuthProviders = providers
 	return h
 }
 

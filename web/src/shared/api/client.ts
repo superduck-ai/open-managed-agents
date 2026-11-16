@@ -227,6 +227,9 @@ async function toApiError(response: Response): Promise<ApiError> {
     if (typeof payload.code === 'string') {
       code = payload.code;
     }
+    if (typeof payload.error_code === 'string') {
+      code = payload.error_code;
+    }
     if (typeof payload.message === 'string') {
       message = payload.message;
     }

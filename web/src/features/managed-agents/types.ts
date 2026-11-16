@@ -249,6 +249,20 @@ export type VaultCredentialApiResponse = {
   vault_id: string;
 };
 
+export type EnvOAuthProviderApiResponse = {
+  enabled: boolean;
+  logo_url?: string;
+  configured: boolean;
+  id: string;
+  name: string;
+  builtin: boolean;
+  authorize_endpoint: string;
+  token_endpoint: string;
+  scope: string;
+  default_secret_name: string;
+  default_allowed_hosts: string[] | null;
+};
+
 export type MemoryApiResponse = {
   id: string;
   content?: string | null;
@@ -609,6 +623,7 @@ export type SessionFileResourceFormValue = {
 export type EntityOption = {
   id: string;
   label: string;
+  icon?: ReactNode;
   secondary?: string;
   /** Absolute created timestamp for vault pickers (CMA-aligned). */
   createdAt?: string;
@@ -675,7 +690,7 @@ export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'c
 export type CredentialFormValues = {
   displayName: string;
   /** Empty until the user picks a type in the create dialog (CMA progressive form). */
-  authType: '' | 'static_bearer' | 'environment_variable' | 'mcp_oauth';
+  authType: '' | 'static_bearer' | 'environment_variable' | 'mcp_oauth' | 'env_oauth';
   mcpServerUrl: string;
   token: string;
   secretName: string;
@@ -692,6 +707,8 @@ export type CredentialFormValues = {
   refreshAuthType: CredentialTokenEndpointAuthType;
   oauthClientId: string;
   oauthClientSecret: string;
+  envOAuthProviderId: string;
+  envOAuthManualToken: string;
 };
 
 export type MemoryFormValues = {

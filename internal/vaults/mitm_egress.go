@@ -45,6 +45,9 @@ func NewMITMEgress(
 	egress := &MITMEgress{env: env, inj: inj}
 	if env != nil {
 		egress.gitStore = database
+		if inj != nil {
+			env.setEnvOAuthTokens(inj.envOAuthTokenResolver())
+		}
 	}
 	return egress
 }
@@ -52,6 +55,9 @@ func NewMITMEgress(
 func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	if env == nil && inj == nil {
 		return nil
+	}
+	if env != nil && inj != nil {
+		env.setEnvOAuthTokens(inj.envOAuthTokenResolver())
 	}
 	return &MITMEgress{env: env, inj: inj}
 }

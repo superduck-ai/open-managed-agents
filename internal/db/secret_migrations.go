@@ -7,7 +7,7 @@ import (
 	"slices"
 )
 
-var secretMigrationKinds = []string{"vault_credentials", "mcp_oauth_flows", "mcp_tunnel_token_versions", "llm_providers", "session_resources", "deployments", "channel_workspace_credentials"}
+var secretMigrationKinds = []string{"vault_credentials", "mcp_oauth_flows", "mcp_tunnel_token_versions", "llm_providers", "session_resources", "deployments", "channel_workspace_credentials", "platform_oauth_providers", "env_oauth_flows"}
 
 type SecretMigrationRecord struct {
 	UUID             string

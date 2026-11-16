@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { productIcons } from './product-icons';
 
 export function OAuthProviderAvatar({ logoUrl }: { logoUrl?: string }) {
-  return logoUrl ? (
+  const [failedUrl, setFailedUrl] = useState<string>();
+  return logoUrl && logoUrl !== failedUrl ? (
     <img
       src={logoUrl}
+      onError={() => setFailedUrl(logoUrl)}
       alt=""
       referrerPolicy="no-referrer"
       className="size-6 shrink-0 rounded-md bg-white object-contain"

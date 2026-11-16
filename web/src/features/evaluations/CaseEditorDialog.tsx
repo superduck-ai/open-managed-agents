@@ -20,7 +20,7 @@ import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { createEvaluationCases, evaluationError, updateEvaluationCase, type EvaluationCase } from './api';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
 import { CaseAttachments } from './caseMedia';
-import { blockTypeForMime, buildInputs, fileBlocks, textFromInputs, type CaseFile } from './caseInputs';
+import { blockTypeForMime, editedCaseInputs, fileBlocks, textFromInputs, type CaseFile } from './caseInputs';
 
 export function CaseEditorDialog({
   open,
@@ -61,7 +61,7 @@ export function CaseEditorDialog({
     mutationFn: async () => {
       const body = {
         query,
-        inputs: buildInputs(query, files),
+        inputs: editedCaseInputs(item?.inputs, query, files),
         expected_answer: expected,
         acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
         polarity,
@@ -87,7 +87,7 @@ export function CaseEditorDialog({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (buildInputs(query, files).length === 0) {
+    if (editedCaseInputs(item?.inputs, query, files).length === 0) {
       setError(msg('evaluations.inputRequired', 'Enter a query or attach a file.'));
       return;
     }

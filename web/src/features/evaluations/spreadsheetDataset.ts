@@ -22,8 +22,68 @@ export function sampleWorkbook() {
   return zipStored(workbookParts());
 }
 
+export function imageAnchorWorkbook() {
+  const shared = sharedStringsXml(['query', 'expected_answer']);
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+  </sheetData>
+  <drawing r:id="rId1"/>
+</worksheet>`;
+  const drawing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:oneCellAnchor>
+    <xdr:from><xdr:col>0</xdr:col><xdr:row>1</xdr:row></xdr:from>
+    <xdr:pic><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic>
+  </xdr:oneCellAnchor>
+</xdr:wsDr>`;
+  return zipStored({
+    ...officePackage(sheet, shared),
+    'xl/worksheets/_rels/sheet1.xml.rels': xml(
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>',
+    ),
+    'xl/drawings/drawing1.xml': xml(drawing),
+    'xl/drawings/_rels/drawing1.xml.rels': xml(
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/chart.png"/></Relationships>',
+    ),
+    'xl/media/chart.png': tinyPng,
+  });
+}
+
+export function characterReferenceWorkbook() {
+  const shared = sharedStringsXml(['query', 'A&#10;B&amp;C']);
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>expected_answer</t></is></c></row>
+    <row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="inlineStr"><is><t>C&#xA;D</t></is></c></row>
+  </sheetData>
+</worksheet>`;
+  return zipStored(officePackage(sheet, shared));
+}
+
 export async function compressedSampleWorkbook() {
   return zipCompressed(workbookParts());
+}
+
+function officePackage(sheet: string, shared: string) {
+  return {
+    '[Content_Types].xml': xml(
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
+    ),
+    '_rels/.rels': xml(
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    ),
+    'xl/workbook.xml': xml(
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    ),
+    'xl/_rels/workbook.xml.rels': xml(
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    ),
+    'xl/sharedStrings.xml': xml(shared),
+    'xl/worksheets/sheet1.xml': xml(sheet),
+  };
 }
 
 function workbookParts() {
@@ -40,20 +100,7 @@ function workbookParts() {
   <etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="ID_SAMPLE"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></etc:cellImage>
 </etc:cellImages>`;
   return {
-    '[Content_Types].xml': xml(
-      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
-    ),
-    '_rels/.rels': xml(
-      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-    ),
-    'xl/workbook.xml': xml(
-      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
-    ),
-    'xl/_rels/workbook.xml.rels': xml(
-      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
-    ),
-    'xl/sharedStrings.xml': xml(shared),
-    'xl/worksheets/sheet1.xml': xml(sheet),
+    ...officePackage(sheet, shared),
     'xl/cellimages.xml': xml(cellImages),
     'xl/_rels/cellimages.xml.rels': xml(
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/chart.png"/></Relationships>',
@@ -85,9 +132,12 @@ export async function readUploadedDataset(file: File): Promise<{
 export async function readXlsxDataset(data: ArrayBuffer): Promise<{ content: string; images: PendingImage[] }> {
   const files = await unzip(data);
   const sheetPath = firstSheetPath(files);
-  const rows = sheetRows(text(files, sheetPath), sharedStrings(text(files, 'xl/sharedStrings.xml')));
-  const embedded = embeddedImages(files);
   const anchored = drawingImages(files, sheetPath);
+  const rows = rowsWithAnchors(
+    sheetRows(text(files, sheetPath), sharedStrings(text(files, 'xl/sharedStrings.xml'))),
+    anchored,
+  );
+  const embedded = embeddedImages(files);
   const images: PendingImage[] = [];
   const offset = headerOffset(rows);
   const cases = rows.slice(offset).flatMap((row) => {
@@ -97,6 +147,14 @@ export async function readXlsxDataset(data: ArrayBuffer): Promise<{ content: str
     return [pictures.length === 0 ? record : { ...record, files: pictures }];
   });
   return { content: `${JSON.stringify(cases)}\n`, images };
+}
+
+function rowsWithAnchors(rows: SheetRow[], anchored: Map<number, PendingImage[]>) {
+  const byRow = new Map(rows.map((row) => [row.row, row]));
+  for (const rowNumber of anchored.keys()) {
+    if (!byRow.has(rowNumber)) byRow.set(rowNumber, { row: rowNumber, cells: [] });
+  }
+  return [...byRow.values()].sort((left, right) => left.row - right.row);
 }
 
 function headerOffset(rows: SheetRow[]) {
@@ -274,12 +332,19 @@ function text(files: Map<string, Uint8Array>, path: string) {
 }
 
 function decodeXml(value: string) {
-  return value
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&apos;', "'")
-    .replaceAll('&amp;', '&');
+  return value.replaceAll(
+    /&#(\d+);|&#x([0-9a-fA-F]+);|&(lt|gt|quot|apos|amp);/g,
+    (entity, decimal: string | undefined, hex: string | undefined, name: string | undefined) => {
+      if (name === 'lt') return '<';
+      if (name === 'gt') return '>';
+      if (name === 'quot') return '"';
+      if (name === 'apos') return "'";
+      if (name === 'amp') return '&';
+      const code = decimal ? Number(decimal) : Number.parseInt(hex ?? '', 16);
+      if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return entity;
+      return String.fromCodePoint(code);
+    },
+  );
 }
 
 function columnIndex(letters: string) {

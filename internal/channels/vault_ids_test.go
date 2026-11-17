@@ -100,6 +100,32 @@ func TestManuallyMountedOwnVaultIsNotAttachedTwice(t *testing.T) {
 	}
 }
 
+func TestRecreatedPersonalVaultRebindsSession(t *testing.T) {
+	created := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"id":"sesn_old","agent":{"id":"agent_1"},"environment_id":"env_1","vault_ids":["vlt_deleted"],"metadata":{"chat_type":"p2p","actor_id":"user-a","personal_vault_id":"vlt_deleted","credential_binding_mode":"first_vault"}}`))
+			return
+		}
+		var body struct {
+			VaultIDs []string `json:"vault_ids"`
+		}
+		if err := json.UnmarshalRead(r.Body, &body); err != nil || !slices.Equal(body.VaultIDs, []string{"vlt_rebuilt"}) {
+			t.Errorf("未使用重建的个人 Vault：%+v %v", body, err)
+		}
+		created = true
+		_, _ = w.Write([]byte(`{"id":"sesn_new"}`))
+	}))
+	defer server.Close()
+	worker, _ := testWorker(t, &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_old"}}, server.URL)
+	worker.supervisor.personalVault = func(context.Context, db.ChannelRecord, string) (string, error) { return "vlt_rebuilt", nil }
+	got, err := worker.sessionFor(t.Context(), &channelMessage{ChatID: "oc_1", ChatType: "p2p", UserID: "user-a"}, "chat:oc_1")
+	if err != nil || !created || got != "sesn_new" {
+		t.Fatalf("仍在复用已删除的个人连接：%s %v", got, err)
+	}
+}
+
 func TestLegacyVaultUpdateDoesNotDiscardMultipleVaults(t *testing.T) {
 	service := newLocalService(&vaultListStore{}, nil, nil, nil)
 	for _, raw := range []string{`{"vault_id":null}`, `{"vault_id":"vault-a"}`} {

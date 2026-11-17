@@ -10,5 +10,7 @@
     <insert id="Insert" result="exec">
         INSERT INTO channel_user_vaults (organization_uuid, workspace_uuid, channel_type, app_id, actor_id, vault_uuid)
         VALUES (#{identity.OrganizationUUID}, #{identity.WorkspaceUUID}, #{identity.ChannelType}, #{identity.AppID}, #{identity.ActorID}, #{vaultUUID})
+        ON CONFLICT (organization_uuid, workspace_uuid, channel_type, app_id, actor_id)
+        DO UPDATE SET vault_uuid = EXCLUDED.vault_uuid
     </insert>
 </mapper>

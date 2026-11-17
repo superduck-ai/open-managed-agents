@@ -15,7 +15,14 @@ CREATE TABLE channel_personal_vaults (
 INSERT INTO channel_personal_vaults (organization_uuid, workspace_uuid, channel_type, app_id, actor_id, vault_uuid)
 SELECT organization_uuid, workspace_uuid, metadata->>'channel_type', metadata->>'app_id', metadata->>'actor_id', uuid
 FROM vaults
-WHERE metadata->>'source' = 'channel-oauth' AND deleted_at IS NULL;
+WHERE metadata->>'source' = 'channel-oauth' AND deleted_at IS NULL
+AND COALESCE(metadata->>'channel_type', '') <> '' AND COALESCE(metadata->>'app_id', '') <> '' AND COALESCE(metadata->>'actor_id', '') <> ''
+AND external_id = 'vlt_channel_' || encode(sha256(
+    convert_to(organization_uuid::text, 'UTF8') || decode('00', 'hex') ||
+    convert_to(workspace_uuid::text, 'UTF8') || decode('00', 'hex') ||
+    convert_to(metadata->>'channel_type', 'UTF8') || decode('00', 'hex') ||
+    convert_to(metadata->>'app_id', 'UTF8') || decode('00', 'hex') ||
+    convert_to(metadata->>'actor_id', 'UTF8')), 'hex');
 
 UPDATE sessions s SET metadata = s.metadata || jsonb_build_object('personal_vault_id', v.external_id, 'oauth_vault_id', v.external_id, 'credential_binding_mode', 'first_vault')
 FROM channel_personal_vaults p JOIN vaults v ON v.uuid = p.vault_uuid

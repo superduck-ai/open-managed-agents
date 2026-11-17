@@ -95,4 +95,19 @@ func TestChannelUserVaultsPostgres(t *testing.T) {
 	if _, err := store.GetCodeSessionCredentialScope(ctx, code, fixture.OrganizationUUID, fixture.Workspaces[0].UUID); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("共享挂载归档后不能切换其他连接：%v", err)
 	}
+	identity.WorkspaceUUID = fixture.Workspaces[0].UUID
+	if _, err := store.DeleteVault(ctx, identity.WorkspaceUUID, b); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := ids.New("vlt_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := store.EnsureChannelUserVault(ctx, identity, Vault{UUID: uuid.NewV4().String(), ExternalID: replacement, OrganizationUUID: identity.OrganizationUUID, WorkspaceUUID: identity.WorkspaceUUID, DisplayName: "重建连接", Metadata: json.RawMessage(`{}`), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+	if err != nil || rebuilt == b || rebuilt != replacement {
+		t.Fatalf("删除 Vault 后未能重建用户关联：%s %v", rebuilt, err)
+	}
+	if current, err := store.GetChannelUserVaultID(ctx, identity); err != nil || current != rebuilt {
+		t.Fatalf("重建未替换旧关联：%s %v", current, err)
+	}
 }

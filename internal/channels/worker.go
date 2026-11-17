@@ -153,7 +153,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 		if sessionErr != nil {
 			return "", errors.Join(errChannelSessionUnconfirmed, sessionErr)
 		}
-		if session.ArchivedAt == nil && w.compatibleSessionConfiguration(session, environmentID) {
+		if session.ArchivedAt == nil && (personalID == "" || session.Metadata["personal_vault_id"] == personalID) && w.compatibleSessionConfiguration(session, environmentID) {
 			return sessionID, nil
 		}
 	}

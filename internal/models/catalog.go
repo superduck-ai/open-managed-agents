@@ -23,19 +23,24 @@ func modelResponses(catalog llmproviders.Catalog) []modelResponse {
 	models := make([]modelResponse, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		selected, _ := catalog.Lookup(modelID)
-		name := modelID
-		for _, model := range selected.Provider.Models {
-			if model.ID == selected.UpstreamModelID {
-				name = cmp.Or(model.Name, modelID)
-				break
-			}
-		}
-		models = append(models, modelResponse{
-			Type:        "model",
-			ID:          modelID,
-			DisplayName: name,
-			CreatedAt:   unknownModelCreatedAt,
-		})
+		models = append(models, newModelResponse(selected))
 	}
 	return models
+}
+
+func newModelResponse(selected llmproviders.CatalogModel) modelResponse {
+	modelID := selected.QualifiedModelID()
+	name := modelID
+	for _, model := range selected.Provider.Models {
+		if model.ID == selected.UpstreamModelID {
+			name = cmp.Or(model.Name, modelID)
+			break
+		}
+	}
+	return modelResponse{
+		Type:        "model",
+		ID:          modelID,
+		DisplayName: name,
+		CreatedAt:   unknownModelCreatedAt,
+	}
 }

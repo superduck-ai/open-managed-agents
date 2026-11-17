@@ -8,6 +8,8 @@ Session 详情页同时承担继续对话和检查运行上下文两个职责。
 
 Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情：`/workspaces/{workspaceId}/sessions/{sessionId}?interactive=true`，聚焦消息输入框。Session 列表创建和编辑、Agent 列表/快速查看/详情发起对话统一经 `ManagedEntityDialog` 分发到 `SessionCreateDialog`，由同一组件管理表单状态、校验与引用加载。弹窗使用 Session 专属 shadcn Dialog，桌面宽度 640px，以单列依次展示 Title、Agent、Environment、Vault 和 Resources；Header/Footer 固定，字段区在窄屏或内容增多时独立滚动。Footer 以留白衔接字段区，不添加横贯弹窗的分隔线；Session 创建弹窗内输入框/选择器统一为 40px、高度与圆角一致，采用 popover 背景和轻量焦点环，禁用态使用 muted 令牌。适配样式仅作用于 `.session-create-dialog`，不覆盖其他功能弹窗。Title 最长 500 字符，Agent/Environment 字段提供管理入口；从 Agent 发起时使用只读引用，凭据库统一采用添加按钮、搜索弹层和可移除标签，集合变化后重置授权确认；引用资源加载失败可重试。提交期间禁用字段、取消和关闭，in-flight ref 阻止同帧重复提交；创建 payload 合同不变。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。不改变列表分页或侧边栏折叠。
 
+创建会话和部署表单共用的环境、凭据库、记忆存储引用选项，在表单挂载以及返回浏览器标签页时重新读取，即使缓存仍在全局 15 秒新鲜期内也刷新。这样从管理入口在其他标签页创建资源后，返回原表单即可选择新资源；后台刷新保留当前表单草稿和已选值。回归用例覆盖跨标签页返回以及缓存仍新鲜时重新打开表单。
+
 ## 创建、快速查看与标识符
 
 - 2026-10-13 提供的 `session.har` 中，`2nzfpvkf-rq47.js` 的 `ClippedId` 使用 CSS 裁剪，`CopyableId` 的点击和键盘处理始终向剪贴板传入原始 ID，并通过 Tooltip 与勾选反馈复制结果。`4264g0ol0a34b.js` 使用 `RowEndQuickview` / `SessionSlideOverContent` 展示侧边预览；新建成功后导航到带 `interactive=true` 的 Session 页面。HAR 仅用于核对这些交互，不提交原文件或其中的请求、凭据和账户数据。

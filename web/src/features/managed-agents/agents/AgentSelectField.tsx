@@ -35,6 +35,8 @@ function useAgentPicker(
     },
     enabled: open || defaultFirst || showEmptyHint,
     retry: false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
   const agents = dedupeAgentsById(query.data?.pages.flatMap((page) => page.data) ?? []);
   const selected = agents.find((agent) => agent.id === value);

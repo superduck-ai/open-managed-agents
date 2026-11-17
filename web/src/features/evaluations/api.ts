@@ -52,6 +52,104 @@ export type EvaluationRubric = {
   created_at: string;
 };
 
+export type EvaluationSummary = {
+  round: number;
+  score: number | null;
+  pass_rate: number | null;
+  scored: number;
+  passed: number;
+  exceptions: number;
+  total: number;
+};
+
+export type EvaluationScore = {
+  status: string;
+  score: number;
+  passed: boolean;
+  explanation: string;
+  answer: string;
+  dimensions: Array<{ name?: string; score?: number }>;
+  error_message: string;
+  judge_model: string;
+  judge_prompt_version: string;
+};
+
+export type EvaluationItem = {
+  id: string;
+  round: number;
+  case_id: string;
+  query: string;
+  expected_answer: string;
+  acceptance: string;
+  session_id: string;
+  status: string;
+  error_message: string;
+  score: EvaluationScore | null;
+};
+
+export type EvaluationTask = {
+  id: string;
+  name: string;
+  mode: 'evaluate';
+  status: string;
+  agent_id: string;
+  agent_version: number;
+  environment_id: string;
+  dataset_id: string;
+  dataset_version_id: string;
+  rubric_id: string;
+  rubric_version_id: string;
+  pass_score: number;
+  error_message: string;
+  created_at: string;
+  resource_count: number;
+  vault_count: number;
+  agent_name?: string;
+  dataset_name?: string;
+  rubric_name?: string;
+  usage?: EvaluationUsage;
+  summary: EvaluationSummary;
+  rounds?: EvaluationSummary[];
+  items?: EvaluationItem[];
+};
+
+export type EvaluationUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  judge_input_tokens: number;
+  judge_output_tokens: number;
+};
+
+export type EvaluationTraceStep = {
+  type: 'user' | 'answer' | 'tool_use' | 'tool_result' | 'error';
+  name: string;
+  text: string;
+  created_at: string;
+};
+
+export type EvaluationTrace = {
+  item_id: string;
+  session_id: string;
+  judge_system: string;
+  judge_prompt: string;
+  judge_response: string;
+  steps: EvaluationTraceStep[];
+};
+
+export type EvaluationTaskInput = {
+  name: string;
+  mode: 'evaluate';
+  agent_id: string;
+  environment_id: string;
+  dataset_id: string;
+  rubric_id: string;
+  agent_version?: number;
+  focus?: string;
+  vault_ids?: string[];
+  resources?: unknown[];
+};
+
 export function evaluationBase(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(
     workspaceId,
@@ -245,6 +343,51 @@ export function deleteEvaluationRubric(orgUuid: string, workspaceId: string, rub
   return consoleApi<{ id: string }>(`${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}`, {
     method: 'DELETE',
   });
+}
+
+export function listEvaluationTasks(orgUuid: string, workspaceId: string, page?: string) {
+  return consoleApi<EvaluationPage<EvaluationTask>>(
+    evaluationListPath(`${evaluationBase(orgUuid, workspaceId)}/tasks`, page),
+  );
+}
+
+export function createEvaluationTask(orgUuid: string, workspaceId: string, input: EvaluationTaskInput) {
+  return consoleApi<EvaluationTask>(`${evaluationBase(orgUuid, workspaceId)}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function getEvaluationTask(orgUuid: string, workspaceId: string, taskId: string) {
+  return consoleApi<EvaluationTask>(`${evaluationBase(orgUuid, workspaceId)}/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export function getEvaluationItemTrace(orgUuid: string, workspaceId: string, taskId: string, itemId: string) {
+  return consoleApi<EvaluationTrace>(
+    `${evaluationBase(orgUuid, workspaceId)}/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/trace`,
+  );
+}
+
+export function postEvaluationTaskAction(
+  orgUuid: string,
+  workspaceId: string,
+  taskId: string,
+  action: 'cancel' | 'retry',
+) {
+  return consoleApi<EvaluationTask>(
+    `${evaluationBase(orgUuid, workspaceId)}/tasks/${encodeURIComponent(taskId)}/${action}`,
+    { method: 'POST' },
+  );
+}
+
+export function formatPassRate(rate: number | null | undefined) {
+  if (rate == null || Number.isNaN(rate)) return '—';
+  return `${Math.round(rate * 100)}%`;
+}
+
+export function formatScore(score: number | null | undefined) {
+  if (score == null || Number.isNaN(score)) return '—';
+  return score.toFixed(1);
 }
 
 export function evaluationError(error: unknown) {

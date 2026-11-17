@@ -114,8 +114,8 @@ func withEvaluationRoute(request *http.Request, datasetID, caseID string) *http.
 
 type fixedModel struct{ text string }
 
-func (m fixedModel) Complete(context.Context, CompletionRequest) (string, error) {
-	return m.text, nil
+func (m fixedModel) Complete(context.Context, CompletionRequest) (Completion, error) {
+	return Completion{Text: m.text}, nil
 }
 
 type evaluationFixture struct {
@@ -183,6 +183,38 @@ func (evaluationFixture) ListEvaluationRubricVersions(context.Context, string, s
 
 func (evaluationFixture) DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error {
 	return nil
+}
+
+func (evaluationFixture) CreateEvaluationTask(context.Context, db.EvaluationTask, []db.EvaluationTaskItem) (db.EvaluationTaskDetail, error) {
+	return db.EvaluationTaskDetail{}, nil
+}
+
+func (evaluationFixture) ListEvaluationTasks(context.Context, string, string, int, int) ([]db.EvaluationTask, error) {
+	return nil, nil
+}
+
+func (evaluationFixture) ListEvaluationTaskChildren(context.Context, string, string, []string) ([]db.EvaluationTaskItem, []db.EvaluationTaskScore, error) {
+	return nil, nil, nil
+}
+
+func (evaluationFixture) GetEvaluationTask(context.Context, string, string, string) (db.EvaluationTaskDetail, error) {
+	return db.EvaluationTaskDetail{}, nil
+}
+
+func (evaluationFixture) GetEvaluationScorePrompt(context.Context, string, string, string) (string, string, string, error) {
+	return "", "", "", nil
+}
+
+func (evaluationFixture) RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error) {
+	return db.EvaluationTaskRetry{}, nil
+}
+
+func (evaluationFixture) SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error) {
+	return db.EvaluationTaskUsage{}, nil
+}
+
+func (evaluationFixture) GetEnvironment(context.Context, string, string) (db.Environment, error) {
+	return db.Environment{}, nil
 }
 
 func (evaluationFixture) GetAgent(context.Context, string, string) (db.Agent, error) {

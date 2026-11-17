@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `evaluation_datasets` / `evaluation_dataset_versions` | `evalds_` / `edv_` | 评测集和版本。当前写入版本 1 |
 | `evaluation_cases` | `evalcase_` | `inputs` 是有序内容块。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注和验收要点可选 |
-| `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00137_evaluation_rubrics.sql`，编号在 main 的 `00136` 之后。已经用旧编号 `00120` 或 `00136` 执行过评分标准迁移的开发库需要重建 |
+| `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00138_evaluation_rubrics.sql`。`00137` 已被 `00137_release_env_oauth_flow_secrets.sql` 占用。已经用旧编号 `00120`、`00136` 或 `00137` 执行过评分标准迁移的开发库需要重建 |
 
 删除评测集或用例是软删除。
 

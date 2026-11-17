@@ -1,3 +1,4 @@
+import { documentationHref } from '../../../shared/documentation';
 import { ArrowUpRight, ChevronDown, ChevronUp, Cloud, Monitor, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
@@ -175,7 +176,7 @@ export function EnvironmentPreview({
 }
 
 function EnvironmentApi({ entity }: { entity: EnvironmentApiResponse }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const json = JSON.stringify(entity, null, 2);
 
   return (
@@ -184,7 +185,7 @@ function EnvironmentApi({ entity }: { entity: EnvironmentApiResponse }) {
         <span className="rounded bg-[var(--success-bg)] px-1 py-0.5 text-success">GET</span>
         <code>/v1/environments/{'{id}'}</code>
         <a
-          href="https://platform.claude.com/docs/en/api/beta/environments/retrieve"
+          href={documentationHref('api/environments/get-environment', locale)}
           target="_blank"
           rel="noreferrer"
           className="ml-auto inline-flex items-center gap-1 text-muted-foreground"

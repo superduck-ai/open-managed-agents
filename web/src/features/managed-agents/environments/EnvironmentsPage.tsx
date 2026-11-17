@@ -1,3 +1,4 @@
+import { documentationHref } from '../../../shared/documentation';
 import './styles.css';
 import { BookOpen, Cloud, Monitor } from 'lucide-react';
 import { useState } from 'react';
@@ -18,7 +19,6 @@ import { EnvironmentActionDialog, EnvironmentActions, type EnvironmentActionRequ
 import { EnvironmentHosting, EnvironmentScope } from './common';
 import { useEnvironment, useEnvironmentRefresh } from './data';
 import { EnvironmentForm } from './form';
-import { environmentDocs } from './fields';
 import { EnvironmentList } from './list';
 import { EnvironmentPreview } from './preview';
 import type { EnvironmentApiResponse } from '../types';
@@ -104,7 +104,7 @@ function EnvironmentDetail({
   listHref: string;
   onAction: (request: EnvironmentActionRequest) => void;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const creating = id === 'new';
   const query = useEnvironment(workspaceId, creating ? undefined : id);
   const refresh = useEnvironmentRefresh(workspaceId);
@@ -125,7 +125,13 @@ function EnvironmentDetail({
             <h1 className="text-2xl font-medium tracking-tight">
               {msg('managedAgents.environments.create', 'Create environment')}
             </h1>
-            <ButtonLink variant="ghost" size="sm" href={environmentDocs} target="_blank" rel="noreferrer">
+            <ButtonLink
+              variant="ghost"
+              size="sm"
+              href={documentationHref('environments', locale)}
+              target="_blank"
+              rel="noreferrer"
+            >
               <BookOpen className="size-4" />
               {msg('common.documentation', 'Documentation')}
             </ButtonLink>

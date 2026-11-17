@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 
-const { render, screen, fireEvent, cleanup } = await import('@testing-library/react');
+const { render, screen, fireEvent, cleanup, waitFor } = await import('@testing-library/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { I18nProvider } = await import('../../../shared/i18n');
 const { ChannelsPageContent } = await import('./ChannelsPage');
@@ -15,7 +15,7 @@ afterEach(() => {
 
 function mount() {
   resetTestDom('/');
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient();
   const navigated: string[] = [];
   render(
     <QueryClientProvider client={client}>
@@ -26,6 +26,70 @@ function mount() {
   );
   return navigated;
 }
+
+test('未配置渠道服务时直接显示空态，不显示错误或重试', async () => {
+  let channelRequests = 0;
+  globalThis.fetch = (async (input) => {
+    if (String(input).includes('/v1/channels')) {
+      channelRequests++;
+      return Response.json({ error: { message: '飞书渠道服务不可用，请检查桥接服务配置' } }, { status: 503 });
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+
+  mount();
+  expect(await screen.findByText('暂无渠道')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
+  expect(screen.getByRole('table').getAttribute('aria-busy')).toBe('false');
+  expect(channelRequests).toBe(1);
+});
+
+test('权限错误不伪装成空列表，手动重试后可恢复', async () => {
+  let channelRequests = 0;
+  globalThis.fetch = (async (input) => {
+    if (String(input).includes('/v1/channels')) {
+      channelRequests++;
+      if (channelRequests === 1) {
+        return Response.json({ error: { message: '无权读取渠道' } }, { status: 403 });
+      }
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+
+  mount();
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('无权读取渠道')).toBeTruthy();
+  expect(screen.queryByText('暂无渠道')).toBeNull();
+  expect(channelRequests).toBe(1);
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
+  expect(await screen.findByText('暂无渠道')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(channelRequests).toBe(2);
+});
+
+test('加载中保留表头和三行骨架，请求结束后展示空态', async () => {
+  let finishRequest!: (response: Response) => void;
+  globalThis.fetch = (async (input) => {
+    if (String(input).includes('/v1/channels')) {
+      return new Promise<Response>((resolve) => {
+        finishRequest = resolve;
+      });
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+
+  mount();
+  const table = screen.getByRole('table');
+  expect(table.getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByRole('columnheader', { name: '渠道' })).toBeTruthy();
+  expect(table.querySelectorAll('tbody tr')).toHaveLength(3);
+  expect(table.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(21);
+  await waitFor(() => expect(finishRequest).toBeDefined());
+  finishRequest(Response.json({ data: [] }));
+  expect(await screen.findByText('暂无渠道')).toBeTruthy();
+  expect(screen.getByRole('table').getAttribute('aria-busy')).toBe('false');
+});
 
 test('工作区渠道页读取工作区渠道接口并支持新增跳转', async () => {
   const urls: string[] = [];

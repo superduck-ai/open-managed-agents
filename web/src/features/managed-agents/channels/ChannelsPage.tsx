@@ -212,7 +212,7 @@ function ChannelListEmpty({ filtered }: { filtered: boolean }) {
       body={
         filtered
           ? msg('managedAgents.channels.noMatchesHelp', '试试其他名称，或调整筛选。')
-          : msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入飞书。')
+          : msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入')
       }
     />
   );

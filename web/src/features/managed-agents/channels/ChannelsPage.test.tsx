@@ -15,7 +15,7 @@ afterEach(() => {
 
 function mount() {
   resetTestDom('/');
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
   const navigated: string[] = [];
   render(
     <QueryClientProvider client={client}>
@@ -65,6 +65,24 @@ test('权限错误不伪装成空列表，手动重试后可恢复', async () =>
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(await screen.findByText('暂无渠道')).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
+  expect(channelRequests).toBe(2);
+});
+
+test('500 错误只自动重试一次，最终显示错误和手动重试入口', async () => {
+  let channelRequests = 0;
+  globalThis.fetch = (async (input) => {
+    if (String(input).includes('/v1/channels')) {
+      channelRequests++;
+      return Response.json({ error: { message: '渠道读取失败' } }, { status: 500 });
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+
+  mount();
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('渠道读取失败')).toBeTruthy();
+  expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
+  expect(screen.queryByText('暂无渠道')).toBeNull();
   expect(channelRequests).toBe(2);
 });
 

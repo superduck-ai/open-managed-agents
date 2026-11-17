@@ -3690,7 +3690,7 @@
   "managedAgents.channels.connectionCheckFail": "连接检测异常：桥接报告未连通",
   "managedAgents.channels.latestVersion": "默认最新版本",
   "managedAgents.channels.latestVersionShort": "默认最新",
-  "managedAgents.channels.listEmpty": "暂无渠道。点击「新增渠道」开始接入",
+  "managedAgents.channels.listEmpty": "点击「新增渠道」开始使用。",
   "managedAgents.channels.emptyTitle": "暂无渠道",
   "managedAgents.channels.noMatches": "没有匹配的渠道",
   "managedAgents.channels.noMatchesHelp": "试试其他名称，或调整筛选。",

@@ -138,7 +138,9 @@ describe('platform quickstart request builder', () => {
     expect(builderText).not.toContain('claude-sonnet-4-6');
     expect(builderText).not.toContain('claude-opus-4-8');
     expect(builderText).toContain('build_agent_config');
-    expect(builderText).toContain('https://platform.claude.com');
+    expect(builderText).not.toContain('https://platform.claude.com');
+    expect(builderText).toContain('https://oma.mintlifysite.com/docs/zh/multiagent-orchestration');
+    expect(builderText).toContain('/dashboard');
     // User-visible choices must follow the Builder language instead of leaking
     // the English examples from the source prompt into structured questions.
     expect(builderText).toContain('“创建新环境”');

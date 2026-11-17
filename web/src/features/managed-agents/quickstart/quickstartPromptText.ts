@@ -1,4 +1,5 @@
 import { type Locale } from '../../../shared/i18n';
+import { documentationHref } from '../../../shared/documentation';
 import { platformQuickstartOfficialRequest } from './platformQuickstartOfficialRequest.generated';
 
 // The Agent Builder system prompt ships as two English text blocks captured from the
@@ -136,7 +137,7 @@ ${mcpCatalog}
 
 export function quickstartBuilderBehavior(locale: Locale): string {
   const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
-  return source
+  return adaptQuickstartDocumentation(source, locale)
     .replace(mcpCatalog, '')
     .replace(
       /^- (?:Unverified integrations|未确认的集成).*$/gm,
@@ -190,5 +191,23 @@ export function resolveQuickstartSystem(locale: Locale, modelID: string): Array<
       : `- Use the configured workspace model ID exactly: "${modelID}".`;
   const pattern =
     locale === 'zh-CN' ? /^- model 必须使用当前工作区配置的真实模型 ID。$/m : /^- Pick the most appropriate model.*$/m;
-  return [englishSystem[0], { ...englishSystem[1], text: source.replace(pattern, modelRule) }];
+  return [
+    englishSystem[0],
+    { ...englishSystem[1], text: adaptQuickstartDocumentation(source, locale).replace(pattern, modelRule) },
+  ];
+}
+
+function adaptQuickstartDocumentation(text: string, locale: Locale): string {
+  return text
+    .replaceAll('Claude Managed Agent', 'Open Managed Agent')
+    .replace(
+      /https:\/\/platform\.claude\.com\/docs\/en\/managed-agents\/multi-agent/g,
+      documentationHref('multiagent-orchestration', locale),
+    )
+    .replace(
+      /^[ \t]*- (?:The Anthropic Console|Anthropic Console).*$/gm,
+      locale === 'zh-CN'
+        ? '  - 当前 OMA 控制台位于 /dashboard。提供控制台链接时使用当前部署的这个路径。'
+        : '  - The current OMA Console is at /dashboard. Link to this path on the current deployment.',
+    );
 }

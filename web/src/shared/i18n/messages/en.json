@@ -2887,7 +2887,7 @@
   "workbench.shareWithWorkspace": "Share with workspace",
   "workbench.askCreatorToShare": "Please ask the creator of this prompt, {creator}, to modify its sharing settings.",
   "workbench.deletePromptConfirm": "Are you sure you want to permanently delete this prompt?",
-  "workbench.codeTitle": "Code for Claude API",
+  "workbench.codeTitle": "Code for OMA API",
   "workbench.codeLanguage": "Code language",
   "workbench.viewDocs": "View Docs",
   "workbench.copyCode": "Copy code",

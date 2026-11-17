@@ -382,7 +382,7 @@ describe('WorkbenchPage', () => {
     selectOption('Extra high');
     await waitFor(() => expect(effortCombobox.textContent).toContain('Extra high'));
     expect(within(panel).getByRole('link', { name: 'View all API options' }).getAttribute('href')).toBe(
-      'https://docs.claude.com/en/api/messages',
+      'https://oma.mintlifysite.com/docs/en/api/messages/create-a-message',
     );
     expect(within(panel).getByRole('button', { name: 'Run ⌘ + ⏎' })).toBeTruthy();
 
@@ -2899,7 +2899,7 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  test('localizes code controls, searches provider languages and preserves generated code without writes', async () => {
+  test('localizes code controls and preserves OMA code without writes', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const api = mockWorkbenchApi({ initialPromptText: 'Preserve original prompt content.' });
     renderWorkbench({ locale: 'zh-CN' });
@@ -2913,13 +2913,10 @@ describe('WorkbenchPage', () => {
     expect(dialog.querySelector('code')?.textContent).toContain('Preserve original prompt content.');
     expect(dialog.querySelector('.hljs-string')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('combobox', { name: '代码语言' }));
-    fireEvent.change(await screen.findByRole('combobox', { name: '搜索选项...' }), {
-      target: { value: 'Bedrock' },
-    });
-    expect(screen.getAllByRole('option')).toHaveLength(2);
-    expect(screen.queryByRole('option', { name: 'Vertex AI Python' })).toBeNull();
-    selectOption('AWS Bedrock Python');
-    expect(dialog.querySelector('code')?.textContent).toContain('from anthropic import AnthropicBedrock');
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(screen.queryByRole('option', { name: 'AWS Bedrock Python' })).toBeNull();
+    selectOption('TypeScript');
+    expect(dialog.querySelector('code')?.textContent).toContain('baseURL: "https://oma.duck.ai"');
     expect(dialog.querySelector('code')?.textContent).toContain('Preserve original prompt content.');
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭', exact: true }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -2931,7 +2928,7 @@ describe('WorkbenchPage', () => {
     ).toBe(false);
   });
 
-  test('opens the generated Claude API code modal with Highlight.js markup', async () => {
+  test('opens the generated OMA API code modal with Highlight.js markup', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const unorderedRevision = promptRevision();
     unorderedRevision.messages[0].content = [{ text: existingPromptText, type: 'text' }];
@@ -2940,14 +2937,15 @@ describe('WorkbenchPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Get Code' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Code for Claude API' });
+    const dialog = screen.getByRole('dialog', { name: 'Code for OMA API' });
     const codeText = dialog.querySelector('code')?.textContent ?? '';
     expect(codeText.indexOf('"type": "text"')).toBeGreaterThan(-1);
     expect(codeText.indexOf('"type": "text"')).toBeLessThan(codeText.indexOf('"text":'));
     expect(within(dialog).getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(dialog.textContent).toContain('client.messages.create');
     expect(dialog.textContent).toContain('import anthropic');
-    expect(dialog.textContent).toContain('api_key="my_api_key"');
+    expect(dialog.textContent).toContain('api_key=os.environ["OMA_API_KEY"]');
+    expect(dialog.textContent).toContain('base_url="https://oma.duck.ai"');
     expect(dialog.textContent).toContain('"type": "text"');
     expect(dialog.textContent).toContain('claude-opus-4-8');
     const languageCombobox = within(dialog).getByRole('combobox', { name: 'Code language' });
@@ -2968,17 +2966,21 @@ describe('WorkbenchPage', () => {
     await waitFor(() => expect(languageCombobox.getAttribute('aria-expanded')).toBe('true'));
     await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy());
     expect(screen.getByRole('option', { name: 'Python' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('option', { name: 'AWS Bedrock Python' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'AWS Bedrock TypeScript' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'Vertex AI Python' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'Vertex AI TypeScript' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'AWS Bedrock Python' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Vertex AI Python' })).toBeNull();
     expect(screen.queryByRole('option', { name: 'JSON' })).toBeNull();
 
-    selectOption('AWS Bedrock Python');
-    await waitFor(() => expect(languageCombobox.textContent).toContain('AWS Bedrock Python'));
-    expect(dialog.textContent).toContain('from anthropic import AnthropicBedrock');
-    expect(dialog.textContent).toContain('model=""');
-    expect(dialog.textContent).toContain('claude-on-amazon-bedrock');
+    selectOption('TypeScript');
+    await waitFor(() => expect(languageCombobox.textContent).toContain('TypeScript'));
+    expect(dialog.textContent).toContain('baseURL: "https://oma.duck.ai"');
+    expect(dialog.textContent).toContain('apiKey: process.env.OMA_API_KEY');
+    expect(dialog.querySelector('code.language-typescript')).toBeTruthy();
+
+    fireEvent.click(languageCombobox);
+    selectOption('cURL');
+    expect(dialog.textContent).toContain('curl "https://oma.duck.ai/v1/messages"');
+    expect(dialog.textContent).toContain('$OMA_API_KEY');
+    expect(dialog.textContent).not.toContain('api.anthropic.com');
   });
 
   test('opens generated code with the current draft when prompt changes are unsaved', async () => {
@@ -2999,7 +3001,7 @@ describe('WorkbenchPage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Get Code' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Code for Claude API' });
+    const dialog = await screen.findByRole('dialog', { name: 'Code for OMA API' });
     expect(dialog.textContent).toContain('Draft-only prompt before code.');
     expect(screen.queryByLabelText('Version history')).toBeNull();
   });
@@ -3014,7 +3016,7 @@ describe('WorkbenchPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Get Code' }));
 
-    expect(await screen.findByRole('dialog', { name: 'Code for Claude API' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Code for OMA API' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Maximum length of Claude’s responses' })).toBeNull();
   });
 });

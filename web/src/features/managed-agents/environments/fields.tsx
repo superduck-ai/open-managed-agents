@@ -18,8 +18,6 @@ export type EnvironmentFieldsProps = {
   readOnly?: boolean;
 };
 
-export const environmentDocs = 'https://platform.claude.com/docs/en/managed-agents/environments';
-
 export function EnvironmentSection({
   title,
   status,

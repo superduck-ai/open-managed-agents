@@ -1,3 +1,4 @@
+import { documentationHref } from '../../shared/documentation';
 import { ExternalLink } from 'lucide-react';
 export { UsagePage, CostPage } from './MeteredAnalyticsPage';
 import type { ReactNode } from 'react';
@@ -7,14 +8,14 @@ import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from '../../shared/ui/em
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 
 export function CachingPage() {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   return (
     <AnalyticsPageRoot
       title={msg('analytics.caching.title', 'Caching')}
       notice={msg('analytics.caching.unavailable', 'Caching data is not connected.')}
     >
       <ButtonLink
-        href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching"
+        href={documentationHref('api/messages/create-a-message', locale)}
         target="_blank"
         rel="noreferrer"
         variant="outline"

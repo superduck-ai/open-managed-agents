@@ -34,23 +34,72 @@ const (
 	rubricRequiredMessage         = "rubric body is required"
 	rubricGenerateRequiredMessage = "provide a goal or a sample"
 	rubricTooLongMessage          = "rubric body must be at most 16000 characters"
+	focusTooLongMessage           = "focus must be at most 300 characters"
 	rubricFormatMessage           = "generated rubric must be markdown"
 	modelTooLongMessage           = "model must be at most 255 characters"
 	passScoreInvalidMessage       = "pass_score must be between 0 and 100"
+	taskNotFoundMessage           = "Evaluation task not found"
+	itemNotFoundMessage           = "Evaluation task item not found"
+	casesRequiredMessage          = "dataset has no cases"
+	casesTooManyMessage           = "a task accepts at most 200 cases"
+	modeInvalidMessage            = "mode must be evaluate"
+	agentRequiredMessage          = "agent_id is required"
+	environmentRequiredMessage    = "environment_id is required"
+	datasetRequiredMessage        = "dataset_id is required"
+	rubricIDRequiredMessage       = "rubric_id is required"
 	sessionRequiredMessage        = "session_id is required"
 	turnsRequiredMessage          = "select at least one turn"
 	turnInvalidMessage            = "turn is not in this session"
 	generateCountMessage          = "count must be between 1 and 50"
 	modelMissingMessage           = "No workspace model is configured"
+	starterMissingMessage         = "Evaluation sessions are not configured"
+	retryUnavailableMessage       = "Only a finished evaluation task can retry failed cases"
+	cancelUnavailableMessage      = "This task can no longer be cancelled"
+	startInterruptedMessage       = "Evaluation session did not start"
+	agentNotFoundMessage          = "Agent not found"
+	environmentNotFoundMessage    = "Environment not found"
+	sessionNotFoundMessage        = "Session not found"
+	versionConflictMessage        = "Agent version conflict"
+	vaultEmptyMessage             = "vault_ids cannot include an empty id"
+	scoreParseFailedMessage       = "Could not parse evaluator score"
+	scoreSessionTooLargeMessage   = "Session has too many events to score"
+	sessionTerminatedMessage      = "Session terminated"
+	itemTimedOutMessage           = "Evaluation session ran longer than 2 hours"
 	pageInvalidMessage            = "page is invalid"
 	limitInvalidMessage           = "limit must be between 1 and 100"
 	duplicateMessage              = "Evaluation resource already exists"
+	archivedAgentMessage          = "agent must not be archived"
+	archivedEnvironmentMessage    = "environment must not be archived"
+	resourcesInvalidMessage       = "resources must be a JSON array"
 	createFailedMessage           = "Could not save evaluation"
 	deleteFailedMessage           = "Could not delete evaluation"
 	loadFailedMessage             = "Could not load evaluation"
 	generateFailedMessage         = "Could not generate evaluation cases"
+	scoreFailedMessage            = "Could not score evaluation"
 	sessionEventsTooLargeMessage  = "session has too many events to import"
 )
+
+func retryStoreError(err error) error {
+	if errors.Is(err, db.ErrInvalidState) || errors.Is(err, db.ErrPreconditionFailed) {
+		return invalidState(retryUnavailableMessage, err)
+	}
+	return internalFailure(createFailedMessage, err)
+}
+
+func cancelUnavailable(cause error) error {
+	return invalidState(cancelUnavailableMessage, cause)
+}
+
+func cancelStoreError(err error) error {
+	if errors.Is(err, db.ErrInvalidState) {
+		return cancelUnavailable(err)
+	}
+	return internalFailure(createFailedMessage, err)
+}
+
+func runnerMissing() error {
+	return unavailable(starterMissingMessage, nil)
+}
 
 func invalidArgument(message string, cause error) error {
 	return apperr.New(apperr.InvalidArgument, message, cause)
@@ -62,6 +111,10 @@ func notFound(message string, cause error) error {
 
 func conflict(message string, cause error) error {
 	return apperr.New(apperr.Conflict, message, cause)
+}
+
+func invalidState(message string, cause error) error {
+	return apperr.New(apperr.InvalidState, message, cause)
 }
 
 func unavailable(message string, cause error) error {
@@ -80,6 +133,10 @@ func mapStoreError(err error, notFoundMessage, failureMessage string) error {
 		return notFound(notFoundMessage, err)
 	case errors.Is(err, db.ErrDuplicate):
 		return conflict(duplicateMessage, err)
+	case errors.Is(err, db.ErrVersionConflict):
+		return conflict(versionConflictMessage, err)
+	case errors.Is(err, db.ErrInvalidState):
+		return invalidState(archivedAgentMessage, err)
 	default:
 		return internalFailure(failureMessage, err)
 	}

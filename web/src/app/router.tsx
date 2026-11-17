@@ -19,6 +19,7 @@ import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../f
 import { LoginPage } from '../features/auth/LoginPage';
 import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
+import { TaskDetailPage } from '../features/evaluations/TaskDetailPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
 import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
@@ -297,6 +298,12 @@ const workspaceEvaluationDatasetRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
   component: DatasetDetailPage,
+});
+
+const workspaceEvaluationTaskRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/tasks/$taskId',
+  component: TaskDetailPage,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -741,6 +748,10 @@ const routeTree = rootRoute.addChildren([
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      evaluationsRoute,
+      workspaceEvaluationsRoute,
+      workspaceEvaluationTaskRoute,
+      workspaceEvaluationDatasetRoute,
       agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,
@@ -748,9 +759,6 @@ const routeTree = rootRoute.addChildren([
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,
-      evaluationsRoute,
-      workspaceEvaluationsRoute,
-      workspaceEvaluationDatasetRoute,
       workspaceSessionDetailRoute,
       observabilityRoute,
       workspaceObservabilityRoute,

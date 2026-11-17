@@ -48,6 +48,9 @@ func ParseNarrows(body []byte) ([]CatalogPrice, error) {
 	result := make([]CatalogPrice, 0, len(data.Rules))
 	seen := map[string]bool{}
 	for _, rule := range data.Rules {
+		if rule.BillingType != "" && rule.BillingType != "llm" {
+			continue
+		}
 		if rule.Model == "" || seen[rule.Model] || rule.Currency != "CNY" || rule.BillingType != "llm" {
 			return nil, errors.New("Narrows 模型、币种或计费类型无效")
 		}
@@ -74,6 +77,9 @@ func ParseNarrows(body []byte) ([]CatalogPrice, error) {
 			price.Overrides = append(price.Overrides, billing.PriceOverride{MinPromptTokens: new(lower), MaxPromptTokens: tier.Condition.Maximum, Rates: rates})
 		}
 		result = append(result, CatalogPrice{Model: rule.Model, Price: price, Original: original})
+	}
+	if len(result) == 0 {
+		return nil, errEmptyLLMPriceCatalog
 	}
 	return result, nil
 }

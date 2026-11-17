@@ -183,3 +183,5 @@ PR 的 `Pricing validation` 工作流使用固定的 Bun 1.4.4 执行 Brain 类�
 - [Brain 模型信息适配器](../../../oma-brain-dsh/src/llm-ai-sdk/adapter.ts)
 - [Brain 模型错误转换](../../../oma-brain-dsh/src/llm-ai-sdk/stream.ts)
 - [Brain 原生终止事件输出](../../../oma-brain-dsh/src/ccrv2/native-output.ts)
+
+Narrows 目录可以同时包含文本和图片等计费类型。LLM 价格缓存仅加载 `billing_type=llm` 的规则，跳过其他计费类型；LLM 规则自身仍须完整校验。过滤后没有 LLM 价格时刷新失败并保留最近成功快照，不发布空目录。

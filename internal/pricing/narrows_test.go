@@ -53,3 +53,15 @@ func TestNarrowsAmbiguousRates(t *testing.T) {
 		}
 	}
 }
+
+func TestNarrowsMixedBillingCatalog(t *testing.T) {
+	image := `{"model":"image-model","currency":"CNY","billing_type":"image","pricing":{"base":[]}}`
+	llm := `{"model":"text-model","currency":"CNY","billing_type":"llm","pricing":{"base":[{"key":"input_cost_per_token","per_token":"0.000002"},{"key":"output_cost_per_token","per_token":"0.000008"}]}}`
+	if _, err := ParseNarrows([]byte(`{"rules":[` + image + `]}`)); err == nil {
+		t.Fatal("没有 LLM 价格时不能发布空快照")
+	}
+	prices, err := ParseNarrows([]byte(`{"rules":[` + image + `,` + llm + `]}`))
+	if err != nil || len(prices) != 1 || prices[0].Model != "text-model" {
+		t.Fatalf("非 LLM 规则阻塞文本价格刷新：%+v/%v", prices, err)
+	}
+}

@@ -3413,6 +3413,7 @@
   "systemSkills.invalidVersion": "Invalid version identifier",
   "managedAgents.credentialVaults.credentialDialog.envOAuth": "ENV OAuth",
   "managedAgents.credentialVaults.credentialDialog.oauthClientConfiguration": "Client configuration",
+  "managedAgents.credentialVaults.credentialDialog.httpsEndpointRequired": "Use an HTTPS URL.",
   "managedAgents.credentialVaults.credentialDialog.customProvider": "Custom OAuth provider",
   "managedAgents.credentialVaults.credentialDialog.envOAuthProvider": "OAuth provider",
   "managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider": "Select a provider",

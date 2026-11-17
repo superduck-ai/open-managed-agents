@@ -12,7 +12,6 @@ import {
 import {
   buildMemoryTreeNodes,
   credentialAuthBody,
-  patchCredentialFormValues,
   credentialAuthTypeLabel,
   credentialDisplayName,
   credentialEnvInjectionMissing,

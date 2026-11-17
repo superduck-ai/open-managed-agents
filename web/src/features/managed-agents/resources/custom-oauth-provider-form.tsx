@@ -91,6 +91,16 @@ export function CustomOAuthProviderForm({
               autoFocus={field.key === 'name'}
               placeholder={field.placeholder}
               type={field.key === 'authorizeEndpoint' || field.key === 'tokenEndpoint' ? 'url' : 'text'}
+              pattern={
+                field.key === 'authorizeEndpoint' || field.key === 'tokenEndpoint'
+                  ? '[Hh][Tt][Tt][Pp][Ss]://.*'
+                  : undefined
+              }
+              title={
+                field.key === 'authorizeEndpoint' || field.key === 'tokenEndpoint'
+                  ? msg('managedAgents.credentialVaults.credentialDialog.httpsEndpointRequired', 'Use an HTTPS URL.')
+                  : undefined
+              }
               required={field.key !== 'scope'}
               value={values[field.key]}
               onChange={(event) => patch({ [field.key]: event.target.value })}

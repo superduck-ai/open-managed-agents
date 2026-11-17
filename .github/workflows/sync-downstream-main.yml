@@ -1,0 +1,40 @@
+name: Signal main merge
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: main-merge-signal
+  cancel-in-progress: false
+
+jobs:
+  signal:
+    if: >-
+      github.repository == 'superduck-ai/open-managed-agents' &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish merge signal
+        shell: bash
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          ref_count=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/sync/main-merged" \
+            --jq 'map(select(.ref == "refs/heads/sync/main-merged")) | length')
+          if [ "$ref_count" = "0" ]; then
+            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/heads/sync/main-merged -f "sha=$main_sha"
+          else
+            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/sync/main-merged" \
+              -f "sha=$main_sha" -F force=false
+          fi
+          echo "Published merge signal at $main_sha." >> "$GITHUB_STEP_SUMMARY"

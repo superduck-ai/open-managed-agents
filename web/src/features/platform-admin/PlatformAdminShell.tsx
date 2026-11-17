@@ -35,7 +35,7 @@ export function PlatformAdminShell({ email }: { email: string }) {
     >
       <ConsoleTopbar currentPath={location.pathname} onNavigate={(href) => navigate({ href })} />
       <AdminSidebar email={email} />
-      <SidebarInset className="subtle-scrollbar min-w-0 text-foreground">
+      <SidebarInset className="subtle-scrollbar min-w-0 text-foreground focus:outline-none focus-visible:outline-none">
         <div className="console-page w-full min-w-0 px-6 py-6 lg:px-8">
           <Outlet />
         </div>

@@ -72,4 +72,9 @@ test('direct creation routes show a page with optional sections initially collap
   expect(within(page).queryByRole('combobox', { name: 'Add MCP server' })).toBeNull();
   fireEvent.click(within(page).getByRole('button', { name: 'Tools (optional)' }));
   expect(within(page).getByRole('combobox', { name: 'Add MCP server' })).toBeTruthy();
+  const promptInput = within(page).getByLabelText('System prompt (optional)');
+  expect(within(promptInput.parentElement!).getByRole('tab', { name: 'Rendered' })).toBeTruthy();
+  const stickyFooter = within(page).getByRole('button', { name: 'Create agent' }).closest('.sticky');
+  expect(stickyFooter?.className).toContain('border-t-[0.5px]');
+  expect(stickyFooter?.className).toContain('before:bg-gradient-to-t');
 });

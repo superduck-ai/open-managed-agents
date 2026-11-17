@@ -150,12 +150,13 @@ export function SessionSummaryChip({
 }) {
   const chip = (
     <span
-      className={clsx('flex min-w-0 max-w-52 shrink-0 items-center gap-2 text-sm text-muted-foreground', className)}
+      className={clsx(
+        'inline-flex h-6 min-w-0 max-w-56 shrink-0 items-center gap-1.5 text-xs text-muted-foreground',
+        className,
+      )}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate text-foreground/80">{children}</span>
-      </span>
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate text-foreground/85">{children}</span>
     </span>
   );
   if (!tooltip) {

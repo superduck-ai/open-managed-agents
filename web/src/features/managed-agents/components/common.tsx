@@ -836,13 +836,22 @@ export function AgentsEmptyState({
   trueEmpty,
   truncated,
   onReset,
+  onCreate,
 }: {
   trueEmpty: boolean;
   truncated?: boolean;
   onReset: () => void;
+  onCreate?: () => void;
 }) {
   const { msg } = useI18n();
   const filtered = !trueEmpty;
+  const actionLabel =
+    filtered && !truncated
+      ? msg('managedAgents.filters.resetFilters', 'Reset filters')
+      : trueEmpty && onCreate
+        ? msg('managedAgents.agents.createLabel', 'Create agent')
+        : undefined;
+  const onAction = filtered && !truncated ? onReset : trueEmpty ? onCreate : undefined;
   return (
     <AgentsListState
       icon={trueEmpty ? productIcons.agents : Search}
@@ -861,8 +870,8 @@ export function AgentsEmptyState({
             ? msg('managedAgents.agents.emptyBody', 'Create an agent to start building managed workflows.')
             : msg('managedAgents.agents.noFilteredResultsBody', 'Try a different search or reset the filters.')
       }
-      actionLabel={filtered && !truncated ? msg('managedAgents.filters.resetFilters', 'Reset filters') : undefined}
-      onAction={filtered && !truncated ? onReset : undefined}
+      actionLabel={actionLabel}
+      onAction={onAction}
     />
   );
 }

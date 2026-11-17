@@ -136,12 +136,20 @@
   display: flex;
 }
 
-.session-trace-layout[data-layout-mode='overlay'] .session-inspector-shell {
-  border-top: 0.5px solid var(--sand-a3);
+@keyframes session-inspector-card-pop {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
-.session-trace-layout[data-layout-mode='split'] .session-trace-resize-handle {
-  background: var(--sand-a3);
+.session-inspector-shell {
+  box-shadow: var(--shadow-raised);
+  animation: session-inspector-card-pop 200ms var(--ease-snappy-out);
 }
 
 .session-inspector-open-label {
@@ -174,6 +182,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   [data-transcript-block='agent'][data-entering],
+  .session-inspector-shell,
   .session-inspector-detail-card {
     animation: none;
   }

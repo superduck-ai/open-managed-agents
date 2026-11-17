@@ -328,12 +328,14 @@ function CreateAgentEditorContent({
                     autoFocus
                   />
                 </InputGroup>
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={!description.trim() || isGenerating || Boolean(draftState.rawError)}
-                  >
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {msg(
+                      'managedAgents.agents.createDialog.generateOverwriteHint',
+                      'Generating updates the agent config below',
+                    )}
+                  </span>
+                  <Button type="submit" disabled={!description.trim() || isGenerating || Boolean(draftState.rawError)}>
                     {isGenerating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                     {isGenerating
                       ? msg('managedAgents.agents.createDialog.generating', 'Generating...')
@@ -359,45 +361,59 @@ function CreateAgentEditorContent({
         </CollapsibleContent>
       </Collapsible>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-medium">{msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}</h2>
-        <Tabs
-          value={draftState.view}
-          onValueChange={(value) => value && draftState.selectView(value as 'rendered' | 'raw')}
-        >
-          <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
-            <TabsTrigger value="rendered">{msg('managedAgents.agents.createDialog.rendered', 'Rendered')}</TabsTrigger>
-            <TabsTrigger value="raw" disabled={mcpTunnelChannelPending}>
-              {msg('managedAgents.agents.createDialog.raw', 'Raw')}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+      {(() => {
+        const editorModeSwitcher = (
+          <Tabs
+            value={draftState.view}
+            onValueChange={(value) => value && draftState.selectView(value as 'rendered' | 'raw')}
+          >
+            <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
+              <TabsTrigger value="rendered">
+                {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
+              </TabsTrigger>
+              <TabsTrigger value="raw" disabled={mcpTunnelChannelPending}>
+                {msg('managedAgents.agents.createDialog.raw', 'Raw')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        );
+        return (
+          <>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-medium">
+                {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
+              </h2>
+              {draftState.view === 'raw' ? editorModeSwitcher : null}
+            </div>
 
-      {draftState.view === 'rendered' ? (
-        <AgentConfigRenderedEditor
-          compact
-          orgUuid={orgUuid}
-          workspaceId={workspaceId}
-          draft={draftState.draft}
-          modelOptions={modelOptions}
-          onPendingTunnelChange={setMcpTunnelChannelPending}
-          tunnelSelectionResetKey={draftState.replacementRevision}
-          onChange={draftState.setDraft}
-        />
-      ) : (
-        <div className="min-h-[520px] pb-8">
-          <CreateDialogConfigEditor
-            format={draftState.format}
-            configText={draftState.rawText}
-            configError={draftState.rawError}
-            onFormatChange={draftState.selectFormat}
-            onEditorChange={draftState.updateRawText}
-            validateEditorText={draftState.validateRawText}
-          />
-        </div>
-      )}
-      <div className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center justify-between gap-3 bg-background py-4">
+            {draftState.view === 'rendered' ? (
+              <AgentConfigRenderedEditor
+                compact
+                orgUuid={orgUuid}
+                workspaceId={workspaceId}
+                draft={draftState.draft}
+                modelOptions={modelOptions}
+                viewSwitcher={editorModeSwitcher}
+                onPendingTunnelChange={setMcpTunnelChannelPending}
+                tunnelSelectionResetKey={draftState.replacementRevision}
+                onChange={draftState.setDraft}
+              />
+            ) : (
+              <div className="min-h-[520px] pb-8">
+                <CreateDialogConfigEditor
+                  format={draftState.format}
+                  configText={draftState.rawText}
+                  configError={draftState.rawError}
+                  onFormatChange={draftState.selectFormat}
+                  onEditorChange={draftState.updateRawText}
+                  validateEditorText={draftState.validateRawText}
+                />
+              </div>
+            )}
+          </>
+        );
+      })()}
+      <div className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center justify-between gap-3 border-t-[0.5px] border-border bg-background/95 py-4 backdrop-blur-xs before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-gradient-to-t before:from-background before:to-transparent">
         {createError || draftState.draftError || pendingTunnelError ? (
           <p role="alert" className="max-w-full break-words text-sm text-destructive">
             {createError || draftState.draftError || pendingTunnelError}

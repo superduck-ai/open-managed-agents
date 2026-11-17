@@ -84,6 +84,7 @@ function WizardStepFields({
 }
 
 export function ChannelWizardFormPage({
+  mode,
   workspaceId,
   initialAgentId,
   initialChannel,
@@ -195,7 +196,10 @@ export function ChannelWizardFormPage({
     if (wizardStepAllowed(next, value, access)) setStep(next);
   };
 
-  const canSave = step === 3 && channelWizardStepReady(1, value, access) && channelWizardStepReady(3, value, access);
+  const canSave =
+    (mode === 'edit' || step === 3) &&
+    channelWizardStepReady(1, value, access) &&
+    channelWizardStepReady(3, value, access);
   const persist = async () => {
     if (!channelTargetsReady(value)) {
       setError(connectTargetError(value, msg));
@@ -292,30 +296,17 @@ export function ChannelWizardFormPage({
               <AlertDescription>{visibleError}</AlertDescription>
             </Alert>
           ) : null}
-          <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
-            <div>
-              {step < 3 ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!canGoNext || busy}
-                  onClick={() => openStep((step + 1) as WizardStep)}
-                >
-                  {msg('managedAgents.channels.nextStep', '下一步')}
-                </Button>
-              ) : null}
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
-                {msg('managedAgents.channels.cancel', '取消')}
-              </Button>
-              <Button type="button" disabled={busy || !canSave} onClick={() => void persist()}>
-                {busy
-                  ? msg('managedAgents.channels.processing', '处理中…')
-                  : msg('managedAgents.channels.saveConfig', '保存配置')}
-              </Button>
-            </div>
-          </div>
+          <ChannelWizardFooter
+            mode={mode}
+            step={step}
+            busy={busy}
+            canGoNext={canGoNext}
+            canSave={canSave}
+            listHref={listHref}
+            onNavigate={onNavigate}
+            onNextStep={() => openStep((step + 1) as WizardStep)}
+            onPersist={() => void persist()}
+          />
         </div>
         <aside
           className="min-w-0 space-y-5 xl:sticky xl:top-0"
@@ -330,6 +321,55 @@ export function ChannelWizardFormPage({
         </aside>
       </div>
     </section>
+  );
+}
+
+function ChannelWizardFooter({
+  mode,
+  step,
+  busy,
+  canGoNext,
+  canSave,
+  listHref,
+  onNavigate,
+  onNextStep,
+  onPersist,
+}: {
+  mode: 'create' | 'edit';
+  step: WizardStep;
+  busy: boolean;
+  canGoNext: boolean;
+  canSave: boolean;
+  listHref: string;
+  onNavigate: (href: string) => void;
+  onNextStep: () => void;
+  onPersist: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-end gap-2 border-t-[0.5px] border-border bg-background/95 py-3 backdrop-blur-xs">
+      <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
+        {msg('managedAgents.channels.cancel', '取消')}
+      </Button>
+      {mode === 'edit' && step < 3 ? (
+        <Button type="button" variant="secondary" disabled={busy || !canSave} onClick={onPersist}>
+          {busy
+            ? msg('managedAgents.channels.processing', '处理中…')
+            : msg('managedAgents.channels.saveConfig', '保存配置')}
+        </Button>
+      ) : null}
+      {step < 3 ? (
+        <Button type="button" disabled={!canGoNext || busy} onClick={onNextStep}>
+          {msg('managedAgents.channels.nextStep', '下一步')}
+        </Button>
+      ) : (
+        <Button type="button" disabled={busy || !canSave} onClick={onPersist}>
+          {busy
+            ? msg('managedAgents.channels.processing', '处理中…')
+            : msg('managedAgents.channels.saveConfig', '保存配置')}
+        </Button>
+      )}
+    </div>
   );
 }
 

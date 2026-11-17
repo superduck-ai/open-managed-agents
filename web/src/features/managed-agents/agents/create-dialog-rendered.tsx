@@ -1,7 +1,7 @@
 import { documentationHref } from '../../../shared/documentation';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
-import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { listAllWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
@@ -36,6 +36,7 @@ export function AgentConfigRenderedEditor({
   workspaceId,
   draft,
   modelOptions,
+  viewSwitcher,
   onPendingTunnelChange,
   tunnelSelectionResetKey,
   compact,
@@ -45,12 +46,14 @@ export function AgentConfigRenderedEditor({
   workspaceId: string;
   draft: CreateAgentInput;
   modelOptions: AgentModelOption[];
+  viewSwitcher?: ReactNode;
   onPendingTunnelChange?: (pending: boolean) => void;
   tunnelSelectionResetKey?: number;
   compact?: boolean;
   onChange: (next: CreateAgentInput) => void;
 }) {
   const { locale, msg } = useI18n();
+  const systemPromptId = useId();
   const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
   const skillsQuery = useQuery({
@@ -149,14 +152,20 @@ export function AgentConfigRenderedEditor({
               onChange={(event) => onChange({ ...draft, description: event.target.value || null })}
             />
           </label>
-          <label className="grid gap-2 text-sm font-medium">
-            <span>{msg('managedAgents.agents.createDialog.optionalSystemPrompt', 'System prompt (optional)')}</span>
+          <div className="grid gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor={systemPromptId} className="text-sm font-medium">
+                {msg('managedAgents.agents.createDialog.optionalSystemPrompt', 'System prompt (optional)')}
+              </label>
+              {viewSwitcher}
+            </div>
             <Textarea
+              id={systemPromptId}
               className={presentation.system}
               value={draft.system ?? ''}
               onChange={(event) => onChange({ ...draft, system: event.target.value || null })}
             />
-          </label>
+          </div>
         </div>
       </CreateDialogSection>
 

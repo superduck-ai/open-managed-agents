@@ -106,7 +106,10 @@ describe('SessionTraceWorkspaceLayout', () => {
     try {
       const view = render(<LayoutHarness inspectorOpen />);
       const primary = screen.getByTestId('primary-content');
-      expect(await screen.findByRole('separator', { name: 'Resize inspector' })).toBeTruthy();
+      const separator = await screen.findByRole('separator', { name: 'Resize inspector' });
+      expect(separator).toBeTruthy();
+      expect(separator.className).toContain('after:bg-transparent');
+      expect(separator.querySelector('.lucide-grip-vertical')).toBeTruthy();
 
       view.rerender(<LayoutHarness inspectorOpen={false} />);
 

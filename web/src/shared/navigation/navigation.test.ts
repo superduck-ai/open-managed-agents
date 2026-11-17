@@ -89,6 +89,11 @@ test('retains channel navigation after consolidating workspace paths', () => {
 
 test('retains evaluation navigation on the workspace path', () => {
   expect(consoleNavigation.some((item) => item.type === 'link' && item.href === '/evaluations')).toBe(true);
+  const environmentsIndex = consoleNavigation.findIndex(
+    (item) => item.type === 'link' && item.href === '/environments',
+  );
+  expect(environmentsIndex).toBeGreaterThanOrEqual(0);
+  expect(consoleNavigation[environmentsIndex + 1]).toMatchObject({ type: 'link', href: '/evaluations' });
   expect(navigationHref('/evaluations', 'team')).toBe('/workspaces/team/evaluations');
   expect(isActivePath('/workspaces/team/evaluations', '/evaluations')).toBe(true);
   expect(isActivePath('/workspaces/team/evaluations/datasets/ds', '/evaluations')).toBe(true);

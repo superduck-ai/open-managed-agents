@@ -124,6 +124,7 @@ describe('MCP tunnels list page', () => {
     const search = screen.getByPlaceholderText('Search by name or exact ID');
     fireEvent.change(search, { target: { value: 'missing' } });
     expect(await screen.findByText('No matching MCP tunnels')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
     fireEvent.change(search, { target: { value: activeTunnel.id } });
     expect(await screen.findByText('Private tools')).toBeTruthy();
 
@@ -140,7 +141,8 @@ describe('MCP tunnels list page', () => {
     renderPage(undefined, 'wrkspc_route', 'zh-CN');
 
     expect(await screen.findByRole('heading', { name: 'MCP 隧道' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '新建隧道' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '新建隧道' }).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.queryByRole('table')).toBeNull());
     expect(api.requests[0].url).toContain('/workspaces/wrkspc_route/mcp_tunnels');
   });
 });

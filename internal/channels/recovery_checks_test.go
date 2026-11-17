@@ -126,7 +126,7 @@ func TestHistoryPaginationRejectsCursorCycles(t *testing.T) {
 	}))
 	defer server.Close()
 	worker, channel := testWorker(t, &fakeRuntimeStore{}, server.URL)
-	worker.listHistory(t.Context(), "chat:oc_1", &channelMessage{ChatType: "p2p", ChatID: "oc_1", UserID: "ou_1"}, "key", "env_1")
+	worker.listHistory(t.Context(), "chat:oc_1", &channelMessage{ChatType: "p2p", ChatID: "oc_1", UserID: "ou_1"}, "key", "env_1", "")
 	if requests != 2 || len(channel.sends) != 1 || !strings.Contains(channel.sends[0], "分页异常") {
 		t.Fatalf("历史游标循环应明确拒绝: requests=%d replies=%v", requests, channel.sends)
 	}

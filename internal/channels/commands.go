@@ -106,8 +106,16 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		_ = w.replyText(ctx, msg, "当前渠道尚未配置执行环境。")
 		return
 	}
+	personalID := ""
+	if msg.ChatType == "p2p" && w.supervisor.personalVault != nil {
+		personalID, err = w.supervisor.personalVault(ctx, w.record, msg.UserID)
+		if err != nil {
+			_ = w.replyText(ctx, msg, "读取个人连接失败，请稍后重试。")
+			return
+		}
+	}
 	if len(args) == 0 {
-		w.listHistory(ctx, scopeKey, msg, apiKey, environmentID)
+		w.listHistory(ctx, scopeKey, msg, apiKey, environmentID, personalID)
 		return
 	}
 	w.mu.Lock()
@@ -125,7 +133,7 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		}
 	}
 	session, err := w.supervisor.oma.getSession(ctx, apiKey, args[0])
-	if err != nil || !w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID) {
+	if err != nil || !w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
 		_ = w.replyText(ctx, msg, "该会话不属于当前渠道/话题，或配置不兼容、当前不可恢复。")
 		return
 	}
@@ -136,16 +144,16 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 	_ = w.replyText(ctx, msg, "已恢复 OMA 会话，请继续发送消息。")
 }
 
-func (w *channelWorker) compatibleSession(session omaSession, scopeKey, legacyScope, environmentID string) bool {
+func (w *channelWorker) compatibleSession(session omaSession, scopeKey, legacyScope, environmentID, personalID string) bool {
 	chatID, isChat := strings.CutPrefix(scopeKey, "chat:")
 	legacyDirect := isChat && session.Metadata["chat_type"] == "p2p" && strings.HasPrefix(session.Metadata["scope_id"], "thread:"+chatID+":")
-	return w.compatibleSessionConfiguration(session, environmentID) && session.ID != "" && session.Status == "idle" && session.ArchivedAt == nil &&
+	return w.compatibleSessionConfiguration(session, environmentID, personalID) && session.ID != "" && session.Status == "idle" && session.ArchivedAt == nil &&
 		session.Metadata["source"] == w.record.ChannelType && session.Metadata["channel_id"] == w.record.ExternalID &&
 		session.Metadata["app_id"] == w.record.AppID &&
 		(session.Metadata["scope_id"] == scopeKey || legacyDirect || legacyScope != "" && session.Metadata["scope_id"] == legacyScope)
 }
 
-func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *channelMessage, apiKey, environmentID string) {
+func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *channelMessage, apiKey, environmentID, personalID string) {
 	path := "/v1/sessions?agent_id=" + url.QueryEscape(w.record.AgentExternalID) + "&limit=100&order=desc"
 	lines := make([]string, 0, 20)
 	pages := make(map[string]struct{})
@@ -159,7 +167,7 @@ func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *c
 			return
 		}
 		for _, session := range page.Data {
-			if w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID) {
+			if w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
 				lines = append(lines, fmt.Sprintf("/resume %s（版本 %d）", session.ID, session.Agent.Version))
 				if len(lines) == 20 {
 					break
@@ -215,11 +223,11 @@ func (w *channelWorker) finishInterruptedReplies(tasks []*channelReplyTask, apiK
 	}
 }
 
-func (w *channelWorker) compatibleSessionConfiguration(session omaSession, environmentID string) bool {
+func (w *channelWorker) compatibleSessionConfiguration(session omaSession, environmentID, personalID string) bool {
 	version := parseChannelMounts(w.record.Mounts).AgentVersion
 	policy := ""
 	if version > 0 {
 		policy = strconv.Itoa(version)
 	}
-	return session.Agent.ID == w.record.AgentExternalID && session.Metadata["agent_version"] == policy && (version == 0 || session.Agent.Version == version) && session.EnvironmentID == environmentID && w.compatibleMounts(session)
+	return session.Agent.ID == w.record.AgentExternalID && session.Metadata["agent_version"] == policy && (version == 0 || session.Agent.Version == version) && session.EnvironmentID == environmentID && w.compatibleMounts(session, personalID)
 }

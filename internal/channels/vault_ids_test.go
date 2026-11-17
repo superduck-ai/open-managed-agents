@@ -81,11 +81,11 @@ func TestChannelVaultListCompatibility(t *testing.T) {
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused.test")
 	worker.record.Mounts = `{"vault_ids":["vault-a","vault-b"]}`
 	session := omaSession{VaultIDs: []string{"vault-a", "vault-b"}}
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "") {
 		t.Fatal("完整相同的Vault列表不能复用")
 	}
 	session.VaultIDs = []string{"vault-a"}
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("部分Vault会话不应被复用")
 	}
 }
@@ -95,7 +95,7 @@ func TestManuallyMountedOwnVaultIsNotAttachedTwice(t *testing.T) {
 	worker.supervisor.personalVault = func(context.Context, db.ChannelRecord, string) (string, error) { return "vault-a", nil }
 	worker.record.Mounts = `{"vault_ids":["vault-a"]}`
 	session := omaSession{VaultIDs: []string{"vault-a"}, Metadata: map[string]string{"chat_type": "p2p", "actor_id": "user-a", "personal_vault_id": "vault-a", "credential_binding_mode": "first_vault"}}
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "vault-a") {
 		t.Fatal("手动挂载本人 Vault 不应重复追加同一资源")
 	}
 }

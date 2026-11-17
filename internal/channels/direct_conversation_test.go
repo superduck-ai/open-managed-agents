@@ -24,7 +24,7 @@ func TestDirectConversationIgnoresThreadAndKeepsLegacyHistory(t *testing.T) {
 		{"group", "thread:direct:old_a", false},
 	} {
 		session := omaSession{ID: "session", Status: "idle", Agent: omaSessionAgent{ID: "agent_1"}, EnvironmentID: "env_1", Metadata: map[string]string{"source": "feishu", "channel_id": "chnl_1", "app_id": "app_1", "chat_type": tc.kind, "scope_id": tc.scope}}
-		if got := worker.compatibleSession(session, "chat:direct", "", "env_1"); got != tc.allowed {
+		if got := worker.compatibleSession(session, "chat:direct", "", "env_1", ""); got != tc.allowed {
 			t.Fatalf("旧私聊会话恢复边界错误: %+v got=%v", tc, got)
 		}
 	}

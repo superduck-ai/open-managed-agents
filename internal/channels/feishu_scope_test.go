@@ -89,7 +89,7 @@ func TestGroupHistoryAcceptsOnlyCurrentRootOrLegacyThread(t *testing.T) {
 	for _, scope := range []string{"thread:group:om_root", "thread:group:omt_thread", "thread:group:omt_other", "chat:group", ""} {
 		session := omaSession{ID: "sesn_old", Status: "idle", Agent: omaSessionAgent{ID: "agent_1"}, EnvironmentID: "env_1", Metadata: map[string]string{"source": "feishu", "channel_id": "chnl_1", "app_id": "app_1", "scope_id": scope}}
 		allowed := scope == "thread:group:om_root" || scope == "thread:group:omt_thread"
-		if worker.compatibleSession(session, "thread:group:om_root", "thread:group:omt_thread", "env_1") != allowed {
+		if worker.compatibleSession(session, "thread:group:om_root", "thread:group:omt_thread", "env_1", "") != allowed {
 			t.Fatalf("历史恢复作用域错误: %s", scope)
 		}
 	}

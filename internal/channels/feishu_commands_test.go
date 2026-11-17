@@ -131,11 +131,11 @@ func TestResumeComparesRepositoryConfiguration(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"resources":[{"type":"github_repository","url":"https://github.com/octocat/Hello-World.git","mount_path":"/workspace/Hello-World"},{"type":"file","file_id":"file_input"}]}`), &session); err != nil {
 		t.Fatal(err)
 	}
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "") {
 		t.Fatal("默认挂载路径和用户文件不应阻止恢复")
 	}
 	session.Resources[0].MountPath = "/workspace/other"
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("仓库挂载路径变化时不应恢复旧配置")
 	}
 }

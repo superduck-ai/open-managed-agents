@@ -86,16 +86,16 @@ func TestPinnedChannelVersionCreatesNativeSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := omaSession{Agent: omaSessionAgent{ID: "agent_1", Version: 1}, EnvironmentID: "env_1"}
-	if worker.compatibleSessionConfiguration(old, "env_1") {
+	if worker.compatibleSessionConfiguration(old, "env_1", "") {
 		t.Fatal("固定版本错误复用了其他版本的会话")
 	}
 	old.Agent.Version = 2
 	old.Metadata = map[string]string{"agent_version": "2"}
-	if !worker.compatibleSessionConfiguration(old, "env_1") {
+	if !worker.compatibleSessionConfiguration(old, "env_1", "") {
 		t.Fatal("相同固定版本不能复用")
 	}
 	worker.record.Mounts = `{}`
-	if worker.compatibleSessionConfiguration(old, "env_1") {
+	if worker.compatibleSessionConfiguration(old, "env_1", "") {
 		t.Fatal("改回最新版错误复用了固定版本绑定")
 	}
 }

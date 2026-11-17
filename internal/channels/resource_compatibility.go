@@ -19,17 +19,17 @@ func (r channelResourceMount) matches(actual omaSessionResource) bool {
 	return err == nil && sandboxmount.SandboxPath(path) == actual.MountPath
 }
 
-func (w *channelWorker) compatibleMounts(session omaSession) bool {
+func (w *channelWorker) compatibleMounts(session omaSession, personalID string) bool {
 	if w.supervisor.personalVault != nil && session.Metadata["credential_binding_mode"] != "first_vault" {
 		return false
 	}
 	mounts := parseChannelMounts(w.record.Mounts)
-	if w.supervisor.personalVault != nil && session.Metadata["chat_type"] == "p2p" && session.Metadata["actor_id"] != "" {
-		if session.Metadata["personal_vault_id"] == "" {
+	if personalID != "" {
+		if session.Metadata["personal_vault_id"] != personalID {
 			return false
 		}
-		if !slices.Contains(mounts.VaultIDs, session.Metadata["personal_vault_id"]) {
-			mounts.VaultIDs = append(mounts.VaultIDs, session.Metadata["personal_vault_id"])
+		if !slices.Contains(mounts.VaultIDs, personalID) {
+			mounts.VaultIDs = append(mounts.VaultIDs, personalID)
 		}
 	}
 	if !slices.Equal(mounts.VaultIDs, session.VaultIDs) {

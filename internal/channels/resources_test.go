@@ -142,17 +142,17 @@ func TestLegacyResourceMigrationPreservesSessionUntilCredentialsChange(t *testin
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused.test")
 	worker.record = record
 	session := omaSession{Resources: []omaSessionResource{{Type: "github_repository", URL: "https://gitlab.example/a.git", MountPath: "/workspace/a"}}}
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "") {
 		t.Fatal("旧单仓库会话在迁移前不兼容")
 	}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"github_repository","url":"https://gitlab.example/a.git"}]}`)
 	worker.record = record
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "") {
 		t.Fatal("保存未变化资源错误打断了旧会话")
 	}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"github_repository","url":"https://gitlab.example/a.git","authorization_token":"new-token"}]}`)
 	worker.record = record
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("凭据替换后仍复用持有旧凭据的会话")
 	}
 }
@@ -172,23 +172,23 @@ func TestConfiguredFilesRemainDistinctFromConversationAttachments(t *testing.T) 
 		{Type: "file", FileID: "file_chat_attachment", MountPath: "/mnt/session/uploads/message_attachment"},
 	}}
 	session.Resources[0].MountPath = "/mnt/session/uploads/other"
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("配置文件实际路径不匹配时不应复用")
 	}
 	session.Resources[0].MountPath = "/mnt/session/uploads/file_a"
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"file","file_id":"file_b","mount_path":"/uploads/file_a"}]}`)
 	worker.record = record
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("相同路径改用另一源文件时不应复用")
 	}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"file","file_id":"file_a"}]}`)
 	worker.record = record
-	if !worker.compatibleMounts(session) {
+	if !worker.compatibleMounts(session, "") {
 		t.Fatal("原生会话文件副本和聊天附件不应使未变的配置失配")
 	}
 	applyResourceMutation(t, service, &record, `{"resources":[]}`)
 	worker.record = record
-	if worker.compatibleMounts(session) {
+	if worker.compatibleMounts(session, "") {
 		t.Fatal("移除配置文件后不应复用仍带该文件的会话")
 	}
 }

@@ -138,16 +138,29 @@ func (s *Service) DisableIdentity(ctx context.Context, principal auth.Principal,
 	return s.GetIdentity(ctx, principal, externalID)
 }
 
-func (s *Service) BindConsoleSession(ctx context.Context, principal auth.Principal, session db.Session, identityID string) error {
+func (s *Service) PrepareConsoleSession(ctx context.Context, principal auth.Principal, identityID string) error {
+	_, err := s.usableConsoleIdentity(ctx, principal, identityID)
+	return err
+}
+
+func (s *Service) usableConsoleIdentity(ctx context.Context, principal auth.Principal, identityID string) (db.IdentityRecord, error) {
 	identity, err := s.store.FindBusinessIdentity(ctx, principal.WorkspaceUUID, identityID)
 	if err != nil {
-		return mapStore(err, "执行身份不存在")
+		return db.IdentityRecord{}, mapStore(err, "执行身份不存在")
 	}
 	if identity.OrganizationUUID != principal.OrganizationUUID || identity.DeletedAt != nil {
-		return notFound("执行身份不存在", nil)
+		return db.IdentityRecord{}, notFound("执行身份不存在", nil)
 	}
 	if !identity.Enabled {
-		return conflict("Identity 已停用，不能创建新的执行", nil)
+		return db.IdentityRecord{}, conflict("Identity 已停用，不能创建新的执行", nil)
+	}
+	return identity, nil
+}
+
+func (s *Service) BindConsoleSession(ctx context.Context, principal auth.Principal, session db.Session, identityID string) error {
+	identity, err := s.usableConsoleIdentity(ctx, principal, identityID)
+	if err != nil {
+		return err
 	}
 	return s.BindSession(ctx, SessionBind{
 		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID,

@@ -51,7 +51,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body sessionCreateRequest) (db.Session, error) {
-	identityID, err := requestedIdentityID(body.IdentityID)
+	identityID, err := h.requestedSessionIdentity(r.Context(), principal, body.IdentityID)
 	if err != nil {
 		return db.Session{}, err
 	}
@@ -200,6 +200,9 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 		}
 		return db.Session{}, internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
+	if err := h.bindCreatedIdentity(r.Context(), principal, created, identityID); err != nil {
+		return db.Session{}, err
+	}
 	if len(events) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	} else {
@@ -209,9 +212,6 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 		}
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
-	}
-	if err := h.bindCreatedIdentity(r.Context(), principal, created, identityID); err != nil {
-		return db.Session{}, err
 	}
 	return created, nil
 }
@@ -223,7 +223,13 @@ func (h *Handler) bindCreatedIdentity(ctx context.Context, principal auth.Princi
 	if h.bindIdentity == nil {
 		return internalError("Could not bind identity", errIdentityUnavailable)
 	}
-	return h.bindIdentity(ctx, principal, created, identityID)
+	if err := h.bindIdentity(ctx, principal, created, identityID); err != nil {
+		if _, deleteErr := h.db.DeleteSession(ctx, created.WorkspaceUUID, created.ExternalID); deleteErr != nil && h.logger != nil {
+			h.logger.WarnContext(ctx, "delete session after identity bind failed", "session_id", created.ExternalID, "error", deleteErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {

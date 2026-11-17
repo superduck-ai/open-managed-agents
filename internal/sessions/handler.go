@@ -40,6 +40,7 @@ type Handler struct {
 	previews        *workerPreviewConverter
 	eventObserver   SessionEventObserver
 	admitExecution  func(context.Context, string, string, string, bool) error
+	prepareIdentity func(context.Context, auth.Principal, string) error
 	bindIdentity    func(context.Context, auth.Principal, db.Session, string) error
 	ports           *sessionports.Settings
 }

@@ -1034,7 +1034,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         </div>
       )}
 
-      <div hidden={sessionIdSearch.handled}>
+      <div hidden={shouldHideEntityPagination(sessionIdSearch.handled, config.section, sessionListEntities.length)}>
         <ResourceListPagination
           currentPage={entityPageHistory.length + 1}
           totalPages={resourceListPageCount(currentPage.totalCount, managedEntityListLimit)}
@@ -1222,4 +1222,11 @@ export function ManagedEntityRow({
       </DataTableCell>
     </DataTableRow>
   );
+}
+
+function shouldHideEntityPagination(searchHandled: boolean, section: string, sessionCount: number) {
+  if (searchHandled) {
+    return true;
+  }
+  return section === 'sessions' && sessionCount === 0;
 }

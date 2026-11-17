@@ -24,7 +24,7 @@ export function SessionListContent({
 }) {
   return (
     <>
-      <SessionListTable {...tableProps} />
+      {tableProps.loading || tableProps.sessions.length > 0 ? <SessionListTable {...tableProps} /> : null}
       {!tableProps.loading && !tableProps.sessions.length ? (
         <SessionListEmpty filtered={filtered} error={error} onCreate={onCreate} onReset={onReset} onRetry={onRetry} />
       ) : null}

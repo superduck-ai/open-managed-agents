@@ -29,6 +29,12 @@ type Store interface {
 	CreateEvaluationCases(context.Context, string, string, string, []db.EvaluationCaseWrite, time.Time) ([]db.EvaluationCase, error)
 	UpdateEvaluationCase(context.Context, string, string, string, db.EvaluationCaseWrite, time.Time) (db.EvaluationCase, error)
 	DeleteEvaluationCase(context.Context, string, string, string, string, time.Time) error
+	CreateEvaluationRubric(context.Context, db.EvaluationRubric) (db.EvaluationRubric, error)
+	AppendEvaluationRubricVersion(context.Context, string, string, string, db.EvaluationRubric, time.Time) (db.EvaluationRubric, error)
+	ListEvaluationRubrics(context.Context, string, string, int, int) ([]db.EvaluationRubric, error)
+	GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error)
+	ListEvaluationRubricVersions(context.Context, string, string, string) ([]db.EvaluationRubric, error)
+	DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
@@ -68,6 +74,13 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Post(base+"/datasets/{datasetId}/cases:from-session", h.adapter.Wrap(h.caseFromSession))
 	router.Post(base+"/datasets/{datasetId}/cases/{caseId}", h.adapter.Wrap(h.updateCase))
 	router.Delete(base+"/datasets/{datasetId}/cases/{caseId}", h.adapter.Wrap(h.deleteCase))
+	router.Post(base+"/rubrics/generate", h.adapter.Wrap(h.generateRubric))
+	router.Post(base+"/rubrics", h.adapter.Wrap(h.createRubric))
+	router.Get(base+"/rubrics", h.adapter.Wrap(h.listRubrics))
+	router.Get(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.getRubric))
+	router.Get(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.listRubricVersions))
+	router.Delete(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.deleteRubric))
+	router.Post(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.appendRubricVersion))
 }
 
 func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {

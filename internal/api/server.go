@@ -108,6 +108,7 @@ type ServerDeps struct {
 	ToolCallNotifications  *nats.Conn
 	ToolCallContext        context.Context
 	InvitationJobs         *river.Client[*sql.Tx]
+	EvaluationRunner       *evaluationsapi.TaskRunner
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -228,7 +229,7 @@ func NewServer(deps ServerDeps) *Server {
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
-	evaluationHandler := evaluationsapi.NewHandler(deps.DB, componentLogger("evaluations")).WithRubricModel(evaluationsapi.NewRubricModel(deps.DB, deps.VaultSecrets))
+	evaluationHandler := newEvaluationHandler(deps, s.sessions, componentLogger("evaluations"))
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)

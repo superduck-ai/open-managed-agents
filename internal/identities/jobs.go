@@ -61,4 +61,3 @@ func (q RiverCleanup) EnqueueIdentityCleanup(ctx context.Context, workspaceUUID,
 	_, err := q.client.Insert(ctx, cleanupArgs{WorkspaceUUID: workspaceUUID, IdentityUUID: identityUUID, CleanupID: cleanupID}, nil)
 	return err
 }
-

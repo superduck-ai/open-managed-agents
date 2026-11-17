@@ -81,6 +81,7 @@ type caseResponse struct {
 	ExpectedAnswer    string          `json:"expected_answer"`
 	ExpectedToolTrace json.RawMessage `json:"expected_tool_trace"`
 	SourceSessionID   string          `json:"source_session_id"`
+	Origin            string          `json:"origin"`
 	Polarity          string          `json:"polarity"`
 	Acceptance        string          `json:"acceptance"`
 	Inputs            json.RawMessage `json:"inputs"`
@@ -95,7 +96,7 @@ func caseJSON(item db.EvaluationCase) caseResponse {
 	}
 	return caseResponse{
 		ID: item.ExternalID, Type: "evaluation_case", Query: item.Query, ExpectedAnswer: item.ExpectedAnswer,
-		ExpectedToolTrace: trace, SourceSessionID: item.SourceSessionID, Polarity: item.Polarity, Acceptance: item.Acceptance,
+		ExpectedToolTrace: trace, SourceSessionID: item.SourceSessionID, Origin: item.Origin, Polarity: item.Polarity, Acceptance: item.Acceptance,
 		Inputs: item.Inputs, CreatedAt: formatTime(item.CreatedAt), UpdatedAt: formatTime(item.UpdatedAt),
 	}
 }

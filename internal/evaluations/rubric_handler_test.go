@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -41,39 +42,45 @@ func TestRubricVersionRejectsLongModelByItsOwnMessage(t *testing.T) {
 	}
 }
 
-func TestGenerateRubricStoresMarkdown(t *testing.T) {
-	handler, store, model := newRubricGenerate(sampleRubric)
-	if err := generateRubric(handler); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(model.system, "Markdown") || strings.Contains(model.system, "one JSON object") {
-		t.Fatalf("system = %q", model.system)
-	}
-	if len(store.created) != 1 || store.created[0].Body != sampleRubric {
-		t.Fatalf("created = %+v", store.created)
-	}
-}
-
 func TestGenerateRubricRejectsJSONObject(t *testing.T) {
 	handler, store, model := newRubricGenerate(`{"body":"规则"}`)
-	err := generateRubric(handler)
+	_, err := generateRubric(handler)
 	if publicMessage(err) != rubricFormatMessage || len(store.created) != 0 {
 		t.Fatalf("err=%v created=%d", err, len(store.created))
 	}
 	model.text = `["规则"]`
-	err = generateRubric(handler)
+	_, err = generateRubric(handler)
 	if publicMessage(err) != rubricFormatMessage || len(store.created) != 0 {
 		t.Fatalf("array err=%v created=%d", err, len(store.created))
 	}
 }
 
-func TestGenerateRubricUnwrapsMarkdownFence(t *testing.T) {
-	handler, store, _ := newRubricGenerate("```markdown\n" + sampleRubric + "\n```")
-	if err := generateRubric(handler); err != nil {
+func TestGenerateRubricRejectsInvalidPassScore(t *testing.T) {
+	handler, _, _ := newRubricGenerate(sampleRubric)
+	err := handler.generateRubric(httptest.NewRecorder(), rubricGenerateRequest(`{"goal":"回答准确","pass_score":101}`))
+	if publicMessage(err) != passScoreInvalidMessage {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestGenerateRubricReturnsDraftWithoutSaving(t *testing.T) {
+	handler, store, model := newRubricGenerate("```markdown\n" + sampleRubric + "\n```")
+	response, err := generateRubric(handler)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.created) != 1 || store.created[0].Body != sampleRubric {
-		t.Fatalf("body = %q", store.created[0].Body)
+	if !strings.Contains(model.system, "Markdown") || strings.Contains(model.system, "one JSON object") {
+		t.Fatalf("system = %q", model.system)
+	}
+	if !strings.Contains(model.user, "## 评分维度") || !strings.Contains(model.user, "<goal>") {
+		t.Fatalf("user = %q", model.user)
+	}
+	var draft rubricDraftResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &draft); err != nil {
+		t.Fatal(err)
+	}
+	if draft.Type != "evaluation_rubric_draft" || draft.Body != sampleRubric || draft.PassScore != defaultPassScore || len(store.created) != 0 {
+		t.Fatalf("draft = %+v created = %d", draft, len(store.created))
 	}
 }
 
@@ -83,8 +90,9 @@ func newRubricGenerate(text string) (*Handler, *rubricMemoryStore, *scriptModel)
 	return NewHandler(store, nil).WithRubricModel(model), store, model
 }
 
-func generateRubric(handler *Handler) error {
-	return handler.generateRubric(httptest.NewRecorder(), rubricGenerateRequest(rubricGenerateBody))
+func generateRubric(handler *Handler) (*httptest.ResponseRecorder, error) {
+	response := httptest.NewRecorder()
+	return response, handler.generateRubric(response, rubricGenerateRequest(rubricGenerateBody))
 }
 
 func rubricGenerateRequest(body string) *http.Request {
@@ -106,11 +114,13 @@ func publicMessage(err error) string {
 
 type scriptModel struct {
 	system string
+	user   string
 	text   string
 }
 
 func (m *scriptModel) Complete(_ context.Context, request CompletionRequest) (Completion, error) {
 	m.system = request.System
+	m.user = request.User
 	return Completion{Text: m.text}, nil
 }
 

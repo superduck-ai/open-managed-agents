@@ -7,6 +7,10 @@ export function listTaskAgents(workspaceId: string) {
   return allPages<AgentApiResponse>((page) => listAgents(workspaceId, page, { created: 'all', status: 'active' }, 100));
 }
 
+export function namedOptions(rows: { id: string; name: string }[] | undefined) {
+  return (rows ?? []).map((item) => ({ id: item.id, label: item.name }));
+}
+
 export function listTaskEntities(section: ManagedEntitySection, workspaceId: string) {
   return allPages((page) => listManagedEntities(section, workspaceId, page));
 }

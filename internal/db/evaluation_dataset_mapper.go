@@ -54,6 +54,7 @@ type evaluationCaseRow struct {
 	ExpectedAnswer    string    `db:"expected_answer"`
 	ExpectedToolTrace []byte    `db:"expected_tool_trace"`
 	SourceSessionID   string    `db:"source_session_id"`
+	Origin            string    `db:"origin"`
 	Polarity          string    `db:"polarity"`
 	Acceptance        string    `db:"acceptance"`
 	Inputs            []byte    `db:"inputs"`
@@ -93,6 +94,7 @@ type insertEvaluationCaseParams struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	SourceSessionID   string
+	Origin            string
 	Polarity          string
 	Acceptance        string
 	Inputs            json.RawMessage

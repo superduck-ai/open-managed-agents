@@ -97,6 +97,7 @@ func sessionCaseDrafts(turns []sessionTurn, indexes []int, sessionID, expectedAn
 		if err != nil {
 			return nil, 0, err
 		}
+		draft.Origin = originSession
 		drafts = append(drafts, draft)
 	}
 	return drafts, skipped, nil

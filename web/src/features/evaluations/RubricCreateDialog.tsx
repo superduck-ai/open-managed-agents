@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent, type ReactNode } from 'react';
 
-import { listAgents } from '../managed-agents/api';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import {
@@ -18,11 +17,14 @@ import { Label } from '../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs';
 import { Textarea } from '../../shared/ui/textarea';
-import { createEvaluationRubric, evaluationError, generateEvaluationRubric, listEvaluationDatasets } from './api';
+import { createEvaluationRubric, evaluationError, generateEvaluationRubric } from './api';
+import { listTaskAgents, listTaskDatasets } from './taskOptions';
 import { useEvaluationScope } from './useEvaluationScope';
 
 type RubricSource = 'generate' | 'write';
 type SampleKind = 'dataset' | 'positive' | 'negative';
+
+const defaultPassScore = 60;
 
 const rubricTemplate = `# 评分标准
 
@@ -47,20 +49,44 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
   const [positive, setPositive] = useState('');
   const [negative, setNegative] = useState('');
   const [body, setBody] = useState('');
+  const [drafted, setDrafted] = useState(false);
   const [error, setError] = useState('');
   const agents = useQuery({
-    queryKey: ['evaluation-rubric-agents', scope.workspaceId],
-    queryFn: () => listAgents(scope.workspaceId),
+    queryKey: ['evaluation-agents', scope.workspaceId],
+    queryFn: () => listTaskAgents(scope.workspaceId),
     enabled: open && scope.ready && source === 'generate',
   });
   const datasets = useQuery({
     queryKey: ['evaluation-datasets', scope.orgUuid, scope.workspaceId],
-    queryFn: () => listEvaluationDatasets(scope.orgUuid, scope.workspaceId),
+    queryFn: () => listTaskDatasets(scope.orgUuid, scope.workspaceId),
     enabled: open && scope.ready && source === 'generate',
+  });
+  const generate = useMutation({
+    mutationFn: () =>
+      generateEvaluationRubric(scope.orgUuid, scope.workspaceId, {
+        pass_score: defaultPassScore,
+        goal,
+        agent_id: agentId || undefined,
+        dataset_id: datasetId || undefined,
+        positive,
+        negative,
+      }),
+    onSuccess: (result) => {
+      setBody(result.body);
+      setDrafted(true);
+      setSource('write');
+      setError('');
+    },
+    onError: (cause) => setError(evaluationError(cause)),
   });
   const create = useMutation({
     mutationFn: () =>
-      submitRubric(scope.orgUuid, scope.workspaceId, source, draft(msg('evaluations.rubricDefaultName', 'Rubric'))),
+      createEvaluationRubric(scope.orgUuid, scope.workspaceId, {
+        name: name.trim() || msg('evaluations.rubricDefaultName', 'Rubric'),
+        desc: '',
+        body,
+        pass_score: defaultPassScore,
+      }),
     onSuccess: async () => {
       reset();
       onOpenChange(false);
@@ -68,18 +94,7 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
     },
     onError: (cause) => setError(evaluationError(cause)),
   });
-
-  function draft(fallbackName: string) {
-    return {
-      name: name.trim() || fallbackName,
-      agentId,
-      goal,
-      datasetId,
-      positive,
-      negative,
-      body,
-    };
-  }
+  const pending = generate.isPending || create.isPending;
 
   function reset() {
     setName('');
@@ -91,6 +106,7 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
     setPositive('');
     setNegative('');
     setBody('');
+    setDrafted(false);
     setError('');
   }
 
@@ -104,7 +120,8 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
       setError(msg('evaluations.generateNeedInput', 'Add a goal or a sample.'));
       return;
     }
-    create.mutate();
+    if (source === 'generate') generate.mutate();
+    else create.mutate();
   }
 
   return (
@@ -117,7 +134,7 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
     >
       <DialogContent
         className="max-h-[calc(100vh-4rem)] gap-5 overflow-y-auto p-6 sm:max-w-xl"
-        closeButtonDisabled={create.isPending}
+        closeButtonDisabled={pending}
       >
         <form className="grid gap-5" onSubmit={onSubmit}>
           <DialogHeader>
@@ -149,11 +166,11 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
                 <TabsContent value="generate" className="grid gap-5 pt-5">
                   <GenerateBasis
                     agentId={agentId}
-                    agents={(agents.data?.data ?? []).map((agent) => ({ id: agent.id, name: agent.name }))}
+                    agents={agents.data ?? []}
                     goal={goal}
                     sampleKind={sampleKind}
                     datasetId={datasetId}
-                    datasets={(datasets.data?.data ?? []).map((dataset) => ({ id: dataset.id, name: dataset.name }))}
+                    datasets={datasets.data ?? []}
                     positive={positive}
                     negative={negative}
                     onAgentId={setAgentId}
@@ -165,20 +182,18 @@ export function RubricCreateDialog({ open, onOpenChange }: { open: boolean; onOp
                   />
                 </TabsContent>
                 <TabsContent value="write" className="grid gap-5 pt-5">
-                  <ManualRubric body={body} onBody={setBody} />
+                  <ManualRubric body={body} drafted={drafted} onBody={setBody} />
                 </TabsContent>
               </Tabs>
             </Field>
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" disabled={create.isPending} />}>
+            <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
               {msg('common.cancel', 'Cancel')}
             </DialogClose>
-            <Button type="submit" disabled={create.isPending}>
-              {source === 'generate'
-                ? msg('evaluations.generateRubricAction', 'Generate rubric')
-                : msg('evaluations.create', 'Create')}
+            <Button type="submit" disabled={pending}>
+              {rubricSubmitLabel(source, generate.isPending, msg)}
             </Button>
           </DialogFooter>
         </form>
@@ -318,14 +333,19 @@ function GenerateBasis({
   );
 }
 
-function ManualRubric({ body, onBody }: { body: string; onBody: (value: string) => void }) {
+function ManualRubric({ body, drafted, onBody }: { body: string; drafted: boolean; onBody: (value: string) => void }) {
   const { msg } = useI18n();
   return (
     <div className="grid gap-4">
       <div className="grid gap-1">
         <p className="text-sm font-medium">{msg('evaluations.scoreRules', 'Scoring rules')}</p>
         <p className="text-sm text-muted-foreground">
-          {msg('evaluations.scoreRulesHint', 'Describe the dimensions, the checks, and the scores.')}
+          {drafted
+            ? msg(
+                'evaluations.rubricDraftReady',
+                'This is a generated draft. Check it and edit it before you create it.',
+              )
+            : msg('evaluations.scoreRulesHint', 'Describe the dimensions, the checks, and the scores.')}
         </p>
       </div>
       <Field label={msg('evaluations.rubricContent', 'Rubric')} required>
@@ -359,36 +379,8 @@ function sampleKindFrom(value: unknown): SampleKind {
   return 'dataset';
 }
 
-function submitRubric(
-  orgUuid: string,
-  workspaceId: string,
-  source: RubricSource,
-  input: {
-    name: string;
-    agentId: string;
-    goal: string;
-    datasetId: string;
-    positive: string;
-    negative: string;
-    body: string;
-  },
-) {
-  if (source === 'generate') {
-    return generateEvaluationRubric(orgUuid, workspaceId, {
-      name: input.name,
-      desc: '',
-      pass_score: 60,
-      goal: input.goal,
-      agent_id: input.agentId || undefined,
-      dataset_id: input.datasetId || undefined,
-      positive: input.positive,
-      negative: input.negative,
-    });
-  }
-  return createEvaluationRubric(orgUuid, workspaceId, {
-    name: input.name,
-    desc: '',
-    body: input.body,
-    pass_score: 60,
-  });
+function rubricSubmitLabel(source: RubricSource, generating: boolean, msg: (id: string, fallback: string) => string) {
+  if (generating) return msg('evaluations.generatingRubric', 'Generating draft…');
+  if (source === 'generate') return msg('evaluations.generateRubricAction', 'Generate rubric');
+  return msg('evaluations.create', 'Create');
 }

@@ -22,7 +22,7 @@ import { createEvaluationTask, evaluationError, type EvaluationTaskInput } from 
 import { DatasetCreateDialog } from './DatasetCreateDialog';
 import { RubricCreateDialog } from './RubricCreateDialog';
 import { taskMountResources, TaskMountFields } from './TaskMountFields';
-import { listTaskAgents, listTaskDatasets, listTaskEntities, listTaskRubrics } from './taskOptions';
+import { listTaskAgents, listTaskDatasets, listTaskEntities, listTaskRubrics, namedOptions } from './taskOptions';
 import { useEvaluationScope } from './useEvaluationScope';
 
 export type EvaluationCreateKind = 'evaluate' | 'dataset' | 'rubric';
@@ -125,7 +125,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseAgent', 'Choose an agent')}
                 value={draft.agent_id}
                 onChange={(agentId) => setDraft({ ...draft, agent_id: agentId })}
-                options={(agents.data ?? []).map((agent) => ({ id: agent.id, label: agent.name }))}
+                options={namedOptions(agents.data)}
                 empty={msg('evaluations.emptyAgents', 'No agents yet')}
               />
               <OptionSelect
@@ -157,7 +157,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseDataset', 'Choose a dataset')}
                 value={draft.dataset_id}
                 onChange={(datasetId) => setDraft({ ...draft, dataset_id: datasetId })}
-                options={(datasets.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
+                options={namedOptions(datasets.data)}
                 empty={msg('evaluations.emptyDatasets', 'No datasets yet')}
               />
               <OptionSelect
@@ -165,7 +165,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseRubric', 'Choose a rubric')}
                 value={draft.rubric_id}
                 onChange={(rubricId) => setDraft({ ...draft, rubric_id: rubricId })}
-                options={(rubrics.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
+                options={namedOptions(rubrics.data)}
                 empty={msg('evaluations.emptyRubrics', 'No rubrics yet')}
               />
               <CountedNote

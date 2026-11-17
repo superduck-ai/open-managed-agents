@@ -677,7 +677,7 @@ export function AgentsResourcePage({
         )}
       </div>
 
-      {shouldShowAgentsPagination(isAgentsPage, visibleAgents.length, hasPreviousAgentsPage, hasNextAgentsPage) ? (
+      {shouldShowAgentsPagination(isAgentsPage, hasPreviousAgentsPage, hasNextAgentsPage) ? (
         <ResourceListPagination
           {...agentListPager(
             agentLoadMode,
@@ -722,13 +722,8 @@ export function AgentsResourcePage({
   );
 }
 
-function shouldShowAgentsPagination(
-  isAgentsPage: boolean,
-  visibleCount: number,
-  hasPrevious: boolean,
-  hasNext: boolean,
-) {
-  return !isAgentsPage || (visibleCount > 0 && (hasPrevious || hasNext));
+function shouldShowAgentsPagination(isAgentsPage: boolean, hasPrevious: boolean, hasNext: boolean) {
+  return !isAgentsPage || hasPrevious || hasNext;
 }
 
 function AgentsResourceBody({

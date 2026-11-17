@@ -44,7 +44,7 @@ export function useManagedReferenceOptions(workspaceId: string, enabled = true) 
     vaults: query.data?.vaults ?? emptyOptions,
     memoryStores: query.data?.memoryStores ?? emptyOptions,
     loading: enabled && query.isPending,
-    error: enabled && query.isError ? errorMessage(query.error) : null,
+    error: enabled && query.isError && !query.data ? errorMessage(query.error) : null,
     retry: () => void query.refetch(),
   };
 }

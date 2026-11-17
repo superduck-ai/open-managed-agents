@@ -15,7 +15,7 @@ func TestChannelUserVaultMigrationPreservesIdentityAndGroup(t *testing.T) {
 		t.Skip("未配置 PostgreSQL 集成测试地址")
 	}
 	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := migrations.UpTo(ctx, 145); err != nil {
+	if _, err := migrations.UpTo(ctx, 155); err != nil {
 		t.Fatal(err)
 	}
 	legacyID := fmt.Sprintf("vlt_channel_%x", sha256.Sum256([]byte(claimTestOrganization+"\x00"+claimTestWorkspace+"\x00feishu\x00test-app\x00user-a")))

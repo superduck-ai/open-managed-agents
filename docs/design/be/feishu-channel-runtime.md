@@ -309,4 +309,4 @@ main 的 `env_oauth` 已支持内置飞书和自定义 OAuth 提供方、授权�
 
 这条旧逻辑也用于普通个人对话：`shared-chat.ts` 在 `prepareCredentials` 返回个人 Vault，并在有运行任务时定期调用 `ChatCredentials.prepare` 同步 CLI 刷新后的 token；并非只用于报告。因此报告功能排除在外不构成遗漏普通对话个人授权的理由。新实现应由 OMA `env_oauth` 在实际出口请求时解析/刷新凭据，删除对话层的定时同步职责。旧按需 scope 与原生提供方固定 scope 的配置合同也需对齐，渠道不能自行扩大平台提供方的授权范围。
 
-回执表沿用原生id、uuid、external_id标识，以channel_uuid关联渠道，不建立外键。迁移148为已应用旧版140的数据库补齐标识并保留输入关联、卡片ID及文件交付记录；迁移147仅将用户与Vault关联表改名为channel_user_vaults，不改变Vault资源或已有授权。
+回执表沿用原生id、uuid、external_id标识，以channel_uuid关联渠道，不建立外键。迁移158为已应用旧版140的数据库补齐标识并保留输入关联、卡片ID及文件交付记录；迁移157仅将用户与Vault关联表改名为channel_user_vaults，不改变Vault资源或已有授权。

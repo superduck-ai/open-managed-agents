@@ -18,7 +18,7 @@ func TestChannelReplyDeliveryIdentityMigration(t *testing.T) {
 		t.Skip("未配置 PostgreSQL 集成测试地址")
 	}
 	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := migrations.UpTo(ctx, 147); err != nil {
+	if _, err := migrations.UpTo(ctx, 157); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `

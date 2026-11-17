@@ -130,14 +130,14 @@ func (h *Handler) resolveSandboxOAuthProvider(ctx context.Context, workspaceUUID
 		candidates = []vaults.EnvOAuthProviderSnapshot{provider}
 	} else {
 		var err error
-		candidates, err = h.envOAuthProviders.ListProviders(ctx, workspaceUUID)
+		candidates, err = h.envOAuthProviders.ListProviders(ctx)
 		if err != nil {
 			return vaults.EnvOAuthProviderSnapshot{}, fmt.Errorf("OAuth 客户端目录不可用")
 		}
 	}
 	var selected *vaults.EnvOAuthProviderSnapshot
 	for _, provider := range candidates {
-		if !provider.Enabled || !provider.Configured || provider.WorkspaceUUID != "" && provider.WorkspaceUUID != workspaceUUID || provider.DefaultSecretName != input.SecretName {
+		if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != input.SecretName {
 			continue
 		}
 		if input.TargetHost != "" {

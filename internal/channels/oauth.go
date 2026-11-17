@@ -173,7 +173,7 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 	if err != nil {
 		return "", err
 	}
-	if !provider.Enabled || !provider.Configured || provider.WorkspaceUUID != "" && provider.WorkspaceUUID != flow.WorkspaceUUID || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
+	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
 		return "", errors.New("目标服务的个人 OAuth 配置不可用")
 	}
 	credentials, _, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{WorkspaceUUID: flow.WorkspaceUUID, VaultExternalID: target.Vault.ExternalID, Limit: 50})

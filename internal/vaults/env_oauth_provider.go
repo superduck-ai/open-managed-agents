@@ -45,7 +45,7 @@ type EnvOAuthProviderResolver interface {
 
 type EnvOAuthProviderDirectory interface {
 	EnvOAuthProviderResolver
-	ListProviders(ctx context.Context, workspaceUUID string) ([]EnvOAuthProviderSnapshot, error)
+	ListProviders(ctx context.Context) ([]EnvOAuthProviderSnapshot, error)
 }
 
 func ParseEnvOAuthProviderKey(value string) (custom bool, id string, err error) {

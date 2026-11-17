@@ -614,3 +614,7 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 ### Responses 适配
 
 Provider backend 支持 `responses`，通过原生 OpenAI provider 调用 `/v1/responses`，显式 `store=false`。重放格式为 `oma-responses-v1`；工具结果通过 `function_call_output` 续接，未提供的 finish reason 不写入重放对象。原生运行时回归覆盖实际工具执行及下一轮响应。代理解析终态用量与费用并结算会话预算，公开输出使用与 Brain 一致的响应 ID 与内容块索引，沿用稳定 ID 去重。
+
+### Responses 加密推理重放
+
+Responses 使用 `store: false` 时，Brain 将推理块的 `itemId` 与 `reasoningEncryptedContent` 写入重放状态，工具执行后的下一轮和会话恢复均通过 SDK 的 OpenAI provider options 还原。仅 `oma-responses-v1` 格式读取这些字段，避免跨协议重放；Anthropic 签名和隐藏推理仍使用原有状态字段。

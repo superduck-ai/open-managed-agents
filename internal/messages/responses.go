@@ -15,7 +15,6 @@ func (*responsesObservation) observe(o *responseObservation, data []byte) {
 	if o.complete || o.malformed {
 		return
 	}
-	o.captureCost(data)
 	response, _, terminal, err := billing.ParseResponse(data, o.streaming)
 	if err != nil {
 		o.malformed = true
@@ -25,7 +24,7 @@ func (*responsesObservation) observe(o *responseObservation, data []byte) {
 		return
 	}
 	usage, valid := response.Usage.BillingUsage()
-	if !valid {
+	if !valid || (response.Status == "completed" && !usage.Complete()) {
 		o.malformed = true
 		return
 	}

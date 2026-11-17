@@ -15,7 +15,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) openAI(w http.ResponseWriter, r *http.Request, backend string) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok {
+	if !ok || (principal.CodeSessionExternalID == "" && principal.CredentialType != auth.CredentialTypeAPIKey) ||
+		(principal.CodeSessionExternalID != "" && principal.CredentialType != auth.CredentialTypeCodeSessionOAuth) {
 		httpapi.WriteError(w, r, brainRequiredError())
 		return
 	}

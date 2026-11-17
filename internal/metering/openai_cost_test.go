@@ -104,3 +104,24 @@ func TestResponsesTerminalCostAndInterruption(t *testing.T) {
 		t.Fatal("断流被当成完整或免费")
 	}
 }
+
+func TestResponsesUnknownUsageNotCompleted(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, usage := range []string{"", `,"usage":{}`, `,"usage":{"input_tokens":0}`, `,"usage":{"output_tokens":0}`, `,"usage":{"input_tokens":0,"output_tokens":0}`} {
+			o := &observation{responses: true, streaming: stream, rule: &billing.ResponseCostRule{Currency: "USD", ExchangeRate: "1", Protocols: map[string]billing.ResponseCostProtocol{"responses": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/cost"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/cost"}}}}}
+			body := `{"id":"resp_usage","status":"completed","output":[],"cost":"1"` + usage + `}`
+			if stream {
+				body = "data: {\"type\":\"response.completed\",\"response\":" + body + "}\n\n"
+			}
+			for _, b := range []byte(body) {
+				o.write([]byte{b})
+			}
+			o.eof = true
+			o.end()
+			valid := usage == `,"usage":{"input_tokens":0,"output_tokens":0}`
+			if o.failed == valid || o.complete != valid || o.cost == nil || o.cost.USDCents != 100 {
+				t.Fatalf("%v/%s: %+v", stream, usage, o)
+			}
+		}
+	}
+}

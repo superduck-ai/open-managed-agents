@@ -10,8 +10,11 @@ function completion(index: number, tool: boolean) {
   const id = `resp_${index}`;
   const item = tool ? { id: `fc_${index}`, type: "function_call", call_id: "call_responses", name: "Bash", arguments: '{"command":"pwd"}', status: "completed" }
     : { id: `msg_${index}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Responses 恢复成功", annotations: [] }] };
-  const response = { id, object: "response", model: "test-model", created_at: 1, status: "completed", output: [item], usage: { input_tokens: 20, output_tokens: 10, input_tokens_details: { cached_tokens: 5 } }, gateway: { amount: "7.2" } };
+  const reasoning = { id: `rs_${index}`, type: "reasoning", summary: [], encrypted_content: "encrypted-state" };
+  const response = { id, object: "response", model: "test-model", created_at: 1, status: "completed", output: [reasoning, item], usage: { input_tokens: 20, output_tokens: 10, input_tokens_details: { cached_tokens: 5 } }, gateway: { amount: "7.2" } };
   const events = [
+    { type: "response.output_item.added", output_index: 1, item: reasoning },
+    { type: "response.output_item.done", output_index: 1, item: reasoning },
     { type: "response.created", response },
     { type: "response.output_item.added", output_index: 0, item: tool ? { ...item, arguments: "" } : item },
     tool ? { type: "response.function_call_arguments.delta", item_id: item.id, output_index: 0, delta: '{"command":"pwd"}' }
@@ -42,6 +45,7 @@ test("Responses 经过原生 Brain 工具循环并保留重放身份", async () 
     await session.receive("responses_turn", { content: "run pwd" });
     expect(requests).toHaveLength(2); expect(backend.executions).toHaveLength(1);
     expect(requests[1]!.input.some((item: Payload) => item.type === "function_call_output" && item.call_id === "call_responses")).toBe(true);
+    expect(requests[1]!.input.find((item: Payload) => item.type === "reasoning")).toMatchObject({ id: "rs_1", encrypted_content: "encrypted-state", summary: [] });
     expect(backend.publicLog.get("responses_turn_result")?.is_error).toBe(false);
     expect([...backend.publicLog.values()].some(event => event.type === "agent.message" && event.content?.some((block: Payload) => block.text === "Responses 恢复成功"))).toBe(true);
   } finally { await session?.close(); await ctx.fiber.dispose(); backend.stop(); }

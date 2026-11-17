@@ -11,6 +11,8 @@ interface BlockState {
   ended?: boolean;
   signature?: string;
   redactedData?: string;
+  itemId?: string;
+  reasoningEncryptedContent?: string;
 }
 
 export class AiSdkStream {
@@ -53,6 +55,8 @@ export class AiSdkStream {
         response: { format: this.replayFormat, ...(this.finishReason?.raw !== undefined ? { stopReason: this.finishReason.raw } : {}),
           ...(this.messageID ? { messageID: this.messageID } : {}), ...(this.requestID ? { requestID: this.requestID } : {}) },
         blocks: states.map((state) => ({ index: state.index,
+          ...(state.itemId ? { itemId: state.itemId } : {}),
+          ...(state.reasoningEncryptedContent !== undefined ? { reasoningEncryptedContent: state.reasoningEncryptedContent } : {}),
           ...(state.signature ? { signature: state.signature } : {}), ...(state.redactedData ? { redactedData: state.redactedData } : {}) })),
       } },
     ];
@@ -112,7 +116,13 @@ export class AiSdkStream {
   private sign(id: string, metadata?: SharedV4ProviderMetadata): void {
     const anthropic = metadata?.anthropic as { signature?: unknown; redactedData?: unknown } | undefined;
     const state = this.blocks.get(id);
-    if (!state || !anthropic) return;
+    if (!state) return;
+    if (this.replayFormat === "oma-responses-v1") {
+      const openai = metadata?.openai;
+      if (typeof openai?.itemId === "string") state.itemId = openai.itemId;
+      if (typeof openai?.reasoningEncryptedContent === "string") state.reasoningEncryptedContent = openai.reasoningEncryptedContent;
+    }
+    if (!anthropic) return;
     if (typeof anthropic.signature === "string") state.signature = (state.signature ?? "") + anthropic.signature;
     if (typeof anthropic.redactedData === "string") state.redactedData = anthropic.redactedData;
   }

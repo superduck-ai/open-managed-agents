@@ -305,6 +305,9 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 }
 
 func modelRequestBilling(calculator *billing.Calculator, model string, usage ModelRequestUsage) map[string]string {
+	if usage.InputTokens == nil || usage.OutputTokens == nil {
+		return nil
+	}
 	counters := billing.TokenUsage{}
 	for _, field := range []struct{ target, value *int64 }{
 		{&counters.InputTokens, usage.InputTokens}, {&counters.OutputTokens, usage.OutputTokens},

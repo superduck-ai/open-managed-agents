@@ -15,7 +15,7 @@ func (o *observation) responseFrame(data []byte) {
 		return
 	}
 	usage, valid := response.Usage.BillingUsage()
-	if !valid {
+	if !valid || (response.Status == "completed" && !usage.Complete()) {
 		o.failed = true
 		return
 	}

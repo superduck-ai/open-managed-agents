@@ -59,7 +59,7 @@ func TestResponsesSessionTerminalReceipt(t *testing.T) {
 
 func TestResponsesEOFFinalizerDoesNotReenter(t *testing.T) {
 	o := &responseObservation{responses: &responsesObservation{}, request: &codesessions.ModelRequest{}}
-	o.buffer = []byte(`{"id":"resp_eof","status":"completed","output":[]}`)
+	o.buffer = []byte(`{"id":"resp_eof","status":"completed","usage":{"input_tokens":0,"output_tokens":0},"output":[]}`)
 	calls := 0
 	o.onComplete = func() { calls++ }
 	o.finish()
@@ -70,7 +70,7 @@ func TestResponsesEOFFinalizerDoesNotReenter(t *testing.T) {
 
 func TestResponsesContentIdentityMatchesSDK(t *testing.T) {
 	o := &responseObservation{responses: &responsesObservation{}, request: &codesessions.ModelRequest{CodeSessionID: "cse_responses"}}
-	_, _ = o.Write([]byte(`{"id":"resp_identity","status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"private one"},{"type":"summary_text","text":"private two"}]},{"type":"message","content":[{"type":"output_text","text":"hello"},{"type":"output_text","text":" world"}]}]}`))
+	_, _ = o.Write([]byte(`{"id":"resp_identity","status":"completed","usage":{"input_tokens":0,"output_tokens":0},"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"private one"},{"type":"summary_text","text":"private two"}]},{"type":"message","content":[{"type":"output_text","text":"hello"},{"type":"output_text","text":" world"}]}]}`))
 	o.finish()
 	if o.result.ErrorType != "" || len(o.result.Messages) != 3 {
 		t.Fatalf("内容块与 SDK 不一致：%+v", o.result)
@@ -89,5 +89,33 @@ func TestResponsesContentIdentityMatchesSDK(t *testing.T) {
 	}
 	if *o.result.Messages[2].Content[0].Text != "hello world" {
 		t.Fatal("同一 message 文本未合并")
+	}
+}
+
+func TestResponsesMissingUsagePreservesCost(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, usage := range []string{"", `,"usage":{}`, `,"usage":{"input_tokens":0}`, `,"usage":{"output_tokens":0}`, `,"usage":{"input_tokens":0,"output_tokens":0}`} {
+			for _, status := range []string{"completed", "failed"} {
+				o := &responseObservation{responses: &responsesObservation{}, streaming: stream, request: &codesessions.ModelRequest{ResponseCost: &billing.ResponseCostRule{Currency: "USD", ExchangeRate: "1", Protocols: map[string]billing.ResponseCostProtocol{"responses": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/cost"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/cost"}}}}}}
+				body := `{"id":"resp_usage","status":"` + status + `","cost":"1","output":[]` + usage + `}`
+				if stream {
+					body = chatFrame(`{"type":"response.` + status + `","response":` + body + `}`)
+				}
+				for _, b := range []byte(body) {
+					_, _ = o.Write([]byte{b})
+				}
+				o.finish()
+				valid := usage == `,"usage":{"input_tokens":0,"output_tokens":0}`
+				expected := "invalid_response"
+				if status == "failed" {
+					expected = "provider_error"
+				} else if valid {
+					expected = ""
+				}
+				if o.result.ErrorType != expected || o.result.ProviderCost == nil || o.result.ProviderCost.USDCents != 100 {
+					t.Fatalf("%v/%s/%s：%+v", stream, status, usage, o.result)
+				}
+			}
+		}
 	}
 }

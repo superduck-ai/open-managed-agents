@@ -322,3 +322,8 @@ DSH 普通请求由 Go 模型代理发布完整 `agent.message`、无正文 `age
 ### OpenAI 实际费用与终态
 
 三种协议均按私有部署的费用路径提取实际金额，配置与结算语义见 [会话预算](session-budget.md)。Responses 流式终态解析 `response` 内的用量、费用与输出；非流式在响应结束时结算，避免结束回调重入。输入用量扣除缓存命中后单独记录 cache read，避免标价回退时重复计费。原始 HTTP/SSE 字节保持透传。Responses 的 reasoning summary 与 message 各内容块使用与原生 SDK 一致的索引，同一 response ID 下沿用稳定事件 ID 去重；代理与 Brain 的公开回复发布职责保持不变。
+
+### OpenAI 入口与不可计量响应
+
+Chat Completions 与 Responses 的公开入口只接受 API Key；会话入口仅接受 claim 传输的会话 OAuth 凭据，平台登录态不能代替这两类凭据。
+Responses 完成响应必须包含明确的输入、输出用量，缺失或不完整的用量标记为无效响应，不产生零费用估算。失败响应允许缺失用量；网关返回的有效实际费用独立保留，用于会话记账和预算扣减。实际费用在每个流事件或完整非流式响应上统一提取一次。

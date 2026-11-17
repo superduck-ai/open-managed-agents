@@ -281,9 +281,6 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.onComplete()
 		}
 	case "error":
-		if o.request != nil {
-			o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), o.streaming, data)
-		}
 		o.result.ErrorType = "provider_error"
 		if o.onComplete != nil {
 			o.onComplete()
@@ -380,8 +377,10 @@ func (o *responseObservation) finish() {
 func (o *responseObservation) finishOpenAI() {
 	if !o.streaming && !o.complete && !o.malformed && o.result.ErrorType == "" {
 		if o.responses != nil {
+			o.captureCost(o.buffer)
 			o.responses.observe(o, o.buffer)
 		} else if o.chat != nil {
+			o.captureCost(o.buffer)
 			o.chat.nonStream(o, o.buffer)
 		}
 	}

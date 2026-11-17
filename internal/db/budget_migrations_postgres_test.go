@@ -72,8 +72,7 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 				t.Fatalf("main 基线预算字段不符：%d/%v", budgetColumns, err)
 			}
 			assertMigrationColumnNullable(t, ctx, database, "llm_providers", "models", "NO")
-			assertMigrationColumnExists(t, ctx, database, "llm_providers", "workspace_uuid", false)
-			assertMigrationColumnNullable(t, ctx, database, "llm_providers", "secret_workspace_uuid", "YES")
+			assertMigrationColumnNullable(t, ctx, database, "llm_providers", "workspace_uuid", "YES")
 			seedEnvironmentWorkMigrationSessions(t, ctx, database)
 			for range 2 {
 				if err := runGooseMigrations(ctx, database); err != nil {

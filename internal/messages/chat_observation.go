@@ -73,9 +73,6 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 		return
 	}
 	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-		if o.request != nil {
-			o.result.ProviderCost = o.request.ResponseCost.ExtractFor("chat_completions", o.streaming, data)
-		}
 		o.result.ErrorType = "provider_error"
 		o.malformed = true
 		return
@@ -278,9 +275,6 @@ func (c *chatObservation) nonStream(o *responseObservation, data []byte) {
 		return
 	}
 	c.observe(o, raw)
-	if o.request != nil {
-		o.result.ProviderCost = o.request.ResponseCost.ExtractFor("chat_completions", o.streaming, data)
-	}
 	if !o.malformed {
 		c.complete(o)
 	}

@@ -16,8 +16,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
-	"github.com/superduck-ai/open-managed-agents/internal/channels"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/channels"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -167,7 +167,7 @@ func NewServer(deps ServerDeps) *Server {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
 	billingCalculator := llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
-		return llmproviders.LoadCatalog(ctx, deps.DB, org, workspace)
+		return llmproviders.LoadCatalog(ctx, deps.DB, org)
 	}, deps.Prices)
 	billingCalculator.ResponseCosts = deps.Config.Pricing.ResponseCosts
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).

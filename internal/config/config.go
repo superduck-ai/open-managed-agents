@@ -629,25 +629,3 @@ func validateCodeSessionUpstreamProxyMITMConfig(cfg CodeSessionConfig) error {
 	}
 	return nil
 }
-
-func validateStorage(storage StorageConfig) error {
-	if strings.TrimSpace(storage.Type) == "" {
-		return errors.New("storage.type is required")
-	}
-	if storage.Type != StorageTypeS3 {
-		return fmt.Errorf("storage.type must be %q", StorageTypeS3)
-	}
-	if strings.TrimSpace(storage.S3.Endpoint) == "" {
-		return errors.New("storage.s3.endpoint is required")
-	}
-	if strings.TrimSpace(storage.S3.Bucket) == "" {
-		return errors.New("storage.s3.bucket is required")
-	}
-	if strings.TrimSpace(storage.S3.Region) == "" {
-		return errors.New("storage.s3.region is required")
-	}
-	if strings.TrimSpace(storage.S3.AccessKeyID) == "" || strings.TrimSpace(storage.S3.SecretAccessKey) == "" {
-		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
-	}
-	return nil
-}

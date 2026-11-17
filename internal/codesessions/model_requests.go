@@ -25,7 +25,7 @@ type ModelRequest struct {
 	Model                string
 	codeSession          db.CodeSession
 	toolThreadID         string
-	ResponseCost *billing.ResponseCostRule
+	ResponseCost         *billing.ResponseCostRule
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.

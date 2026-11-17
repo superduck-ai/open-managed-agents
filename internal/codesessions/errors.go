@@ -262,4 +262,5 @@ func tunnelCredentialFailure(cause error) error {
 	}
 	return cause
 }
+
 var ErrModelPriceUnavailable = errors.New("model price unavailable for budgeted session")

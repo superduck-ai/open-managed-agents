@@ -90,9 +90,9 @@ func TestModelPriceReconciliation(t *testing.T) {
 				t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 					store := &billingRecordedStore{database: app.db}
 					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
-						return llmproviders.LoadCatalog(ctx, app.db, org, workspace)
+						return llmproviders.LoadCatalog(ctx, app.db, org)
 					}, app.prices), Source: "api"}
-					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID})
+					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: workspaceID})
 					request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?stream=%t", upstream.URL, stream), strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.Model)))
 					if err != nil {
 						t.Fatal(err)
@@ -138,7 +138,7 @@ func TestModelPriceReconciliation(t *testing.T) {
 					if err := app.db.SQLDB().QueryRowContext(t.Context(), "SELECT CURRENT_TIMESTAMP").Scan(&databaseNow); err != nil {
 						t.Fatal(err)
 					}
-					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{workspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
+					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{workspaceID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
 					rows, err := app.db.AggregateUsage(t.Context(), query)
 					if err != nil {
 						t.Fatal(err)

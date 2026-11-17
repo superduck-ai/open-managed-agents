@@ -80,7 +80,7 @@ func TestOrganizationNarrowsPriceSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog := NewCatalog(nil)
-	catalog.organization = &db.LLMProvider{UUID: "organization-provider", Slug: OrganizationSlug, BaseURL: "https://narrows-gateway.test.seewo.com:443/v1", Models: db.LLMModels{{ID: "narrows-only"}, {ID: "shared"}, {ID: "open-only"}}}
+	catalog.providers = []db.LLMProvider{{UUID: "organization-provider", Slug: OrganizationSlug, BaseURL: "https://narrows-gateway.test.seewo.com:443/v1", Models: db.LLMModels{{ID: "narrows-only"}, {ID: "shared"}, {ID: "open-only"}}}}
 	calculator := BillingCalculator(func(context.Context, string, string) (Catalog, error) { return catalog, nil }, store)
 	scoped, err := calculator.Scope(t.Context(), "org", "workspace")
 	if err != nil {
@@ -117,7 +117,7 @@ func TestOrganizationNarrowsPriceSource(t *testing.T) {
 		t.Fatal("missing Narrows price fell back to OpenRouter")
 	}
 	for _, baseURL := range []string{"https://provider.example/v1", "https://narrows-gateway.test.seewo.com.other.example/v1"} {
-		catalog.organization.BaseURL = baseURL
+		catalog.providers[0].BaseURL = baseURL
 		other, err := calculator.Scope(t.Context(), "org", "workspace")
 		if err != nil {
 			t.Fatal(err)
@@ -146,12 +146,12 @@ func TestOrganizationPricesFollowModelRouting(t *testing.T) {
 	}{
 		{"unpriced workspace never falls back", []db.LLMProvider{{UUID: "workspace", Slug: NarrowsSlug, Models: db.LLMModels{{ID: "model"}}}}, ""},
 		{"ambiguous workspace never falls back", []db.LLMProvider{{UUID: "first", Slug: "first", Models: db.LLMModels{{ID: "model"}}}, {UUID: "second", Slug: "second", Models: db.LLMModels{{ID: "model"}}}}, ""},
-		{"workspace overrides organization", []db.LLMProvider{{UUID: "workspace", Slug: "workspace", Models: db.LLMModels{{ID: "model"}}}}, "workspace"},
+		{"same-name organization providers are ambiguous", []db.LLMProvider{{UUID: "workspace", Slug: "workspace", Models: db.LLMModels{{ID: "model"}}}}, ""},
 		{"organization works alone", nil, "org-provider"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			catalog := NewCatalog(test.providers)
-			catalog.organization = &organization
+			catalog.providers = append(catalog.providers, organization)
 			calculator := BillingCalculator(func(_ context.Context, org, _ string) (Catalog, error) {
 				if org != "org" {
 					return Catalog{}, ErrNotConfigured

@@ -2,7 +2,7 @@ import { billingError } from "../src/llm-ai-sdk/stream.ts";
 import { describe, expect, test } from "bun:test";
 import { LlmError } from "@deepseek-ai/dsh-llm";
 import { checkSessionBudget, sessionBilling } from "../src/billing.ts";
-import { terminalOutput } from "../src/ccrv2/native-output.ts";
+import { completionOutput, turnOutcome } from "../src/ccrv2/session-output.ts";
 
 const amount = (value: string) => ({ amount: value, currency: "USD" });
 const context = () => ({ budget: { type: "limit", max_list_cost: amount("100") }, usage: amount("25"),

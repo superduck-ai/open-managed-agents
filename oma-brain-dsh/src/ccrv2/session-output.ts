@@ -42,6 +42,7 @@ export function completionOutput(inputId: string, outcome: InputOutcome): Payloa
 
 export function turnOutcome(reason: Extract<SessionEvent, { type: "turn/end" }>["data"]["reason"]): InputOutcome {
   if (reason.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") return { kind: "budget_paused" };
+  if (reason.kind === "error" && reason.error.code === "MODEL_PRICE_UNAVAILABLE") return { kind: "failed", text: "Model pricing is unavailable. Retry after pricing recovers." };
   if (reason.kind === "completed" || (reason.kind === "aborted" && reason.reason.kind === "user")) return { kind: "success" };
   const recovery = reason.kind === "interrupted";
   const quota = reason.kind === "error" && [QUOTA_EXCEEDED_CODE, ACCOUNT_QUOTA_EXCEEDED_CODE].includes(reason.error.code);

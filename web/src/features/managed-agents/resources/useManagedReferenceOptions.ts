@@ -36,6 +36,8 @@ export function useManagedReferenceOptions(workspaceId: string, enabled = true) 
     queryFn: () => loadManagedReferenceOptions(workspaceId),
     enabled,
     retry: false,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
   });
   return {
     environments: query.data?.environments ?? emptyOptions,

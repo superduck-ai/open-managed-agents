@@ -45,7 +45,7 @@ func NormalizeEnvOAuthCustomProvider(providerKey string, provider *EnvOAuthCusto
 	}
 	for _, endpoint := range []string{provider.AuthorizeEndpoint, provider.TokenEndpoint} {
 		parsed, err := url.Parse(endpoint)
-		if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1"))) {
+		if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Scheme != "https" {
 			return errors.New("custom OAuth endpoints must use HTTPS")
 		}
 	}

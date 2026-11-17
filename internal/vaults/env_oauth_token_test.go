@@ -257,7 +257,7 @@ func TestSubstituteEnvOAuthSecretsFailsClosedOnRefreshError(t *testing.T) {
 }
 
 func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
-	for _, scenario := range []string{"expired access", "refresh source", "networking", "valid access"} {
+	for _, scenario := range []string{"expired access", "refresh source", "networking", "client secret", "valid access"} {
 		t.Run(scenario, func(t *testing.T) {
 			svc := newTestSecretsService(t)
 			past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
@@ -274,7 +274,13 @@ func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario != "networking" {
+			if scenario == "client secret" {
+				latest.SecretPayload = json.RawMessage(`{"type":"env_oauth","access_token":"old","refresh_token":"refresh","client_secret":"new-client-secret"}`)
+				if err := SealCredentialSecret(t.Context(), svc, &latest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario != "networking" && scenario != "client secret" {
 				access, refresh := "replacement", "refresh"
 				if scenario == "refresh source" {
 					access, refresh = "old", "replacement-refresh"
@@ -317,6 +323,9 @@ func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
 				t.Fatalf("saved=%+v writes=%d", saved, store.updateCalls)
 			}
 			_, secret, err := resolver.openMaterial(t.Context(), store.lastUpdate)
+			if scenario == "client secret" && (secret.ClientSecret != "new-client-secret" || secret.RefreshToken != "fresh-refresh") {
+				t.Fatal("冲突重试覆盖了新密钥或丢失刷新令牌")
+			}
 			if err != nil || secret.AccessToken != token || token != "fresh" {
 				t.Fatalf("token=%q err=%v", token, err)
 			}

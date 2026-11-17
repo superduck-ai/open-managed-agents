@@ -12,6 +12,7 @@ import {
 import {
   buildMemoryTreeNodes,
   credentialAuthBody,
+  patchCredentialFormValues,
   credentialAuthTypeLabel,
   credentialDisplayName,
   credentialEnvInjectionMissing,
@@ -845,4 +846,23 @@ test('自定义 OAuth 服务方空域名不会阻断表单', () => {
       default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
     }),
   ).toEqual({ secretName: 'LARKSUITE_CLI_USER_ACCESS_TOKEN', allowedHostsText: 'open.feishu.cn\naccounts.feishu.cn' });
+});
+
+test('切换类型清除上一客户端密钥与自定义草稿', () => {
+  const current = {
+    ...emptyCredentialFormValues(),
+    authType: 'env_oauth' as const,
+    oauthClientId: 'client',
+    oauthClientSecret: 'secret',
+    envOAuthCustomProvider: {
+      name: 'draft',
+      authorize_endpoint: 'https://a.test',
+      token_endpoint: 'https://a.test',
+      scope: '',
+    },
+  };
+  const next = patchCredentialFormValues(current, { authType: 'mcp_oauth' });
+  expect(next.oauthClientSecret).toBe('');
+  expect(next.oauthClientId).toBe('');
+  expect(next.envOAuthCustomProvider).toBeNull();
 });

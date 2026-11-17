@@ -243,6 +243,10 @@ func (r *envOAuthTokenResolver) persist(
 	accessToken string,
 	now time.Time,
 ) (string, error) {
+	var refreshed envOAuthCredentialSecret
+	if err := json.Unmarshal(nextSecret, &refreshed); err != nil {
+		return "", err
+	}
 	for range maxOAuthRefreshCASAttempts {
 		if err := ctx.Err(); err != nil {
 			return "", context.Cause(ctx)
@@ -292,6 +296,13 @@ func (r *envOAuthTokenResolver) persist(
 				return secret.AccessToken, nil
 			}
 			return "", errEnvOAuthRefreshUnavailable
+		}
+		if secret.ClientSecret != exchangedSecret.ClientSecret {
+			refreshed.ClientSecret = secret.ClientSecret
+			nextSecret, err = json.Marshal(refreshed)
+			if err != nil {
+				return "", err
+			}
 		}
 	}
 	return "", errEnvOAuthRefreshUnavailable

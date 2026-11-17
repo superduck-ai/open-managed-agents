@@ -876,6 +876,13 @@ export function patchCredentialFormValues(
   patch: Partial<CredentialFormValues>,
 ): CredentialFormValues {
   const next = { ...current, ...patch };
+  if (patch.authType !== undefined && patch.authType !== current.authType) {
+    next.oauthClientId = '';
+    next.oauthClientSecret = '';
+    next.envOAuthCustomProvider = null;
+    next.envOAuthProviderId = '';
+    next.envOAuthClientSecretSaved = false;
+  }
   if (next.token.trim()) {
     return next;
   }

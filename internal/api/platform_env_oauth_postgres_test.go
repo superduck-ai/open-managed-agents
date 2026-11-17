@@ -852,7 +852,7 @@ func TestEnvOAuthUnrestrictedHostsStoredAsArrayPostgres(t *testing.T) {
 func TestInlineEnvOAuthCredentialPostgres(t *testing.T) {
 	f := newEnvOAuthFixture(t)
 	calls := 0
-	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	endpoint := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
@@ -863,6 +863,9 @@ func TestInlineEnvOAuthCredentialPostgres(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
 	}))
 	defer endpoint.Close()
+	previousClient := envOAuthTokenHTTPClient
+	envOAuthTokenHTTPClient = endpoint.Client()
+	defer func() { envOAuthTokenHTTPClient = previousClient }()
 	before, err := f.database.ListPlatformOAuthProviders(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -919,4 +922,35 @@ func TestInlineEnvOAuthCredentialPostgres(t *testing.T) {
 	if err != nil || len(after) != len(before) || calls != 2 {
 		t.Fatal("自定义服务方被独立持久化，或未重新授权", err)
 	}
+	padded := *custom
+	padded.ClientID = " inline-client "
+	padded.ClientSecret = ""
+	paddedFlow := start(credential.ExternalID, &padded)
+	if response := f.callback(t, paddedFlow.OAuthFlowID, "padded"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal("空白客户端 ID 未保留密钥", response.Body.String())
+	}
+	stale := start(credential.ExternalID, nil)
+	current, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.DisplayName = "新配置"
+	if _, err := f.database.UpdateVaultCredential(t.Context(), current.WorkspaceUUID, current.VaultExternalID, current.ExternalID, current); err != nil {
+		t.Fatal(err)
+	}
+	if response := f.callback(t, stale.OAuthFlowID, "stale"); strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal("过期授权覆盖了新配置")
+	}
+	current, err = f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.database.ClearVaultCredentialSecret(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	recovery := start(credential.ExternalID, custom)
+	if response := f.callback(t, recovery.OAuthFlowID, "recovery"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal("完整客户端无法恢复授权", response.Body.String())
+	}
+
 }

@@ -46,7 +46,9 @@ export function EnvOAuthCredentialFields({
           builtin: false,
           logo_url: '',
           default_secret_name: '',
-          default_allowed_hosts: [],
+          default_allowed_hosts: [
+            ...new Set([new URL(custom.authorize_endpoint).hostname, new URL(custom.token_endpoint).hostname]),
+          ],
         },
       ]
     : providers;

@@ -210,3 +210,32 @@ test.each([false, true])('停用服务方仅对编辑已有凭证可见：%s', (
   fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
   expect(screen.queryAllByRole('option').some((option) => option.textContent?.includes('Example'))).toBe(editing);
 });
+
+test('重新选择自定义草稿时恢复端点主机', () => {
+  const onChange = mock(() => {});
+  render(
+    <EnvOAuthCredentialFields
+      values={{
+        ...values,
+        envOAuthProviderId: 'builtin:feishu',
+        envOAuthCustomProvider: {
+          name: 'Draft',
+          authorize_endpoint: 'https://auth.example.test/authorize',
+          token_endpoint: 'https://api.example.test/token',
+          scope: '',
+        },
+      }}
+      providers={providers}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={onChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Draft' }));
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({ allowedHostsText: 'auth.example.test\napi.example.test' }),
+  );
+});

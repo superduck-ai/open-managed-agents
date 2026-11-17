@@ -439,6 +439,9 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		if !envOAuthSecretNameAvailable([]db.VaultCredential{current}, flow.SecretName, flow.ProviderKey, flow.CredentialExternalID) {
 			return "", db.ErrDuplicate
 		}
+		if flow.ProviderKey == vaultsapi.EnvOAuthProviderInline && current.SecretVersion != flow.ProviderVersion {
+			return "", db.ErrVersionConflict
+		}
 		existingPlaceholder, ok := vaultsapi.EnvOAuthCredentialPlaceholder(current.Auth)
 		if !ok {
 			return "", errors.New("existing env_oauth credential is invalid")

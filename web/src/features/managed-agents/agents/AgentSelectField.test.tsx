@@ -157,3 +157,19 @@ for (const failed of [false, true]) {
     expect(selected).toEqual([]);
   });
 }
+
+test('shows an inline hint and link to create the first agent when workspace has no agents', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  clients.push(client);
+  globalThis.fetch = async () => jsonResponse(JSON.stringify({ data: [], next_page: null }));
+  render(
+    <QueryClientProvider client={client}>
+      <I18nProvider initialLocale="zh-CN">
+        <AgentSelectField workspaceId="default" value="" showEmptyHint onChange={() => {}} />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  const link = await screen.findByRole('link', { name: /去创建第一个智能体/ });
+  expect(link.getAttribute('href')).toBe('/workspaces/default/agents/new');
+});

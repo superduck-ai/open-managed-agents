@@ -134,10 +134,12 @@ export function SessionTraceWorkspaceLayout({
           </div>
         </ResizablePanel>
         <ResizableHandle
+          withHandle
           aria-label={resizeLabel}
           disabled={!splitInspectorOpen}
           hidden={!splitInspectorOpen}
-          className="session-trace-resize-handle cursor-col-resize bg-transparent"
+          className="group/resize session-trace-resize-handle z-20 -mr-1 w-2 cursor-col-resize bg-transparent after:bg-transparent hover:after:bg-transparent data-[separator=active]:after:bg-transparent data-[separator=hover]:after:bg-transparent"
+          handleClassName="h-6 w-[3px] rounded-full border-0 bg-muted-foreground/25 p-0 shadow-none transition-all duration-150 ease-out motion-reduce:transition-none [&_svg]:hidden group-hover/resize:h-9 group-hover/resize:w-1 group-hover/resize:bg-muted-foreground/60 group-data-[separator=active]/resize:h-11 group-data-[separator=active]/resize:w-1 group-data-[separator=active]/resize:bg-foreground/80"
           onPointerDown={() => {
             userResizingInspectorRef.current = true;
           }}
@@ -189,6 +191,6 @@ function sessionTraceInspectorViewportClassName(compact: boolean, inspectorOpen:
   return clsx(
     'h-full min-h-0 min-w-0 overflow-hidden',
     !inspectorOpen && 'hidden',
-    compact && inspectorOpen && 'absolute inset-0 z-20 bg-card',
+    compact && inspectorOpen ? 'absolute inset-1.5 z-20' : 'p-1.5 pl-0',
   );
 }

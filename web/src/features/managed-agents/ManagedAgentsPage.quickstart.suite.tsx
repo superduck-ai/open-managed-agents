@@ -82,7 +82,7 @@ export function registerManagedAgentsQuickstartTests() {
 
     expect(await screen.findByRole('heading', { name: '智能体' })).toBeTruthy();
     expect(screen.queryByText('创建和管理自主智能体。')).toBeNull();
-    expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '创建智能体' })[0]).toBeTruthy();
     expect(screen.getByPlaceholderText('按名称或精确 ID 搜索')).toBeTruthy();
     expect(screen.getByRole('combobox', { name: /创建时间\s+全部时间/ })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: /状态\s+活跃/ })).toBeTruthy();
@@ -93,7 +93,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.getByRole('option', { name: '全部' })).toBeTruthy();
     fireEvent.click(screen.getByRole('combobox', { name: /状态\s+活跃/, hidden: true }));
     expect(await screen.findByText('暂无 Agent')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '创建智能体' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '创建智能体' }).length).toBeGreaterThanOrEqual(2);
     expect(api.requests[0]?.headers['x-workspace-id']).toBe('default');
   });
 
@@ -104,7 +104,7 @@ export function registerManagedAgentsQuickstartTests() {
 
     await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'));
 
-    fireEvent.click(screen.getByRole('button', { name: '创建智能体' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '创建智能体' })[0]);
 
     const dialog = screen.getByRole('main', { name: '创建智能体' });
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));

@@ -79,7 +79,7 @@ flowchart LR
 - 工具卡片在内侧绘制0.5px轮廓，配置分隔线及选择器标记同为0.5px。工具权限按卡片容器宽度布局：至少32rem时采用名称、说明、权限三列，更窄时将说明放在名称下方，权限组保持完整可见；不再用560px最小宽度强迫配置列横向滚动。权限按钮通过aria-pressed表达当前选中值，仍写入原有Draft权限策略。
 - 起点摘要、Agent/Skill候选元数据与Tunnel标题不使用应用生成的中点分隔；用户名称、代码及系统提示中的标点保持原文。模板文字收敛至14px，通过字重和颜色区分标题与正文。
 - 创建页的 Tools、Skills、Multiagent 默认折叠，按 Tools、Skills、Multiagent 顺序展示；折叠时显示配置摘要。Collapsible Content 使用 `keepMounted`，保留工具编辑缓冲和未确认的 Tunnel Channel，折叠不能绕过待确认校验。详情页编辑继续使用原来的展开式布局。
-- Raw/Rendered 仍共用 Draft 与现有 CodeMirror；未支持的模型 effort 字段不因参考截图而加入 API 合同。底部取消与创建按钮在页面滚动时保持可访问，创建失败保留 Draft，并显示完整错误。
+- Raw/Rendered 仍共用 Draft 与现有 CodeMirror；`Rendered / Raw` 切换器在 Rendered 模式下位于「系统提示词 (可选)」标签右侧以明确控件归属，在 Raw 模式下保留于「智能体配置」标题行右侧以便切回；未支持的模型 effort 字段不因参考截图而加入 API 合同。底部取消与创建按钮栏配备顶部分割线及上方渐隐过渡，在页面滚动时保持可访问，创建失败保留 Draft，并显示完整错误。
 
 ## 验收
 

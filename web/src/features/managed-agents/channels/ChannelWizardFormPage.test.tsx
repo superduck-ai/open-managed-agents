@@ -135,9 +135,9 @@ test('第一步独立完成授权，第三步选择目标后才能保存正式�
   bound = true;
   poll!();
   await screen.findByText('飞书绑定成功');
-  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
   await selectTargets();
@@ -173,7 +173,7 @@ test('手动凭据在第一步输入，扫码入口不打开新窗口', async ()
   fireEvent.change(screen.getByPlaceholderText('应用 ID'), { target: { value: 'cli_manual' } });
   fireEvent.change(screen.getByPlaceholderText('应用密钥'), { target: { value: 'manual-secret' } });
   expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(false);
-  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '飞书授权' }));
   fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await screen.findByText('等待飞书扫码确认');
@@ -444,4 +444,23 @@ test('已有 Git 渠道打开编辑后原样保存，保留检出与路径且不
   await waitFor(() => expect(navigated).toHaveBeenCalled());
   const { tokenConfigured: _configured, ...expected } = gitRepository;
   expect(body.git_repository).toEqual(expected);
+});
+
+test('编辑模式在第一步即可直接点击保存配置', async () => {
+  resetTestDom('/');
+  let savedMethod = '';
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === 'POST') {
+      savedMethod = init.method;
+      return Response.json({ ...channel, binding_status: 'bound', app_id: 'cli_test' });
+    }
+    return Response.json(targets(String(input)));
+  }) as typeof fetch;
+  const saved = { ...channel, binding_status: 'bound' as const, app_id: 'cli_test' };
+  const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
+  const saveButton = screen.getByRole('button', { name: '保存配置' });
+  expect(saveButton.hasAttribute('disabled')).toBe(false);
+  fireEvent.click(saveButton);
+  await waitFor(() => expect(navigated).toHaveBeenCalled());
+  expect(savedMethod).toBe('POST');
 });

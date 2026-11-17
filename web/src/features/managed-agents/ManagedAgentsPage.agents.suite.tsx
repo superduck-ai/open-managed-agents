@@ -321,7 +321,7 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Create agent' })[0]);
     const dialog = screen.getByRole('main', { name: 'Create agent' });
     expandAgentCreateSections(dialog);
 
@@ -2554,7 +2554,7 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Create agent' })[0]);
     expect(screen.getByRole('main', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(Boolean(screen.queryByRole('main', { name: 'Create agent' }))).toBe(true);

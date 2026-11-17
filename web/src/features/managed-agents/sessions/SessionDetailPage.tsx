@@ -763,7 +763,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             <ManagedDetailBreadcrumb
               listHref={listHref}
               listLabel={listLabel}
-              currentLabel={<ResourceIdButton value={session.id} className="max-w-[min(24rem,65vw)]" />}
+              currentLabel={
+                <ResourceIdButton
+                  value={session.id}
+                  className="h-6 min-h-0 max-w-[min(24rem,65vw)] gap-1 rounded-md px-1.5 py-0 text-muted-foreground hover:bg-muted/60 hover:text-foreground [&_svg]:size-3"
+                />
+              }
               currentClassName="min-w-0"
               className="min-w-0"
             />

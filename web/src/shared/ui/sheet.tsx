@@ -8,7 +8,7 @@ import { Button } from '@/shared/ui/button';
 import { useI18n } from '@/shared/i18n';
 
 const sheetVariants = cva(
-  'fixed z-50 flex flex-col gap-4 border-border bg-popover text-popover-foreground shadow-md outline-none',
+  'fixed z-50 flex flex-col gap-4 border-border bg-popover text-popover-foreground shadow-2xl outline-none',
   {
     variants: {
       side: {

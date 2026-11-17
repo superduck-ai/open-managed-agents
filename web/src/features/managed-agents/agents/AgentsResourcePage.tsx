@@ -651,76 +651,47 @@ export function AgentsResourcePage({
             actionLabel={msg('common.retry', 'Retry')}
             onAction={retryAgentsLoad}
           />
-        ) : isAgentsPage ? (
-          <AgentListTable
-            agents={displayedAgents}
-            loading={remoteAgents === null}
+        ) : (
+          <AgentsResourceBody
+            isAgentsPage={isAgentsPage}
+            config={config}
             workspaceId={workspaceId}
+            remoteAgents={remoteAgents}
+            displayedAgents={displayedAgents}
+            visibleAgents={visibleAgents}
+            visibleRows={visibleRows}
             archivingIds={archivingIds}
             quickViewAgentId={quickViewAgentId}
+            hasActiveAgentFilters={hasActiveAgentFilters}
+            searchResultsTruncated={searchResultsTruncated}
             onQuickView={setQuickViewAgentId}
             onStartSession={setSessionAgent}
             onArchive={requestArchiveAgents}
+            onResetFilters={resetAgentFilters}
+            onCreateAgent={() => {
+              setCreateOpen(true);
+              navigateToInternalHref(agentCreateHref(workspaceId));
+            }}
+            msg={msg}
           />
-        ) : (
-          <Table className="table-fixed border-collapse text-left">
-            <TableHeader>
-              <TableRow className="border-border text-muted-foreground hover:bg-transparent">
-                {config.columns.map((column) => (
-                  <TableHead key={column || 'select'} className="px-3 text-muted-foreground">
-                    {column ? (
-                      managedColumnLabel(column, msg)
-                    ) : (
-                      <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
-                    )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleRows.map((row, index) => (
-                <TableRow key={`${config.section}-${index}`} className="border-border text-foreground">
-                  {config.columns.map((column) => (
-                    <TableCell key={column || 'select'} className="h-11 truncate px-3">
-                      {column ? (
-                        row[column]
-                      ) : (
-                        <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         )}
-
-        {isAgentsPage
-          ? !loadError &&
-            remoteAgents !== null &&
-            !visibleAgents.length && (
-              <AgentsEmptyState
-                trueEmpty={!hasActiveAgentFilters}
-                truncated={searchResultsTruncated}
-                onReset={resetAgentFilters}
-              />
-            )
-          : !visibleRows.length && <EmptyState config={config} />}
       </div>
 
-      <ResourceListPagination
-        {...agentListPager(
-          agentLoadMode,
-          agentPageHistory.length,
-          agentLocalPage,
-          agentListTotalCount,
-          visibleAgents.length,
-        )}
-        canPrevious={hasPreviousAgentsPage}
-        canNext={hasNextAgentsPage}
-        onPrevious={goToPreviousAgentsPage}
-        onNext={goToNextAgentsPage}
-      />
+      {shouldShowAgentsPagination(isAgentsPage, visibleAgents.length, hasPreviousAgentsPage, hasNextAgentsPage) ? (
+        <ResourceListPagination
+          {...agentListPager(
+            agentLoadMode,
+            agentPageHistory.length,
+            agentLocalPage,
+            agentListTotalCount,
+            visibleAgents.length,
+          )}
+          canPrevious={hasPreviousAgentsPage}
+          canNext={hasNextAgentsPage}
+          onPrevious={goToPreviousAgentsPage}
+          onNext={goToNextAgentsPage}
+        />
+      ) : null}
 
       {createOpen && createLabel ? (
         <CreateResourceDialog title={createLabel} onClose={() => setCreateOpen(false)} />
@@ -748,5 +719,115 @@ export function AgentsResourcePage({
         />
       ) : null}
     </section>
+  );
+}
+
+function shouldShowAgentsPagination(
+  isAgentsPage: boolean,
+  visibleCount: number,
+  hasPrevious: boolean,
+  hasNext: boolean,
+) {
+  return !isAgentsPage || (visibleCount > 0 && (hasPrevious || hasNext));
+}
+
+function AgentsResourceBody({
+  isAgentsPage,
+  config,
+  workspaceId,
+  remoteAgents,
+  displayedAgents,
+  visibleAgents,
+  visibleRows,
+  archivingIds,
+  quickViewAgentId,
+  hasActiveAgentFilters,
+  searchResultsTruncated,
+  onQuickView,
+  onStartSession,
+  onArchive,
+  onResetFilters,
+  onCreateAgent,
+  msg,
+}: {
+  isAgentsPage: boolean;
+  config: ResourceConfig;
+  workspaceId: string;
+  remoteAgents: AgentApiResponse[] | null;
+  displayedAgents: AgentApiResponse[];
+  visibleAgents: AgentApiResponse[];
+  visibleRows: NonNullable<ResourceConfig['rows']>;
+  archivingIds: Set<string>;
+  quickViewAgentId: string | null;
+  hasActiveAgentFilters: boolean;
+  searchResultsTruncated: boolean;
+  onQuickView: (agentId: string) => void;
+  onStartSession: (agent: AgentApiResponse) => void;
+  onArchive: (agentIds: string[]) => void;
+  onResetFilters: () => void;
+  onCreateAgent: () => void;
+  msg: ReturnType<typeof useI18n>['msg'];
+}) {
+  if (isAgentsPage) {
+    return (
+      <>
+        {remoteAgents === null || displayedAgents.length > 0 ? (
+          <AgentListTable
+            agents={displayedAgents}
+            loading={remoteAgents === null}
+            workspaceId={workspaceId}
+            archivingIds={archivingIds}
+            quickViewAgentId={quickViewAgentId}
+            onQuickView={onQuickView}
+            onStartSession={onStartSession}
+            onArchive={onArchive}
+          />
+        ) : null}
+        {remoteAgents !== null && !visibleAgents.length ? (
+          <AgentsEmptyState
+            trueEmpty={!hasActiveAgentFilters}
+            truncated={searchResultsTruncated}
+            onReset={onResetFilters}
+            onCreate={onCreateAgent}
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Table className="table-fixed border-collapse text-left">
+        <TableHeader>
+          <TableRow className="border-border text-muted-foreground hover:bg-transparent">
+            {config.columns.map((column) => (
+              <TableHead key={column || 'select'} className="px-3 text-muted-foreground">
+                {column ? (
+                  managedColumnLabel(column, msg)
+                ) : (
+                  <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
+                )}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visibleRows.map((row, index) => (
+            <TableRow key={`${config.section}-${index}`} className="border-border text-foreground">
+              {config.columns.map((column) => (
+                <TableCell key={column || 'select'} className="h-11 truncate px-3">
+                  {column ? (
+                    row[column]
+                  ) : (
+                    <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
+                  )}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {!visibleRows.length && <EmptyState config={config} />}
+    </>
   );
 }

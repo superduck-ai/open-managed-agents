@@ -8,6 +8,7 @@ import { useOrganizations } from '../../shared/organizations/context';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { ConsoleShell } from './ConsoleLayout';
 import { Button } from '../../shared/ui/button';
+import { Skeleton } from '../../shared/ui/skeleton';
 
 export function ProtectedConsoleLayout() {
   const { msg } = useI18n();
@@ -47,20 +48,28 @@ export function ProtectedConsoleLayout() {
   if (organizations && (organizations.error || !organizations.orgUuid || !activeWorkspaceId)) {
     return (
       <ConsoleShell account={account} onLogout={logout} currentPath={location.pathname}>
-        <div role={organizations.error ? 'alert' : 'status'} className="space-y-3">
-          <p>
-            {organizations.switching
-              ? '正在加载组织…'
-              : organizations.error
-                ? '加载组织失败，请重试。'
-                : '暂无可用工作区。请选择组织或接受邀请。'}
-          </p>
-          {!organizations.switching && (
+        {organizations.switching ? (
+          <div role="status" className="space-y-6">
+            <span className="sr-only">正在加载组织…</span>
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-40 rounded-lg" />
+              <Skeleton className="h-4 w-24 rounded-md" />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Skeleton className="h-28 rounded-xl" />
+              <Skeleton className="h-28 rounded-xl" />
+              <Skeleton className="h-28 rounded-xl" />
+            </div>
+            <Skeleton className="h-64 rounded-xl" />
+          </div>
+        ) : (
+          <div role={organizations.error ? 'alert' : 'status'} className="space-y-3">
+            <p>{organizations.error ? '加载组织失败，请重试。' : '暂无可用工作区。请选择组织或接受邀请。'}</p>
             <Button variant="outline" onClick={() => void organizations.retry()}>
               重试
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </ConsoleShell>
     );
   }

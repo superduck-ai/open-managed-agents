@@ -49,6 +49,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from '@/shared/ui/sidebar';
+import { Skeleton } from '@/shared/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -155,7 +156,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset
         className={clsx(
-          'subtle-scrollbar min-w-0 text-foreground',
+          'subtle-scrollbar min-w-0 text-foreground focus:outline-none focus-visible:outline-none',
           sessionDetail && 'session-route-theme console-session-inset',
           quickstart && 'console-quickstart-inset',
         )}
@@ -415,7 +416,10 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
             {collapsed ? null : (
               <>
                 <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">{localizedWorkspaceName(activeWorkspace.name, msg)}</span>
+                  <WorkspaceSwitcherTitle
+                    name={localizedWorkspaceName(activeWorkspace.name, msg)}
+                    isLoading={isLoading}
+                  />
                   <span className="truncate text-xs text-sidebar-foreground/70">
                     {msg('settings.workspaces.workspace', 'Workspace')}
                   </span>
@@ -580,7 +584,7 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
-  const { orgUuid } = useWorkspace();
+  const { orgUuid, isLoading } = useWorkspace();
   const organizationAccess = useContext(AuthContext)?.organizationAccess;
   const organizationName = currentOrganizationName(account, organizationAccess, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
@@ -632,9 +636,7 @@ export function AccountMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/70">
-                    <span className="min-w-0 flex-1 truncate" title={organizationName}>
-                      {organizationName}
-                    </span>
+                    <AccountOrganizationSubtitle organizationName={organizationName} isLoading={isLoading} />
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -719,6 +721,30 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   if (typeof window !== 'undefined') {
     window.location.assign(nextPath);
   }
+}
+
+function WorkspaceSwitcherTitle({ name, isLoading }: { name: string; isLoading: boolean }) {
+  if (isLoading && !name) {
+    return <Skeleton className="my-0.5 h-4 w-20 rounded-sm bg-sidebar-accent" />;
+  }
+  return <span className="truncate font-semibold">{name}</span>;
+}
+
+function AccountOrganizationSubtitle({
+  organizationName,
+  isLoading,
+}: {
+  organizationName?: string;
+  isLoading: boolean;
+}) {
+  if (isLoading && !organizationName) {
+    return <Skeleton className="my-0.5 h-3.5 w-20 rounded-sm bg-sidebar-accent" />;
+  }
+  return (
+    <span className="min-w-0 flex-1 truncate" title={organizationName}>
+      {organizationName}
+    </span>
+  );
 }
 
 function getIdentity(account?: AuthAccount | null) {

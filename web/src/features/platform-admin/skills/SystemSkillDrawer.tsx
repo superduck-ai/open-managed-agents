@@ -70,7 +70,7 @@ export function SystemSkillDrawer({
         <SheetContent
           showCloseButton={false}
           showOverlay={false}
-          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
+          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 shadow-2xl ring-[0.5px] ring-border sm:max-w-[480px]"
         >
           <SystemSkillDrawerHeader skill={skill} version={previewVersion} pending={pending} onChanged={onChanged} />
           <div className="min-h-0 flex-1 overflow-y-auto p-4">

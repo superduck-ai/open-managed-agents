@@ -158,6 +158,8 @@ describe('SessionInspector', () => {
     const inspector = screen.getByTestId('session-inspector');
     const [selectedOption, nextOption] = screen.getAllByRole('option');
     expect(inspector.className).toContain('session-inspector-shell');
+    expect(inspector.className).toContain('rounded-xl');
+    expect(inspector.className).toContain('border-[0.5px]');
     expect(selectedOption.getAttribute('aria-selected')).toBe('true');
     expect(selectedOption.className).toContain('bg-accent');
     expect(selectedOption.className).not.toContain('shadow-[');

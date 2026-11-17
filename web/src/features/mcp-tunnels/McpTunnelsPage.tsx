@@ -190,14 +190,16 @@ export function McpTunnelsContent({
         />
       ) : (
         <div className="overflow-visible">
-          <TunnelTable
-            tunnels={filteredTunnels}
-            workspaceId={workspaceId}
-            loading={tunnelsQuery.isPending}
-            busyAction={busyAction}
-            onOpen={navigateToTunnel}
-            onArchive={(tunnel) => setPendingAction({ type: 'archive', tunnel })}
-          />
+          {tunnelsQuery.isPending || filteredTunnels.length > 0 ? (
+            <TunnelTable
+              tunnels={filteredTunnels}
+              workspaceId={workspaceId}
+              loading={tunnelsQuery.isPending}
+              busyAction={busyAction}
+              onOpen={navigateToTunnel}
+              onArchive={(tunnel) => setPendingAction({ type: 'archive', tunnel })}
+            />
+          ) : null}
           {tunnelsQuery.isSuccess && !filteredTunnels.length ? (
             <ResourceListState
               icon={hasFilters ? Search : productIcons.tunnel}

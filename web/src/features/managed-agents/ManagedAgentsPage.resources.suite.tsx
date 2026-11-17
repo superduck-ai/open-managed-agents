@@ -379,7 +379,10 @@ export function registerManagedAgentsResourceTests() {
     expect(sessionsLink.getAttribute('href')).toBe('/workspaces/default/sessions');
     expect(sessionsLink.querySelector('svg')).toBeNull();
     expect(breadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('sesn_one123456');
-    expect(screen.getByRole('heading', { name: 'Session one' })).toBeTruthy();
+    const sessionHeading = screen.getByRole('heading', { name: 'Session one' });
+    expect(sessionHeading).toBeTruthy();
+    expect(sessionHeading.className).toContain('font-sans');
+    expect(sessionHeading.className).not.toContain('font-serif');
     expect(screen.getByRole('button', { name: 'Actions' }).className).toContain('h-8');
     const statusPill = await waitFor(() => within(sessionHeader).getByText('Idle'));
     expect(statusPill.dataset.slot).toBe('badge');

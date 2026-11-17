@@ -58,8 +58,9 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
-import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
 import { Input } from '../../shared/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
@@ -278,9 +279,11 @@ function WorkspaceWebhookManager({
 
         <WebhookList
           webhooks={webhooks}
+          workspaceName={workspace.name}
           loading={!ready || webhooksQuery.isLoading}
           errorMessage={errorMessage}
           selectedWebhookId={selectedWebhookId}
+          onCreate={ready ? () => setCreateOpen(true) : undefined}
           onSelect={setSelectedWebhookId}
           onAction={handleAction}
         />
@@ -321,18 +324,22 @@ function WorkspaceWebhookManager({
 
 function WebhookList({
   webhooks,
+  workspaceName,
   loading,
   errorMessage,
   selectedWebhookId,
   onSelect,
   onAction,
+  onCreate,
 }: {
   webhooks: WebhookEndpoint[];
+  workspaceName: string;
   loading: boolean;
   errorMessage: string | null;
   selectedWebhookId: string | null;
   onSelect: (id: string) => void;
   onAction: (action: WebhookAction, webhook: WebhookEndpoint) => void;
+  onCreate?: () => void;
 }) {
   const { msg } = useI18n();
   const [search, setSearch] = useState('');
@@ -439,14 +446,19 @@ function WebhookList({
       ) : null}
 
       {isEmpty ? (
-        <Empty className="min-h-[320px]" data-testid="webhooks-empty-state">
-          <EmptyHeader className="max-w-[360px]">
-            <EmptyMedia>
-              <productIcons.webhooks className="size-14 stroke-[1.5] text-foreground" aria-hidden />
-            </EmptyMedia>
-            <EmptyTitle>{msg('webhooks.emptyTitle', 'No webhook endpoints yet')}</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
+        <div data-testid="webhooks-empty-state">
+          <ResourceListState
+            icon={productIcons.webhooks}
+            title={msg('webhooks.emptyTitle', 'No webhook endpoints yet')}
+            body={msg(
+              'webhooks.empty',
+              'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
+              { workspaceName: localizedWorkspaceName(workspaceName, msg) },
+            )}
+            actionLabel={onCreate ? msg('webhooks.addEndpoint', 'Add webhook endpoint') : undefined}
+            onAction={onCreate}
+          />
+        </div>
       ) : null}
     </>
   );

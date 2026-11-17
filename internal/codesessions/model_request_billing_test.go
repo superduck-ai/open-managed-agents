@@ -24,8 +24,20 @@ func TestModelRequestBillingCountsMissingCacheRead(t *testing.T) {
 	if !calculator.HasModel("priced") {
 		t.Fatal("HasModel(priced) = false")
 	}
-	got := modelRequestBilling(calculator, "priced", ModelRequestUsage{CacheReadInputTokens: new(int64(1_000_000))})
+	got := modelRequestBilling(calculator, "priced", ModelRequestUsage{InputTokens: new(int64(0)), OutputTokens: new(int64(0)), CacheReadInputTokens: new(int64(1_000_000))})
 	if got["list_cost"] != "300" || got["currency"] != "USD" {
 		t.Fatalf("缺失缓存读取单价被记成 %v，期望 300 USD", got)
+	}
+}
+
+func TestModelRequestBillingRequiresKnownUsage(t *testing.T) {
+	calculator := billing.NewCalculator(map[string]billing.ModelPrice{"priced": {Rates: &billing.Rates{Input: new("3"), Output: new("15")}}})
+	for _, usage := range []ModelRequestUsage{{}, {InputTokens: new(int64(0))}, {OutputTokens: new(int64(0))}} {
+		if got := modelRequestBilling(calculator, "priced", usage); got != nil {
+			t.Fatalf("未知用量被记成费用：%v", got)
+		}
+	}
+	if got := modelRequestBilling(calculator, "priced", ModelRequestUsage{InputTokens: new(int64(0)), OutputTokens: new(int64(0))}); got["list_cost"] != "0" {
+		t.Fatalf("明确零用量未计量：%v", got)
 	}
 }

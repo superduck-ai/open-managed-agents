@@ -104,7 +104,7 @@ func (s *Server) authenticateScopedServiceCredential(r *http.Request, apiKey str
 			return principal, apiErr
 		}
 	}
-	if r.Method == http.MethodPost && (isMessagesPath(r.URL.Path) || r.URL.Path == "/v1/chat/completions") {
+	if r.Method == http.MethodPost && (isMessagesPath(r.URL.Path) || r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses") {
 		return s.authenticateCodeSessionMessagesCredential(r, apiKey)
 	}
 	return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")

@@ -62,6 +62,7 @@ type yamlConfig struct {
 	TelemetryExport        yamlWebhookConfig          `yaml:"telemetry_export"`
 	Vault                  VaultConfig                `yaml:"vault"`
 	Bootstrap              yamlBootstrapConfig        `yaml:"bootstrap"`
+	Pricing                PricingConfig              `yaml:"pricing"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -174,6 +175,7 @@ func newYAMLConfig() yamlConfig {
 		SandboxLifecycle:      defaults.SandboxLifecycle,
 		SessionPorts:          defaults.SessionPorts,
 		EnvironmentRunner:     defaults.EnvironmentRunner,
+		Pricing:               defaults.Pricing,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
@@ -240,6 +242,7 @@ func (input yamlConfig) resolve() Config {
 		SandboxLifecycle:      input.SandboxLifecycle,
 		SessionPorts:          input.SessionPorts,
 		EnvironmentRunner:     input.EnvironmentRunner,
+		Pricing:               input.Pricing,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,

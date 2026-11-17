@@ -9,7 +9,6 @@ import (
 )
 
 type chatObservation struct {
-	event    []byte
 	finished map[int]bool
 }
 
@@ -28,29 +27,6 @@ type chatUsage struct {
 	PromptDetails    *struct {
 		CachedTokens *int64 `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
-}
-
-func (c *chatObservation) line(o *observation, line []byte) {
-	line = bytes.TrimSuffix(line, []byte{'\r'})
-	if len(line) == 0 {
-		if len(c.event) > 0 {
-			c.frame(o, c.event)
-			c.event = nil
-		}
-		return
-	}
-	data, ok := bytes.CutPrefix(line, []byte("data:"))
-	if !ok {
-		return
-	}
-	data = bytes.TrimPrefix(data, []byte{' '})
-	if len(c.event)+len(data)+1 > 4*1024*1024 {
-		o.failed = true
-		c.event = nil
-		return
-	}
-	c.event = append(c.event, data...)
-	c.event = append(c.event, '\n')
 }
 
 func (c *chatObservation) frame(o *observation, data []byte) {
@@ -117,17 +93,9 @@ func (c *chatObservation) complete() bool {
 }
 
 func (u *chatUsage) billingUsage() (billing.Usage, bool) {
-	usage := billing.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
-	if (u.PromptTokens != nil && *u.PromptTokens < 0) || (u.CompletionTokens != nil && *u.CompletionTokens < 0) {
-		return billing.Usage{}, false
+	var cached *int64
+	if u.PromptDetails != nil {
+		cached = u.PromptDetails.CachedTokens
 	}
-	if u.PromptDetails != nil && u.PromptDetails.CachedTokens != nil {
-		cached := *u.PromptDetails.CachedTokens
-		if cached < 0 || u.PromptTokens == nil || cached > *u.PromptTokens {
-			return billing.Usage{}, false
-		}
-		usage.CacheReadTokens = u.PromptDetails.CachedTokens
-		usage.InputTokens = new(*u.PromptTokens - cached)
-	}
-	return usage, true
+	return billing.OpenAIUsage(u.PromptTokens, u.CompletionTokens, cached)
 }

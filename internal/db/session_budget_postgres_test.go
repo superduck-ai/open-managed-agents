@@ -83,6 +83,17 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 		t.Fatalf("已开始的请求不能结算：%v", err)
 	}
 
+	for _, late := range []SessionEvent{
+		event("late_running", "session.status_running", `{"type":"session.status_running"}`, now),
+		event("late_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"end_turn"}}`, now),
+		event("late_primary_running", "session.thread_status_running", `{"type":"session.thread_status_running"}`, now),
+	} {
+		changes, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{late})
+		if err != nil || len(changes.Events) != 0 {
+			t.Fatalf("迟到状态覆盖预算暂停: %s, %+v, %v", late.EventType, changes, err)
+		}
+	}
+
 	session.BudgetReachedAt = nil
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
 	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session); err != nil {
@@ -107,6 +118,16 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{start}); err != nil {
 		t.Fatalf("提高预算后模型调用仍被阻止：%v", err)
 	}
+	resumed := event("resumed_running", "session.status_running", `{"type":"session.status_running"}`, now)
+	if changes, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{resumed}); err != nil || len(changes.Events) == 0 {
+		t.Fatalf("提高预算后无法恢复运行: %+v, %v", changes, err)
+	}
+
+	finished := event("resumed_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"end_turn"}}`, now)
+	if changes, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{finished}); err != nil || len(changes.Events) == 0 {
+		t.Fatalf("提高预算后无法正常结束: %+v, %v", changes, err)
+	}
+
 	session.Budget = nil
 	session.BudgetRemovedAt = new(now)
 	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)

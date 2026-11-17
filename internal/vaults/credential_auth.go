@@ -53,6 +53,7 @@ type environmentVariableCredentialCreateInput struct {
 }
 
 type envOAuthCredentialCreateInput struct {
+	CustomProvider    *EnvOAuthCustomProvider    `json:"custom_provider"`
 	InjectionLocation json.RawMessage            `json:"injection_location"`
 	Provider          string                     `json:"provider"`
 	SecretName        string                     `json:"secret_name"`
@@ -97,14 +98,15 @@ type environmentVariableCredentialUpdateInput struct {
 }
 
 type envOAuthCredentialUpdateInput struct {
-	InjectionLocation json.RawMessage `json:"injection_location"`
-	Provider          *string         `json:"provider"`
-	SecretName        *string         `json:"secret_name"`
-	Networking        json.RawMessage `json:"networking"`
-	AccessToken       *string         `json:"access_token"`
-	RefreshToken      *string         `json:"refresh_token"`
-	ExpiresAt         json.RawMessage `json:"expires_at"`
-	Scope             json.RawMessage `json:"scope"`
+	CustomProvider    *EnvOAuthCustomProvider `json:"custom_provider"`
+	InjectionLocation json.RawMessage         `json:"injection_location"`
+	Provider          *string                 `json:"provider"`
+	SecretName        *string                 `json:"secret_name"`
+	Networking        json.RawMessage         `json:"networking"`
+	AccessToken       *string                 `json:"access_token"`
+	RefreshToken      *string                 `json:"refresh_token"`
+	ExpiresAt         json.RawMessage         `json:"expires_at"`
+	Scope             json.RawMessage         `json:"scope"`
 }
 
 func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
@@ -356,7 +358,12 @@ func normalizeEnvOAuthForCreate(input envOAuthCredentialCreateInput) (credential
 		return credentialAuthState{}, err
 	}
 	refreshToken := strings.TrimSpace(input.RefreshToken)
+	if err := NormalizeEnvOAuthCustomProvider(provider, input.CustomProvider); err != nil {
+		return credentialAuthState{}, err
+	}
 	publicAuth := &envOAuthCredentialAuth{
+		HasClientSecret:   customProviderSecret(input.CustomProvider) != "",
+		CustomProvider:    customProviderDefinition(input.CustomProvider),
 		Type:              credentialAuthTypeEnvOAuth,
 		Provider:          provider,
 		SecretName:        secretName,
@@ -368,6 +375,7 @@ func normalizeEnvOAuthForCreate(input envOAuthCredentialCreateInput) (credential
 		HasRefreshToken:   refreshToken != "",
 	}
 	secretPayload := envOAuthCredentialSecret{
+		ClientSecret: customProviderSecret(input.CustomProvider),
 		Type:         credentialAuthTypeEnvOAuth,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -574,6 +582,17 @@ func normalizeEnvOAuthForUpdate(current db.VaultCredential, currentSecret []byte
 			return credentialAuthState{}, err
 		}
 	}
+	if input.CustomProvider != nil {
+		if err := NormalizeEnvOAuthCustomProvider(publicAuth.Provider, input.CustomProvider); err != nil {
+			return credentialAuthState{}, err
+		}
+		if input.CustomProvider.ClientSecret != "" {
+			secretPayload.ClientSecret = input.CustomProvider.ClientSecret
+		} else if publicAuth.CustomProvider != nil && publicAuth.CustomProvider.ClientID != input.CustomProvider.ClientID {
+			return credentialAuthState{}, errors.New("changing the client ID requires a client secret")
+		}
+		publicAuth.CustomProvider = customProviderDefinition(input.CustomProvider)
+	}
 	if input.Provider != nil {
 		return credentialAuthState{}, errors.New("auth.provider is immutable")
 	}
@@ -641,6 +660,7 @@ func normalizeEnvOAuthForUpdate(current db.VaultCredential, currentSecret []byte
 		}
 		publicAuth.Networking = networking
 	}
+	publicAuth.HasClientSecret = secretPayload.ClientSecret != ""
 	publicAuth.HasRefreshToken = secretPayload.RefreshToken != ""
 	if secretPayload.AccessToken == "" {
 		return credentialAuthState{}, ErrMissingSecretEnvelope

@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { toast } from '../../../shared/ui/sonner';
 import { afterEach, expect, mock, spyOn, test } from 'bun:test';
 import { type ReactNode } from 'react';
@@ -615,47 +614,21 @@ test('MCP 凭据门禁只展示调用方允许的认证类型', async () => {
   expect(screen.getByRole('option', { name: 'Bearer token' })).toBeTruthy();
 });
 
-test.each([false, true])('自定义服务方仅维护四项定义，晚到目录不清除创建结果：%s', async (directoryFails) => {
+test.each([false, true])('自定义服务方只保留草稿，客户端配置随凭据提交：%s', async (manual) => {
   resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
-  const record = {
-    id: 'poap_workspace',
-    provider_key: 'custom:poap_workspace',
-    name: 'Team OAuth',
-    enabled: true,
-    configured: false,
-    version: 1,
-    client_id: '',
-    has_client_secret: false,
-    authorize_endpoint: 'https://auth.example.test/authorize',
-    token_endpoint: 'https://auth.example.test/token',
-    scope: 'read',
-    default_secret_name: '',
-    default_allowed_hosts: [],
-  };
-  const writes: RequestInit[] = [];
-  let completeDirectory: () => void = () => {};
-  const directoryPending = new Promise<Response>((resolve, reject) => {
-    completeDirectory = () => (directoryFails ? reject(new Error('目录加载失败')) : resolve(Response.json([])));
-  });
-  let completeCreate: () => void = () => {};
-  const createPending = new Promise<void>((resolve) => {
-    completeCreate = resolve;
-  });
+  const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
   globalThis.fetch = mock(async (url, options) => {
-    if (!String(url).includes('/env-oauth/providers')) return Response.json([]);
-    expect(String(url)).toContain('workspace_id=default');
-    if (options?.method === 'POST') {
-      writes.push(options);
-      await createPending;
-      return Response.json(record);
+    if (options?.method === 'POST' || options?.method === 'PATCH') {
+      writes.push({ url: String(url), body: JSON.parse(String(options.body)) });
+      return Response.json({ oauth_flow_id: 'flow_inline', authorize_url: 'https://auth.example.test/authorize' });
     }
-    return String(url).includes('/poap_workspace?') ? Response.json(record) : directoryPending;
+    return Response.json([]);
   }) as typeof fetch;
-  const submit = mock(async () => {});
-  window.open = mock(() => null) as typeof window.open;
-  const queries = new QueryClient();
-  render(
-    <QueryClientProvider client={queries}>
+  const popup = { closed: false, close: mock(() => {}), location: { href: '' } };
+  window.open = mock(() => popup) as unknown as typeof window.open;
+  const submit = mock(async (_values: import('../types').CredentialFormValues) => {});
+  const renderDialog = () =>
+    render(
       <AuthHarness>
         <CredentialDialog
           vaultId="vlt_fixture"
@@ -664,334 +637,68 @@ test.each([false, true])('自定义服务方仅维护四项定义，晚到目录
           onClose={() => {}}
           onSubmit={submit}
         />
-      </AuthHarness>
-    </QueryClientProvider>,
-  );
-  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+      </AuthHarness>,
+    );
+  renderDialog();
+  let dialog = screen.getByRole('dialog', { name: 'Add credential' });
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
   fireEvent.click(await screen.findByRole('option', { name: 'Custom OAuth provider' }));
-  let definition = await screen.findByRole('form', { name: 'Custom OAuth provider' });
-  expect(document.activeElement).toBe(within(definition).getByLabelText('Name'));
-  expect(within(definition).getAllByRole('textbox')).toHaveLength(4);
-  expect(within(definition).queryByLabelText('Client ID')).toBeNull();
-  expect(within(definition).queryByRole('button', { name: /Client configuration/ })).toBeNull();
-  fireEvent.click(within(definition).getByRole('button', { name: 'Cancel' }));
-  expect(document.activeElement).toBe(screen.getByPlaceholderText('Search options...'));
-  fireEvent.click(screen.getByRole('option', { name: 'Custom OAuth provider' }));
-  definition = await screen.findByRole('form', { name: 'Custom OAuth provider' });
+  const form = await screen.findByRole('form', { name: 'Custom OAuth provider' });
+  expect(within(form).getAllByRole('textbox')).toHaveLength(4);
   for (const [label, value] of [
-    ['Name', 'Team OAuth'],
-    ['Authorize endpoint', record.authorize_endpoint],
-    ['Token endpoint', record.token_endpoint],
-    ['Scope', 'read'],
-  ]) {
-    fireEvent.change(within(definition).getByLabelText(label === 'Scope' ? /Scope/ : label), { target: { value } });
-  }
-  fireEvent.click(within(definition).getByRole('button', { name: 'Add' }));
-  await within(definition).findByRole('button', { name: 'Saving...' });
-  fireEvent.keyDown(within(definition).getByLabelText('Name'), { key: 'Escape', code: 'Escape' });
-  fireEvent.pointerDown(within(dialog).getByPlaceholderText('Example credential'));
-  fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
-  expect(screen.getByRole('form', { name: 'Custom OAuth provider' })).toBe(definition);
-  await act(async () => completeCreate());
-  await waitFor(() => expect(screen.queryByRole('form', { name: 'Custom OAuth provider' })).toBeNull());
-  expect(writes).toHaveLength(1);
-  expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('csrf_fixture');
-  expect(JSON.parse(String(writes[0].body))).toEqual({
-    name: 'Team OAuth',
-    authorize_endpoint: record.authorize_endpoint,
-    token_endpoint: record.token_endpoint,
-    scope: 'read',
-  });
-  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'TEAM_TOKEN' } });
-  fireEvent.change(within(dialog).getByLabelText('Allowed hosts'), { target: { value: 'api.example.test' } });
-  fireEvent.click(within(dialog).getByRole('checkbox'));
-  await act(async () => completeDirectory());
-  expect(within(dialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain(
-    'Team OAuth (Workspace)',
-  );
-  expect(within(dialog).getByRole('button', { name: /Client configuration/ }).textContent).toContain('(required)');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  expect(await within(dialog).findByText('Custom OAuth authorization requires a client ID.')).toBeTruthy();
-  expect(within(dialog).getByText('Custom OAuth authorization requires a client secret.')).toBeTruthy();
-  expect(window.open).not.toHaveBeenCalled();
-  expect(submit).not.toHaveBeenCalled();
-  queries.clear();
-});
-
-test.each([null, 'Client ID', 'Client secret'])('客户端配置在一级凭据表单校验，保存后授权：%s', async (firstLabel) => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
-  let record = {
-    id: 'poap_workspace_edit',
-    provider_key: 'custom:poap_workspace_edit',
-    name: 'Team OAuth',
-    enabled: true,
-    configured: false,
-    version: 1,
-    client_id: '',
-    has_client_secret: false,
-    authorize_endpoint: 'https://auth.example.test/authorize',
-    token_endpoint: 'https://auth.example.test/token',
-    scope: 'read',
-    default_secret_name: '',
-    default_allowed_hosts: [],
-  };
-  const writes: Record<string, unknown>[] = [];
-  const starts: Record<string, unknown>[] = [];
-  globalThis.fetch = mock(async (url, options) => {
-    if (String(url).includes('/vault-auth/start')) {
-      starts.push(JSON.parse(String(options?.body)));
-      return Response.json({ oauth_flow_id: 'flow_primary', authorize_url: 'https://auth.example.test/authorize' });
-    }
-    if (!String(url).includes('/env-oauth/providers')) return Response.json([]);
-    if (options?.method === 'PATCH') {
-      expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf_fixture');
-      const input = JSON.parse(String(options.body));
-      expect(input.expected_version).toBe(record.version);
-      writes.push(input);
-      record = {
-        ...record,
-        client_id: input.client_id ?? record.client_id,
-        scope: input.scope ?? record.scope,
-        configured: true,
-        has_client_secret: true,
-        version: record.version + 1,
-      };
-      return Response.json(record);
-    }
-    return Response.json(
-      String(url).includes('/poap_workspace_edit?')
-        ? record
-        : [{ ...record, id: record.provider_key, workspace_scoped: true }],
-    );
-  }) as typeof fetch;
-  const popup = { closed: false, location: { href: '' }, close: mock(() => {}) };
-  window.open = mock(() => popup) as unknown as typeof window.open;
-  const submit = mock(async () => {});
-  const queries = new QueryClient();
-  render(
-    <QueryClientProvider client={queries}>
-      <AuthHarness>
-        <CredentialDialog
-          orgUuid="org_fixture"
-          workspaceId="default"
-          vaultId="vlt_fixture"
-          onClose={() => {}}
-          onSubmit={submit}
-        />
-      </AuthHarness>
-    </QueryClientProvider>,
-  );
-  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
-  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
-  fireEvent.click(await screen.findByText('ENV OAuth'));
-  fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
-  fireEvent.click(await screen.findByRole('option', { name: 'Team OAuth (Workspace)' }));
-  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'MY_USER_TOKEN' } });
-  fireEvent.change(within(dialog).getByLabelText('Allowed hosts'), { target: { value: 'api.example.test' } });
-  fireEvent.click(within(dialog).getByRole('checkbox'));
-  if (firstLabel === null) {
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-    await within(dialog).findByText('Custom OAuth authorization requires a client ID.');
-    fireEvent.click(within(dialog).getByRole('button', { name: /Use an existing token/ }));
-    fireEvent.change(await within(dialog).findByLabelText('Access token'), { target: { value: 'manual-token' } });
-    expect(within(dialog).getByRole('button', { name: /Client configuration/ }).textContent).toContain('(optional)');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Add credential' }));
-    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
-    expect(within(dialog).queryByText('Custom OAuth authorization requires a client ID.')).toBeNull();
-    expect(writes).toHaveLength(0);
-    expect(starts).toHaveLength(0);
-    expect(window.open).not.toHaveBeenCalled();
-    queries.clear();
-    return;
-  }
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  const clientId = await within(dialog).findByLabelText('Client ID');
-  const secret = within(dialog).getByLabelText('Client secret');
-  await waitFor(() => expect(clientId.hasAttribute('disabled')).toBe(false));
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  expect(clientId.getAttribute('aria-invalid')).toBe('true');
-  expect(secret.getAttribute('aria-invalid')).toBe('true');
-  expect(document.activeElement).toBe(clientId);
-  fireEvent.change(within(dialog).getByLabelText(firstLabel), {
-    target: { value: firstLabel === 'Client ID' ? 'workspace-client' : 'workspace-secret' },
-  });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  expect(window.open).not.toHaveBeenCalled();
+    ['Name', 'Draft OAuth'],
+    ['Authorize endpoint', 'https://auth.example.test/authorize'],
+    ['Token endpoint', 'https://api.example.test/token'],
+  ])
+    fireEvent.change(within(form).getByLabelText(label), { target: { value } });
+  fireEvent.click(within(form).getByRole('button', { name: 'Add' }));
   expect(writes).toHaveLength(0);
-  const remaining = firstLabel === 'Client ID' ? secret : clientId;
-  expect(document.activeElement).toBe(remaining);
-  fireEvent.change(remaining, {
-    target: { value: firstLabel === 'Client ID' ? 'workspace-secret' : 'workspace-client' },
-  });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  await waitFor(() => expect(popup.location.href).toBe('https://auth.example.test/authorize'));
-  expect(writes).toEqual([{ client_id: 'workspace-client', client_secret: 'workspace-secret', expected_version: 1 }]);
-  expect(starts).toHaveLength(1);
-  expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('MY_USER_TOKEN');
-  expect((within(dialog).getByLabelText('Allowed hosts') as HTMLTextAreaElement).value).toBe('api.example.test');
-  await act(async () => {
-    window.dispatchEvent(
-      new window.MessageEvent('message', {
-        origin: window.location.origin,
-        data: {
-          type: 'vault_oauth_complete',
-          flow_id: 'flow_primary',
-          vault_id: 'vlt_fixture',
-          error_code: 'invalid_request',
-        },
-      }),
-    );
-  });
-  expect((secret as HTMLInputElement).value).toBe('');
-  expect((secret as HTMLInputElement).placeholder).toBe('Leave blank to keep the current secret.');
+  expect(within(dialog).getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain('Draft OAuth');
+  expect((within(dialog).getByLabelText('Allowed hosts') as HTMLTextAreaElement).value).toBe(
+    'auth.example.test\napi.example.test',
+  );
   fireEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
   const editor = await screen.findByRole('form', { name: 'Edit OAuth provider' });
-  expect(within(editor).getAllByRole('textbox')).toHaveLength(4);
-  expect(within(editor).queryByLabelText('Client ID')).toBeNull();
-  fireEvent.change(within(editor).getByLabelText(/Scope/), { target: { value: 'updated' } });
+  fireEvent.change(within(editor).getByLabelText(/Scope/), { target: { value: 'read' } });
   fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
-  await waitFor(() => expect(screen.queryByRole('form', { name: 'Edit OAuth provider' })).toBeNull());
-  expect(writes[1]).not.toHaveProperty('client_secret');
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-  await waitFor(() => expect(starts).toHaveLength(2));
-  expect(writes).toHaveLength(2);
-  expect(submit).not.toHaveBeenCalled();
-  queries.clear();
-});
-
-test.each(['clients', 'definition'])('版本冲突刷新后保留客户端输入和凭据草稿，可手动重试：%s', async (target) => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
-  let record = {
-    id: 'poap_conflict',
-    provider_key: 'custom:poap_conflict',
-    name: 'Team OAuth',
-    enabled: true,
-    configured: true,
-    version: 1,
-    client_id: 'original-client',
-    has_client_secret: true,
-    authorize_endpoint: 'https://auth.example.test/authorize',
-    token_endpoint: 'https://auth.example.test/token',
-    scope: 'read',
-    default_secret_name: '',
-    default_allowed_hosts: [],
-  };
-  const updates: Record<string, unknown>[] = [];
-  const starts: Record<string, unknown>[] = [];
-  let details = 0;
-  globalThis.fetch = mock(async (url, options) => {
-    if (String(url).includes('/vault-auth/start')) {
-      starts.push(JSON.parse(String(options?.body)));
-      return Response.json({ oauth_flow_id: 'flow_conflict', authorize_url: 'https://auth.example.test/authorize' });
-    }
-    if (!String(url).includes('/env-oauth/providers')) return Response.json([]);
-    if (options?.method === 'PATCH') {
-      const input = JSON.parse(String(options.body));
-      updates.push(input);
-      if (updates.length === 1) {
-        record = { ...record, version: 2, client_id: 'remote-client', scope: 'remote-scope' };
-        return Response.json(
-          { error: { code: 'oauth_provider_version_conflict', message: 'conflict' } },
-          { status: 409 },
-        );
-      }
-      expect(input.expected_version).toBe(2);
-      record = {
-        ...record,
-        name: input.name ?? record.name,
-        client_id: input.client_id ?? record.client_id,
-        scope: input.scope ?? record.scope,
-        version: 3,
-      };
-      return Response.json(record);
-    }
-    if (String(url).includes('/poap_conflict?')) {
-      details++;
-      return Response.json(record);
-    }
-    return Response.json([{ ...record, id: record.provider_key, workspace_scoped: true }]);
-  }) as typeof fetch;
-  const popup = { closed: false, location: { href: '' }, close: mock(() => {}) };
-  window.open = mock(() => popup) as unknown as typeof window.open;
-  const queries = new QueryClient();
-  const submit = mock(async () => {});
-  render(
-    <QueryClientProvider client={queries}>
-      <AuthHarness>
-        <CredentialDialog
-          orgUuid="org_fixture"
-          workspaceId="default"
-          vaultId="vlt_fixture"
-          onClose={() => {}}
-          onSubmit={submit}
-        />
-      </AuthHarness>
-    </QueryClientProvider>,
-  );
-  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  expect(writes).toHaveLength(0);
+  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'MY_TOKEN' } });
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  if (manual) {
+    fireEvent.click(within(dialog).getByRole('button', { name: /Use an existing token/ }));
+    fireEvent.change(within(dialog).getByLabelText('Access token'), { target: { value: 'manual-token' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add credential' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(submit.mock.calls[0][0].envOAuthCustomProvider?.scope).toBe('read');
+    expect(writes).toHaveLength(0);
+    expect(window.open).not.toHaveBeenCalled();
+  } else {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    const clientId = await within(dialog).findByLabelText('Client ID');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    expect(clientId.getAttribute('aria-invalid')).toBe('true');
+    expect(window.open).not.toHaveBeenCalled();
+    fireEvent.change(clientId, { target: { value: 'draft-client' } });
+    fireEvent.change(within(dialog).getByLabelText('Client secret'), { target: { value: 'draft-secret' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0].url).toContain('/env-oauth/vault-auth/start');
+    expect(writes[0].body.custom_provider).toEqual({
+      name: 'Draft OAuth',
+      authorize_endpoint: 'https://auth.example.test/authorize',
+      token_endpoint: 'https://api.example.test/token',
+      scope: 'read',
+      client_id: 'draft-client',
+      client_secret: 'draft-secret',
+    });
+  }
+  cleanup();
+  renderDialog();
+  dialog = screen.getByRole('dialog', { name: 'Add credential' });
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'OAuth provider' }));
-  fireEvent.click(await screen.findByRole('option', { name: 'Team OAuth (Workspace)' }));
-  fireEvent.change(within(dialog).getByPlaceholderText('Example credential'), {
-    target: { value: 'Credential draft' },
-  });
-  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'MY_TOKEN' } });
-  fireEvent.click(within(dialog).getByRole('radio', { name: 'Unrestricted' }));
-  fireEvent.click(within(dialog).getByRole('checkbox'));
-  fireEvent.click(within(dialog).getByRole('button', { name: /Client configuration/ }));
-  const clientId = await within(dialog).findByLabelText('Client ID');
-  await waitFor(() => expect((clientId as HTMLInputElement).value).toBe('original-client'));
-  const secret = within(dialog).getByLabelText('Client secret');
-  fireEvent.change(secret, { target: { value: 'draft-secret' } });
-  if (target === 'clients') {
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-    await within(dialog).findByText(
-      'The provider configuration changed. Your input is preserved; review it and try again.',
-    );
-  } else {
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
-    const editor = await screen.findByRole('form', { name: 'Edit OAuth provider' });
-    fireEvent.change(within(editor).getByLabelText('Name'), { target: { value: 'Provider draft' } });
-    fireEvent.change(within(editor).getByLabelText(/Scope/), { target: { value: 'draft-scope' } });
-    fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
-    await within(editor).findByText(
-      'The provider configuration changed. Your input is preserved; review it and try again.',
-    );
-    expect((within(editor).getByLabelText('Name') as HTMLInputElement).value).toBe('Provider draft');
-    expect((within(editor).getByLabelText(/Scope/) as HTMLInputElement).value).toBe('draft-scope');
-  }
-  await waitFor(() => expect(details).toBe(2));
-  expect(updates).toHaveLength(1);
-  expect(starts).toHaveLength(0);
-  expect((clientId as HTMLInputElement).value).toBe('original-client');
-  expect((secret as HTMLInputElement).value).toBe('draft-secret');
-  expect((within(dialog).getByPlaceholderText('Example credential') as HTMLInputElement).value).toBe(
-    'Credential draft',
-  );
-  expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe('MY_TOKEN');
-  expect(within(dialog).getByRole('radio', { name: 'Unrestricted' }).getAttribute('aria-checked')).toBe('true');
-  if (target === 'clients') {
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
-    await waitFor(() => expect(starts).toHaveLength(1));
-    expect(updates[1]).toMatchObject({
-      expected_version: 2,
-      client_id: 'original-client',
-      client_secret: 'draft-secret',
-    });
-  } else {
-    const editor = screen.getByRole('form', { name: 'Edit OAuth provider' });
-    await waitFor(() =>
-      expect(within(editor).getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false),
-    );
-    fireEvent.click(within(editor).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(screen.queryByRole('form', { name: 'Edit OAuth provider' })).toBeNull());
-    expect(updates[1]).toMatchObject({ expected_version: 2, name: 'Provider draft', scope: 'draft-scope' });
-    expect(updates[1]).not.toHaveProperty('client_secret');
-  }
-  expect(submit).not.toHaveBeenCalled();
-  queries.clear();
+  expect(screen.queryByRole('option', { name: 'Draft OAuth' })).toBeNull();
 });

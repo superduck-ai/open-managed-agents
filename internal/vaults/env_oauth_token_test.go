@@ -209,14 +209,6 @@ func TestEnvOAuthTokenResolverFailsClosed(t *testing.T) {
 		}
 	})
 
-	t.Run("provider from another workspace", func(t *testing.T) {
-		credential := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "api.example.test", "expired", "refresh", &past)
-		store := &fakeCredentialStore{get: credential}
-		resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{WorkspaceUUID: "other-workspace", TokenEndpoint: "https://example.test/token", ClientID: "client"}})
-		if _, err := resolver.resolve(t.Context(), &credential); !errors.Is(err, ErrEnvOAuthProviderUnavailable) {
-			t.Fatal("跨工作区刷新未拒绝", err)
-		}
-	})
 	t.Run("permanent endpoint failure", func(t *testing.T) {
 		credential := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "expired", "refresh", &past)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -265,7 +257,7 @@ func TestSubstituteEnvOAuthSecretsFailsClosedOnRefreshError(t *testing.T) {
 }
 
 func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
-	for _, scenario := range []string{"expired access", "refresh source", "networking", "valid access"} {
+	for _, scenario := range []string{"expired access", "refresh source", "networking", "client secret", "valid access"} {
 		t.Run(scenario, func(t *testing.T) {
 			svc := newTestSecretsService(t)
 			past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
@@ -282,7 +274,13 @@ func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario != "networking" {
+			if scenario == "client secret" {
+				latest.SecretPayload = json.RawMessage(`{"type":"env_oauth","access_token":"old","refresh_token":"refresh","client_secret":"new-client-secret"}`)
+				if err := SealCredentialSecret(t.Context(), svc, &latest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario != "networking" && scenario != "client secret" {
 				access, refresh := "replacement", "refresh"
 				if scenario == "refresh source" {
 					access, refresh = "old", "replacement-refresh"
@@ -325,6 +323,9 @@ func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
 				t.Fatalf("saved=%+v writes=%d", saved, store.updateCalls)
 			}
 			_, secret, err := resolver.openMaterial(t.Context(), store.lastUpdate)
+			if scenario == "client secret" && (secret.ClientSecret != "new-client-secret" || secret.RefreshToken != "fresh-refresh") {
+				t.Fatal("冲突重试覆盖了新密钥或丢失刷新令牌")
+			}
 			if err != nil || secret.AccessToken != token || token != "fresh" {
 				t.Fatalf("token=%q err=%v", token, err)
 			}
@@ -474,5 +475,56 @@ func TestEnvOAuthRefreshReusesConcurrentWinner(t *testing.T) {
 				t.Fatal("失败方写入或清除了胜出方材料")
 			}
 		})
+	}
+}
+
+func TestInlineEnvOAuthRefreshKeepsCredentialClient(t *testing.T) {
+	svc := newTestSecretsService(t)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Form.Get("client_id") != "inline-client" || r.Form.Get("client_secret") != "inline-secret" || r.Form.Get("grant_type") != "refresh_token" {
+			t.Error("刷新未使用凭据自己的客户端")
+		}
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "refresh_token": "next-refresh", "expires_in": 3600})
+	}))
+	defer server.Close()
+	custom := &EnvOAuthCustomProvider{EnvOAuthProviderDefinition: EnvOAuthProviderDefinition{Name: "Example", AuthorizeEndpoint: server.URL + "/authorize", TokenEndpoint: server.URL, ClientID: "inline-client"}, ClientSecret: "inline-secret"}
+	public, secret, err := BuildEnvOAuthCredentialPayloads(EnvOAuthCredentialBuildInput{Provider: EnvOAuthProviderInline, CustomProvider: custom, SecretName: "TOKEN", AccessToken: "expired", RefreshToken: "refresh", NetworkingType: "unrestricted", ExpiresInSeconds: 1, Now: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(public), "inline-secret") {
+		t.Fatal("公开凭据泄漏客户端密钥")
+	}
+	credential := db.VaultCredential{ExternalID: "vcrd_inline", OrganizationUUID: "org", WorkspaceUUID: "workspace", VaultExternalID: "vault", AuthType: "env_oauth", Auth: public, SecretPayload: secret}
+	if err := SealCredentialSecret(t.Context(), svc, &credential); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		store := &fakeCredentialStore{get: credential}
+		resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withHTTPClient(server.Client())
+		if token, err := resolver.resolve(t.Context(), &credential); err != nil || token != "fresh-access" {
+			t.Fatalf("刷新失败: %v", err)
+		}
+		custom, err := OpenEnvOAuthCustomProvider(t.Context(), svc, store.lastUpdate)
+		if err != nil || custom.ClientSecret != "inline-secret" {
+			t.Fatalf("刷新丢失客户端配置: %v", err)
+		}
+		auth, err := decodeEnvOAuthCredentialAuth(credential.Auth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth.ExpiresAt = new(time.Now().Add(-time.Hour).Format(time.RFC3339))
+		credential.Auth, err = json.Marshal(auth)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("刷新次数=%d", calls)
 	}
 }

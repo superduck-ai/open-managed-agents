@@ -1,55 +1,49 @@
 import { useId, useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
-import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
+import type { CustomOAuthProvider } from '../types';
 import { useI18n } from '../../../shared/i18n';
 import { CommandItem } from '../../../shared/ui/command';
 import { Label } from '../../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import type { EntityOption } from '../types';
-import { WorkspaceOAuthProviderEditor } from './workspace-oauth-provider-form';
+import { CustomOAuthProviderForm } from './custom-oauth-provider-form';
 import { Button } from '../../../shared/ui/button';
 
-export function WorkspaceOAuthProviderPicker({
+export function CustomOAuthProviderPicker({
   label,
   value,
   placeholder,
   options,
-  orgUuid,
-  workspaceId,
   onChange,
   onSaved,
-  editableProviderId,
+  customProvider,
   canCreate = true,
 }: {
   label: string;
   value: string;
   placeholder: string;
   options: EntityOption[];
-  orgUuid?: string;
-  workspaceId?: string;
   onChange: (value: string) => void;
-  onSaved: (provider: OAuthProviderRecord) => void;
-  editableProviderId?: string;
+  onSaved: (provider: CustomOAuthProvider, editing: boolean) => void;
+  customProvider?: CustomOAuthProvider;
   canCreate?: boolean;
 }) {
   const { msg } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'create' | 'edit' | null>(null);
-  const [pending, setPending] = useState(false);
   const selected = options.find((option) => option.id === value);
   const customLabel = msg('managedAgents.credentialVaults.credentialDialog.customProvider', 'Custom OAuth provider');
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
         <Label htmlFor={id}>{label}</Label>
-        {editableProviderId && orgUuid && workspaceId ? (
+        {customProvider ? (
           <Button
             type="button"
             variant="link"
             size="sm"
             className="h-auto p-0"
-            disabled={pending}
             onClick={() => {
               setMode('edit');
               setOpen(true);
@@ -70,11 +64,7 @@ export function WorkspaceOAuthProviderPicker({
           if (next !== null) onChange(next);
         }}
         open={open}
-        onOpenChange={(next, details) => {
-          if (!next && pending) {
-            details?.cancel();
-            return;
-          }
+        onOpenChange={(next) => {
           setOpen(next);
           if (!next) setMode(null);
         }}
@@ -90,16 +80,13 @@ export function WorkspaceOAuthProviderPicker({
         <SelectContent
           className="overflow-y-auto"
           customContent={
-            mode && orgUuid && workspaceId ? (
-              <WorkspaceOAuthProviderEditor
-                key={mode === 'edit' ? editableProviderId : 'create'}
-                providerId={mode === 'edit' ? editableProviderId : undefined}
-                orgUuid={orgUuid}
-                workspaceId={workspaceId}
-                onPendingChange={setPending}
+            mode ? (
+              <CustomOAuthProviderForm
+                key={mode}
+                provider={mode === 'edit' ? customProvider : undefined}
                 onClose={() => setMode(null)}
                 onSaved={(provider) => {
-                  onSaved(provider);
+                  onSaved(provider, mode === 'edit');
                   setOpen(false);
                   setMode(null);
                 }}
@@ -116,7 +103,7 @@ export function WorkspaceOAuthProviderPicker({
               <span className="truncate">{option.label}</span>
             </SelectItem>
           ))}
-          {canCreate && orgUuid && workspaceId ? (
+          {canCreate ? (
             <CommandItem value="__create_provider__" keywords={[customLabel]} onSelect={() => setMode('create')}>
               <Plus className="size-4" aria-hidden />
               {customLabel}

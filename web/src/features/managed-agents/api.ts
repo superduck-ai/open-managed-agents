@@ -1,4 +1,3 @@
-import type { OAuthProviderInput, OAuthProviderRecord } from '../../shared/api/platform-admin';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import {
   consoleApi,
@@ -1632,6 +1631,7 @@ export function startMCPVaultAuth(orgUuid: string, input: StartMCPVaultAuthInput
 }
 
 export type StartEnvOAuthVaultAuthInput = {
+  custom_provider?: import('./types').CustomOAuthProvider;
   credential_id?: string;
   provider_id: string;
   vault_id: string;
@@ -1645,37 +1645,6 @@ export type StartEnvOAuthVaultAuthInput = {
 export function listEnvOAuthProviders(orgUuid: string, workspaceId = 'default') {
   return consoleApi<EnvOAuthProviderApiResponse[]>(
     `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers?workspace_id=${encodeURIComponent(workspaceId)}`,
-  );
-}
-
-export function createWorkspaceOAuthProvider(
-  orgUuid: string,
-  workspaceId: string,
-  input: OAuthProviderInput,
-  csrfToken?: string,
-) {
-  return consoleApi<OAuthProviderRecord>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers?workspace_id=${encodeURIComponent(workspaceId)}`,
-    { method: 'POST', body: JSON.stringify(input), csrfToken },
-  );
-}
-
-export function getWorkspaceOAuthProvider(orgUuid: string, workspaceId: string, providerId: string) {
-  return consoleApi<OAuthProviderRecord>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers/${encodeURIComponent(providerId)}?workspace_id=${encodeURIComponent(workspaceId)}`,
-  );
-}
-
-export function updateWorkspaceOAuthProvider(
-  orgUuid: string,
-  workspaceId: string,
-  providerId: string,
-  input: Partial<OAuthProviderInput> & { expected_version: number },
-  csrfToken?: string,
-) {
-  return consoleApi<OAuthProviderRecord>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers/${encodeURIComponent(providerId)}?workspace_id=${encodeURIComponent(workspaceId)}`,
-    { method: 'PATCH', body: JSON.stringify(input), csrfToken },
   );
 }
 

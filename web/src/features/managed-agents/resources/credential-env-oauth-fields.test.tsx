@@ -211,15 +211,21 @@ test.each([false, true])('停用服务方仅对编辑已有凭证可见：%s', (
   expect(screen.queryAllByRole('option').some((option) => option.textContent?.includes('Example'))).toBe(editing);
 });
 
-test('同名服务方显示工作区范围并保留各自身份', () => {
+test('重新选择自定义草稿时恢复端点主机', () => {
   const onChange = mock(() => {});
   render(
     <EnvOAuthCredentialFields
-      values={values}
-      providers={[
-        { ...providers[0], name: 'Example', workspace_scoped: false },
-        { ...providers[1], name: 'Example', workspace_scoped: true },
-      ]}
+      values={{
+        ...values,
+        envOAuthProviderId: 'builtin:feishu',
+        envOAuthCustomProvider: {
+          name: 'Draft',
+          authorize_endpoint: 'https://auth.example.test/authorize',
+          token_endpoint: 'https://api.example.test/token',
+          scope: '',
+        },
+      }}
+      providers={providers}
       providersLoading={false}
       providersError={null}
       onRetryProviders={() => {}}
@@ -227,10 +233,9 @@ test('同名服务方显示工作区范围并保留各自身份', () => {
       onChange={onChange}
     />,
   );
-  expect(screen.getByRole('combobox', { name: 'OAuth provider' }).textContent).toContain('Example (Workspace)');
   fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
-  expect(screen.getByRole('option', { name: 'Example' })).toBeTruthy();
-  expect(screen.getByRole('option', { name: /Example \(Workspace\)/ })).toBeTruthy();
-  fireEvent.click(screen.getByRole('option', { name: 'Example' }));
-  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ envOAuthProviderId: 'builtin:feishu' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Draft' }));
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({ allowedHostsText: 'auth.example.test\napi.example.test' }),
+  );
 });

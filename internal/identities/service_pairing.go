@@ -72,27 +72,22 @@ func (s *Service) CompletePairing(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) completeByCode(ctx context.Context, principal auth.Principal, identity db.IdentityRecord, input PairingWrite) (map[string]any, error) {
-	rows, err := s.store.ListScopePairings(ctx, db.ListScopePairingParams{WorkspaceUUID: principal.WorkspaceUUID, Status: "pending", Limit: pageMax})
+	now := time.Now().UTC()
+	row, err := s.store.FindPendingScopePairingByCode(ctx, principal.WorkspaceUUID, HashPairingCode(input.Code), now)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, conflict("配对码已过期或不能再次激活", err)
+	}
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	now := time.Now().UTC()
-	hash := HashPairingCode(input.Code)
-	for _, row := range rows {
-		activateErr := s.store.ActivateScopePairingByCode(ctx, db.ActivateScopePairingParams{
-			WorkspaceUUID: principal.WorkspaceUUID, ExternalID: row.ExternalID, IdentityUUID: identity.UUID,
-			AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion, CodeHash: hash, Now: now,
-		})
-		if errors.Is(activateErr, db.ErrInvalidState) {
-			continue
-		}
-		if activateErr != nil {
-			return nil, mapStore(activateErr, "配对不存在")
-		}
-		s.linkDirectActor(ctx, principal, row, identity.UUID)
-		return s.GetPairing(ctx, principal, row.ExternalID)
+	if err := s.store.ActivateScopePairingByCode(ctx, db.ActivateScopePairingParams{
+		WorkspaceUUID: principal.WorkspaceUUID, ExternalID: row.ExternalID, IdentityUUID: identity.UUID,
+		AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion, CodeHash: HashPairingCode(input.Code), Now: now,
+	}); err != nil {
+		return nil, mapStore(err, "配对不存在")
 	}
-	return nil, conflict("配对码已过期或不能再次激活", nil)
+	s.linkDirectActor(ctx, principal, row, identity.UUID)
+	return s.GetPairing(ctx, principal, row.ExternalID)
 }
 
 func (s *Service) completeByID(ctx context.Context, principal auth.Principal, identity db.IdentityRecord, input PairingWrite) (map[string]any, error) {

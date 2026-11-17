@@ -184,6 +184,19 @@ func (d *DB) FindOpenScopePairing(ctx context.Context, channelUUID, scopeKind, p
 	return row, nil
 }
 
+func (d *DB) FindPendingScopePairingByCode(ctx context.Context, workspaceUUID, codeHash string, now time.Time) (ScopePairingRecord, error) {
+	row, found, err := NewIdentityMapper(d.mapperDB).FindPendingScopePairingByCode(ctx, FindPendingScopePairingParams{
+		WorkspaceUUID: workspaceUUID, CodeHash: codeHash, Now: now,
+	})
+	if err != nil {
+		return ScopePairingRecord{}, err
+	}
+	if !found {
+		return ScopePairingRecord{}, ErrNotFound
+	}
+	return row, nil
+}
+
 func (d *DB) ListScopePairings(ctx context.Context, params ListScopePairingParams) ([]ScopePairingRecord, error) {
 	return NewIdentityMapper(d.mapperDB).ListScopePairings(ctx, params)
 }

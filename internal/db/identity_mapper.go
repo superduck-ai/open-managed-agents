@@ -180,6 +180,12 @@ type RebindScopePairingParams struct {
 	ExpectedRevision int64
 }
 
+type FindPendingScopePairingParams struct {
+	WorkspaceUUID string
+	CodeHash      string
+	Now           time.Time
+}
+
 type ListScopePairingParams struct {
 	WorkspaceUUID     string
 	ChannelExternalID string
@@ -279,6 +285,7 @@ type IdentityMapper interface {
 	InsertScopePairing(ctx context.Context, params InsertScopePairingParams) (ScopePairingRecord, error)
 	FindScopePairing(ctx context.Context, workspaceUUID, externalID string) (ScopePairingRecord, bool, error)
 	FindOpenScopePairing(ctx context.Context, channelUUID, scopeKind, platformAccount, remoteID string) (ScopePairingRecord, bool, error)
+	FindPendingScopePairingByCode(ctx context.Context, params FindPendingScopePairingParams) (ScopePairingRecord, bool, error)
 	ListScopePairings(ctx context.Context, params ListScopePairingParams) ([]ScopePairingRecord, error)
 	ActivateScopePairingByCode(ctx context.Context, params ActivateScopePairingParams) (int64, error)
 	ActivateScopePairingByID(ctx context.Context, params ActivateScopePairingParams) (int64, error)

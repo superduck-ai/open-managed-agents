@@ -45,6 +45,7 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		logger:     logger,
 	}
 	supervisor.personalVault = result.ensurePersonalVault
+	supervisor.personalVaultLookup = result.lookupPersonalVault
 	return result
 }
 

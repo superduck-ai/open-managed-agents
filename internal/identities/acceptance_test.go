@@ -105,14 +105,18 @@ func contains(values []string, want string) bool {
 }
 
 type acceptanceStore struct {
-	identities       map[string]db.IdentityRecord
-	configs          map[string]db.IdentityConfigRecord
-	pairings         map[string]db.ScopePairingRecord
-	vaults           map[string]db.Vault
-	running          []string
-	pairingCreates   int
-	channelMutations int
-	archiveErr       error
+	identities        map[string]db.IdentityRecord
+	configs           map[string]db.IdentityConfigRecord
+	pairings          map[string]db.ScopePairingRecord
+	vaults            map[string]db.Vault
+	running           []string
+	pairingCreates    int
+	channelMutations  int
+	archiveErr        error
+	pendingCode       db.ScopePairingRecord
+	pendingHash       string
+	activated         *db.ScopePairingRecord
+	rejectPairingList bool
 }
 
 func newAcceptanceStore() *acceptanceStore {
@@ -300,13 +304,32 @@ func (s *acceptanceStore) SetChannelConnectionStatus(context.Context, string, st
 	s.channelMutations++
 	return nil
 }
-func (s *acceptanceStore) FindScopePairing(context.Context, string, string) (db.ScopePairingRecord, error) {
+func (s *acceptanceStore) FindScopePairing(_ context.Context, _, externalID string) (db.ScopePairingRecord, error) {
+	if s.activated != nil && s.activated.ExternalID == externalID {
+		return *s.activated, nil
+	}
 	return db.ScopePairingRecord{}, db.ErrNotFound
 }
+
+func (s *acceptanceStore) FindPendingScopePairingByCode(_ context.Context, _, codeHash string, _ time.Time) (db.ScopePairingRecord, error) {
+	if s.pendingHash == "" || s.pendingHash != codeHash {
+		return db.ScopePairingRecord{}, db.ErrNotFound
+	}
+	return s.pendingCode, nil
+}
 func (s *acceptanceStore) ListScopePairings(context.Context, db.ListScopePairingParams) ([]db.ScopePairingRecord, error) {
+	if s.rejectPairingList {
+		return nil, db.ErrInvalidState
+	}
 	return nil, nil
 }
-func (s *acceptanceStore) ActivateScopePairingByCode(context.Context, db.ActivateScopePairingParams) error {
+func (s *acceptanceStore) ActivateScopePairingByCode(_ context.Context, params db.ActivateScopePairingParams) error {
+	row := s.pendingCode
+	row.Status = "active"
+	row.ExternalID = params.ExternalID
+	row.IdentityUUID = &params.IdentityUUID
+	row.AgentExternalID = params.AgentExternalID
+	s.activated = &row
 	return nil
 }
 func (s *acceptanceStore) ActivateScopePairingByID(context.Context, db.ActivateScopePairingParams) error {
@@ -344,6 +367,21 @@ func (s *acceptanceStore) FindIdentityCleanupRun(context.Context, string, string
 }
 func (s *acceptanceStore) GetSession(context.Context, string, string) (db.Session, bool, error) {
 	return db.Session{}, false, nil
+}
+
+func TestCompleteByCodeLooksUpHash(t *testing.T) {
+	store := newAcceptanceStore()
+	code := "ABCDEFGH"
+	store.pendingHash = HashPairingCode(code)
+	store.pendingCode = db.ScopePairingRecord{ExternalID: "chsp_late", Status: "pending", ScopeKind: "room", RemoteID: "oc_late"}
+	store.rejectPairingList = true
+	view, err := NewService(store, nil).completeByCode(context.Background(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}, store.identities["id_friday"], PairingWrite{Code: code, AgentID: "agent_friday"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view["id"] != "chsp_late" || view["status"] != "active" {
+		t.Fatalf("pairing view: %#v", view)
+	}
 }
 
 var _ Store = (*acceptanceStore)(nil)

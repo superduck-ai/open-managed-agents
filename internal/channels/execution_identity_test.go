@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 )
 
@@ -34,6 +35,9 @@ func TestIdentityHistoryRejectsHeldAndStaleMount(t *testing.T) {
 		PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}, ScopeKey: "chat:user",
 	}
 	worker.supervisor.ingress = fixedIngress{decision: decision}
+	worker.supervisor.agentEnvironment = func(context.Context, string, string, string) (string, error) {
+		return "env_1", nil
+	}
 	current := omaSession{
 		Agent: omaSessionAgent{ID: "agent_a"}, EnvironmentID: "env_1", VaultIDs: []string{"vlt_new"},
 		Metadata: map[string]string{"identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
@@ -48,6 +52,42 @@ func TestIdentityHistoryRejectsHeldAndStaleMount(t *testing.T) {
 	worker.supervisor.ingress = nil
 	if !worker.identitySessionOK(context.Background(), msg, "chat:user", current) {
 		t.Fatal("legacy session was rejected")
+	}
+}
+
+func TestResumeUsesAgentEnvironmentAndPreviewSkipsVaultCreate(t *testing.T) {
+	decision := identities.Decision{
+		Mode: "execute", AgentExternalID: "agent_a", IdentityExternalID: "idn_a", BindingRevision: 2, ConfigRevision: 3,
+		PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}, ScopeKey: "chat:user",
+	}
+	created := false
+	worker := &channelWorker{supervisor: &runtimeSupervisor{
+		ingress: fixedIngress{decision: decision},
+		agentEnvironment: func(context.Context, string, string, string) (string, error) {
+			return "env_current", nil
+		},
+		personalVault: func(context.Context, db.ChannelRecord, string) (string, error) {
+			created = true
+			return "vlt_created", nil
+		},
+		personalVaultLookup: func(context.Context, db.ChannelRecord, string) (string, bool, error) {
+			return "vlt_existing", false, nil
+		},
+	}}
+	msg := &channelMessage{ChatType: "p2p", ChatID: "user", UserID: "user"}
+	session := omaSession{
+		Agent: omaSessionAgent{ID: "agent_a"}, EnvironmentID: "env_old", VaultIDs: []string{"vlt_new"},
+		Metadata: map[string]string{"identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
+	}
+	if worker.identitySessionOK(context.Background(), msg, "chat:user", session) {
+		t.Fatal("stale environment stayed recoverable")
+	}
+	if created {
+		t.Fatal("preview created a personal vault")
+	}
+	session.EnvironmentID = "env_current"
+	if !worker.identitySessionOK(context.Background(), msg, "chat:user", session) {
+		t.Fatal("current environment was rejected")
 	}
 }
 

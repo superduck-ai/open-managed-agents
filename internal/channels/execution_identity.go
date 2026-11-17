@@ -52,13 +52,17 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 	}
 	personalID := ""
 	personalActive := false
-	if msg.ChatType == "p2p" && w.supervisor.personalVault != nil {
-		id, err := w.supervisor.personalVault(ctx, w.record, msg.UserID)
+	if msg.ChatType == "p2p" {
+		var err error
+		if create && w.supervisor.personalVault != nil {
+			personalID, err = w.supervisor.personalVault(ctx, w.record, msg.UserID)
+			personalActive = err == nil && personalID != ""
+		} else if w.supervisor.personalVaultLookup != nil {
+			personalID, personalActive, err = w.supervisor.personalVaultLookup(ctx, w.record, msg.UserID)
+		}
 		if err != nil {
 			return identities.Decision{}, err
 		}
-		personalID = id
-		personalActive = true
 	}
 	ingress := identities.Ingress{
 		OrganizationUUID: w.record.OrganizationUUID, WorkspaceUUID: w.record.WorkspaceUUID,
@@ -169,7 +173,14 @@ func (w *channelWorker) identitySessionOK(ctx context.Context, msg *channelMessa
 	if decision.Mode != "execute" {
 		return session.Metadata["identity_id"] == ""
 	}
-	return w.decisionCompatible(session, decision, session.EnvironmentID, scopeKey)
+	if w.supervisor.agentEnvironment == nil {
+		return false
+	}
+	environmentID, err := w.supervisor.agentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, decision.AgentExternalID)
+	if err != nil {
+		return false
+	}
+	return w.decisionCompatible(session, decision, environmentID, scopeKey)
 }
 
 func (s *localService) attachExecution(ctx context.Context, view map[string]any, record db.ChannelRecord) error {

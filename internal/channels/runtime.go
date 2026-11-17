@@ -54,24 +54,26 @@ type runtimeStore interface {
 }
 
 type runtimeSupervisor struct {
-	personalVault   func(context.Context, db.ChannelRecord, string) (string, error)
-	oauthOrigin     string
-	fileMaxBytes    int64
-	putAttachment   SessionAttachmentWriter
-	subscribeEvents SessionEventSubscriber
-	adapters        map[string]channelAdapterFactory
-	store           runtimeStore
-	cipher          *secrets.Service
-	oma             *omaClient
-	logger          *slog.Logger
-	mu              sync.Mutex
-	workers         map[string]*channelWorker
-	shutdown        chan struct{}
-	ingress         identityIngress
+	personalVault       func(context.Context, db.ChannelRecord, string) (string, error)
+	personalVaultLookup func(context.Context, db.ChannelRecord, string) (string, bool, error)
+	agentEnvironment    func(context.Context, string, string, string) (string, error)
+	oauthOrigin         string
+	fileMaxBytes        int64
+	putAttachment       SessionAttachmentWriter
+	subscribeEvents     SessionEventSubscriber
+	adapters            map[string]channelAdapterFactory
+	store               runtimeStore
+	cipher              *secrets.Service
+	oma                 *omaClient
+	logger              *slog.Logger
+	mu                  sync.Mutex
+	workers             map[string]*channelWorker
+	shutdown            chan struct{}
+	ingress             identityIngress
 }
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {
-	return &runtimeSupervisor{
+	supervisor := &runtimeSupervisor{
 		adapters: make(map[string]channelAdapterFactory),
 		store:    store,
 		cipher:   cipher,
@@ -79,7 +81,11 @@ func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaC
 		logger:   logging.LoggerOrDefault(logger),
 		workers:  make(map[string]*channelWorker),
 		shutdown: make(chan struct{}),
+		agentEnvironment: func(ctx context.Context, organizationUUID, workspaceUUID, agentID string) (string, error) {
+			return store.GetChannelAgentEnvironment(ctx, organizationUUID, workspaceUUID, agentID)
+		},
 	}
+	return supervisor
 }
 
 func (s *runtimeSupervisor) restore(ctx context.Context) {

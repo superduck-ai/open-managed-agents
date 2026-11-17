@@ -28,6 +28,7 @@ type Store interface {
 	CreateScopePairing(context.Context, db.InsertScopePairingParams) (db.ScopePairingRecord, error)
 	FindScopePairing(context.Context, string, string) (db.ScopePairingRecord, error)
 	FindOpenScopePairing(context.Context, string, string, string, string) (db.ScopePairingRecord, error)
+	FindPendingScopePairingByCode(context.Context, string, string, time.Time) (db.ScopePairingRecord, error)
 	ListScopePairings(context.Context, db.ListScopePairingParams) ([]db.ScopePairingRecord, error)
 	ActivateScopePairingByCode(context.Context, db.ActivateScopePairingParams) error
 	ActivateScopePairingByID(context.Context, db.ActivateScopePairingParams) error

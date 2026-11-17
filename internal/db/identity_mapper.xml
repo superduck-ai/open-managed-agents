@@ -176,6 +176,14 @@
         AND status IN ('pending', 'active')
     </select>
 
+    <select id="FindPendingScopePairingByCode" result="optional" resultType="ScopePairingRecord">
+        SELECT <include refid="pairingColumns"/>
+        FROM channel_scope_pairings
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND status = 'pending'
+        AND pairing_code_hash = #{params.CodeHash,sensitive=true}
+        AND pairing_code_expires_at &gt; #{params.Now}
+    </select>
+
     <select id="ListScopePairings" resultType="ScopePairingRecord">
         SELECT <include refid="pairingColumns"/>
         FROM channel_scope_pairings

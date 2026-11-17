@@ -16,6 +16,24 @@ func personalVaultIdentity(record db.ChannelRecord, actorID string) db.ChannelUs
 	return db.ChannelUserVaultIdentity{OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID, ChannelType: record.ChannelType, AppID: record.AppID, ActorID: actorID}
 }
 
+func (s *Service) lookupPersonalVault(ctx context.Context, record db.ChannelRecord, actorID string) (string, bool, error) {
+	id, err := s.store.GetChannelUserVaultID(ctx, personalVaultIdentity(record, actorID))
+	if errors.Is(err, db.ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	current, err := s.store.GetVault(ctx, record.WorkspaceUUID, id)
+	if errors.Is(err, db.ErrNotFound) || current.ArchivedAt != nil || current.DeletedAt != nil {
+		return id, false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return current.ExternalID, true, nil
+}
+
 func (s *Service) ensurePersonalVault(ctx context.Context, record db.ChannelRecord, actorID string) (string, error) {
 	identity := personalVaultIdentity(record, actorID)
 	id, err := s.store.GetChannelUserVaultID(ctx, identity)

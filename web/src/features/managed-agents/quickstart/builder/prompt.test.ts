@@ -9,6 +9,12 @@ for (const locale of ['en', 'zh-CN'] as const) {
     const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, locale, undefined, 'model'));
     const system = builderSystem(state, locale, ['model'], []);
     const text = system.map((block) => block.text).join('\n');
+    expect(text).not.toContain('https://platform.claude.com');
+    expect(text).not.toContain('console.anthropic.com');
+    expect(text).toContain('/dashboard');
+    expect(text).toContain(
+      `https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/multiagent-orchestration`,
+    );
     expect(text).not.toContain('The user has already CREATED');
     expect(text).not.toContain('already live in the editor');
     expect(text).not.toContain('用户已经创建了 agent');

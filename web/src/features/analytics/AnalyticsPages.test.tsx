@@ -56,16 +56,16 @@ describe('Analytics pages', () => {
     );
   }
 
-  test('keeps caching documentation available without claiming caching is unused', () => {
+  test.each(['en', 'zh-CN'] as const)('keeps OMA caching documentation available in %s', (locale) => {
     resetTestDom('https://oma.duck.ai/usage/cache');
     render(
-      <I18nProvider initialLocale="en">
+      <I18nProvider initialLocale={locale}>
         <CachingPage />
       </I18nProvider>,
     );
 
-    expect(screen.getByRole('link', { name: /Learn more/ }).getAttribute('href')).toBe(
-      'https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching',
+    expect(screen.getByRole('link').getAttribute('href')).toBe(
+      `https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/api/messages/create-a-message`,
     );
     expect(screen.queryByText("You're not using prompt caching")).toBeNull();
   });

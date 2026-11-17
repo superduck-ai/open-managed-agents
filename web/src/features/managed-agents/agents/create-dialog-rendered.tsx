@@ -1,3 +1,4 @@
+import { documentationHref } from '../../../shared/documentation';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -49,7 +50,7 @@ export function AgentConfigRenderedEditor({
   compact?: boolean;
   onChange: (next: CreateAgentInput) => void;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
   const skillsQuery = useQuery({
@@ -174,7 +175,7 @@ export function AgentConfigRenderedEditor({
           'managedAgents.agents.createDialog.multiagentDescription',
           'Subagents this agent can hand work to.',
         )}
-        learnMore="https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration"
+        learnMore={documentationHref('multiagent-orchestration', locale)}
       >
         <SubagentsEditor draft={draft} workspaceId={workspaceId} orgUuid={orgUuid} onChange={onChange} />
       </CreateDialogSection>
@@ -190,7 +191,7 @@ export function AgentConfigRenderedEditor({
           'managedAgents.agents.createDialog.skillsDescription',
           'Packaged instructions and scripts this agent loads when it needs them.',
         )}
-        learnMore="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview"
+        learnMore={documentationHref('skills', locale)}
       >
         <SelectedPills
           items={selectedSkills.map((reference) => {
@@ -243,7 +244,7 @@ export function AgentConfigRenderedEditor({
           'managedAgents.agents.createDialog.toolsDescription',
           'Everything this agent can call: built-in tools, MCP servers, and existing custom tools.',
         )}
-        learnMore="https://platform.claude.com/docs/en/managed-agents/tools"
+        learnMore={documentationHref('tools', locale)}
       >
         <CreateDialogToolsEditor
           draft={draft}

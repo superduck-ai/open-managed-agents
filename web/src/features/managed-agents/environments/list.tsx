@@ -1,3 +1,4 @@
+import { documentationHref } from '../../../shared/documentation';
 import { Archive, ArrowUpRight, BookOpen, Plus, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
@@ -24,7 +25,6 @@ import { environmentErrorMessage } from '../resources/environment-model';
 import { EnvironmentActions, type EnvironmentActionRequest } from './actions';
 import { EnvironmentHosting, EnvironmentScope } from './common';
 import { useEnvironments } from './data';
-import { environmentDocs } from './fields';
 
 const EMPTY_ENVIRONMENTS: EnvironmentApiResponse[] = [];
 
@@ -41,7 +41,7 @@ export function EnvironmentList({
   onAction: (request: EnvironmentActionRequest) => void;
   listHref: string;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -79,7 +79,7 @@ export function EnvironmentList({
             <ButtonLink
               variant="outline"
               size="icon-lg"
-              href={environmentDocs}
+              href={documentationHref('environments', locale)}
               target="_blank"
               rel="noreferrer"
               aria-label={msg('common.documentation', 'Documentation')}

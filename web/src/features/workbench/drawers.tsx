@@ -1,3 +1,4 @@
+import { documentationHref } from '../../shared/documentation';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { useI18n } from '../../shared/i18n';
 import {
@@ -95,7 +96,7 @@ export function ModelDrawer({
   onRun: () => void;
   isRunning: boolean;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const effortOptions = thinkingEffortOptions.map((option) => ({
     ...option,
     label: msg(`workbench.effort.${option.value}`, option.label),
@@ -408,7 +409,7 @@ export function ModelDrawer({
 
       <a
         className="workbench-model-api-link"
-        href="https://docs.claude.com/en/api/messages"
+        href={documentationHref('api/messages/create-a-message', locale)}
         target="_blank"
         rel="noreferrer"
       >
@@ -600,7 +601,7 @@ export function ToolsDrawer({
   isRunning: boolean;
   canRun: boolean;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const restrictionOptions = webSearchRestrictionOptions.map((option) => ({
     ...option,
     label: msg(`workbench.searchRestriction.${option.value}`, option.label),
@@ -713,11 +714,7 @@ export function ToolsDrawer({
         <div className="workbench-tools-empty">
           <h3>{msg('workbench.toolsEmpty', 'No tools defined')}</h3>
           <p>
-            <a
-              href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a href={documentationHref('api/messages/create-a-message', locale)} target="_blank" rel="noreferrer">
               {msg('workbench.learnMore', 'Learn more')}
             </a>
           </p>
@@ -1053,7 +1050,7 @@ export function ExamplesDrawer({
   isRunning: boolean;
   canRun: boolean;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const canAdd = Boolean(variables.every((name) => values[name]?.trim()) && idealOutput.trim());
   const isEditing = Boolean(editingExampleId);
 
@@ -1063,11 +1060,7 @@ export function ExamplesDrawer({
         <div className="workbench-examples-empty">
           <h3>{msg('workbench.examplesEmpty', 'No examples defined')}</h3>
           <p>
-            <a
-              href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a href={documentationHref('api/messages/create-a-message', locale)} target="_blank" rel="noreferrer">
               {msg('workbench.learnMore', 'Learn more')}
             </a>
           </p>

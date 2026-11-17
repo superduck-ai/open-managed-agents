@@ -1,3 +1,4 @@
+import { anthropicBaseURL } from '../../shared/api/anthropic';
 import type { I18nContextValue } from '../../shared/i18n/context';
 import { AuthAccount } from '../../shared/auth/api';
 import { TextStreamSmoother } from '../../shared/api/textSmoother';
@@ -22,8 +23,7 @@ export type WorkbenchMode = 'prompt' | 'evaluate';
 
 export type GeneratePromptStep = 'generate' | 'output';
 
-export type CodeLanguage =
-  'python' | 'typescript' | 'curl' | 'bedrock-python' | 'bedrock-typescript' | 'vertex-python' | 'vertex-typescript';
+export type CodeLanguage = 'python' | 'typescript' | 'curl';
 
 export type ToolForm = 'custom' | 'web_search' | null;
 
@@ -41,10 +41,6 @@ export const codeLanguageOptions: Array<{ value: CodeLanguage; label: string }> 
   { value: 'python', label: 'Python' },
   { value: 'typescript', label: 'TypeScript' },
   { value: 'curl', label: 'cURL' },
-  { value: 'bedrock-python', label: 'AWS Bedrock Python' },
-  { value: 'bedrock-typescript', label: 'AWS Bedrock TypeScript' },
-  { value: 'vertex-python', label: 'Vertex AI Python' },
-  { value: 'vertex-typescript', label: 'Vertex AI TypeScript' },
 ];
 
 export type WorkbenchExample = {
@@ -1613,7 +1609,7 @@ export function escapeRegExp(value: string) {
 
 export function codeForRevision(language: CodeLanguage, revision: WorkbenchRevision) {
   const request = anthropicCodeRequest(revision);
-  const providerRequest = { ...request, model: '' };
+  const baseURL = anthropicBaseURL();
   const variableNames = extractVariables(revision);
   const variableNote = variableNames.length
     ? `\n# Replace placeholders like ${variableNames.map((name) => `{{${name}}}`).join(', ')} with real values,\n# because the SDK does not support variables.\n`
@@ -1625,64 +1621,28 @@ export function codeForRevision(language: CodeLanguage, revision: WorkbenchRevis
     case 'typescript':
       return `import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({
+  baseURL: ${JSON.stringify(baseURL)},
+  apiKey: process.env.OMA_API_KEY,
+});
 ${tsVariableNote}
 const message = await anthropic.messages.create(${JSON.stringify(request, null, 2)});
 
 console.log(message.content);`;
     case 'curl':
-      return `curl https://api.anthropic.com/v1/messages \\
-  -H "x-api-key: $ANTHROPIC_API_KEY" \\
+      return `curl "${baseURL}/v1/messages" \\
+  -H "x-api-key: $OMA_API_KEY" \\
   -H "anthropic-version: 2023-06-01" \\
   -H "content-type: application/json" \\
-  -d '${JSON.stringify(request, null, 2)}'`;
-    case 'bedrock-python':
-      return `from anthropic import AnthropicBedrock
-
-# See https://docs.claude.com/en/api/claude-on-amazon-bedrock
-# for authentication options
-client = AnthropicBedrock()
-${variableNote}
-message = client.messages.create(${pythonKwargs(providerRequest)}
-
-print(message.content)`;
-    case 'bedrock-typescript':
-      return `import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
-
-// See https://docs.claude.com/en/api/claude-on-amazon-bedrock
-// for authentication options
-const client = new AnthropicBedrock();
-${tsVariableNote}
-const message = await client.messages.create(${JSON.stringify(providerRequest, null, 2)});
-
-console.log(message.content);`;
-    case 'vertex-python':
-      return `from anthropic import AnthropicVertex
-
-# See https://docs.claude.com/en/api/claude-on-vertex-ai
-# for authentication options
-client = AnthropicVertex()
-${variableNote}
-message = client.messages.create(${pythonKwargs(providerRequest)}
-
-print(message.content)`;
-    case 'vertex-typescript':
-      return `import AnthropicVertex from "@anthropic-ai/vertex-sdk";
-
-// See https://docs.claude.com/en/api/claude-on-vertex-ai
-// for authentication options
-const client = new AnthropicVertex();
-${tsVariableNote}
-const message = await client.messages.create(${JSON.stringify(providerRequest, null, 2)});
-
-console.log(message.content);`;
+  -d '${JSON.stringify(request, null, 2).replaceAll("'", "'\"'\"'")}'`;
     case 'python':
     default:
-      return `import anthropic
+      return `import os
+import anthropic
 
 client = anthropic.Anthropic(
-    # defaults to os.environ.get("ANTHROPIC_API_KEY")
-    api_key="my_api_key",
+    base_url=${JSON.stringify(baseURL)},
+    api_key=os.environ["OMA_API_KEY"],
 )
 ${variableNote}
 message = client.messages.create(${pythonKwargs(request)}

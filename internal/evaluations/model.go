@@ -15,6 +15,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
+const rubricSystemPrompt = "Reply with Markdown scoring rules and no other text. Do not wrap the rubric in a JSON object."
+
 var (
 	errModelMissing = errors.New("model missing")
 	errModelFailed  = errors.New("model failed")

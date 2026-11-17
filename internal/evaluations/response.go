@@ -99,3 +99,41 @@ func caseJSON(item db.EvaluationCase) caseResponse {
 		Inputs: item.Inputs, CreatedAt: formatTime(item.CreatedAt), UpdatedAt: formatTime(item.UpdatedAt),
 	}
 }
+
+type rubricResponse struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	Desc      string `json:"desc"`
+	VersionID string `json:"version_id"`
+	Version   int    `json:"version"`
+	Body      string `json:"body"`
+	PassScore int    `json:"pass_score"`
+	Model     string `json:"model"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type rubricVersionResponse struct {
+	ID        string `json:"id"`
+	Version   int    `json:"version"`
+	Body      string `json:"body"`
+	PassScore int    `json:"pass_score"`
+	Model     string `json:"model"`
+	CreatedAt string `json:"created_at"`
+}
+
+func rubricVersionJSON(rubric db.EvaluationRubric) rubricVersionResponse {
+	return rubricVersionResponse{
+		ID: rubric.VersionExternalID, Version: rubric.Version, Body: rubric.Body, PassScore: rubric.PassScore,
+		Model: rubric.Model, CreatedAt: formatTime(rubric.CreatedAt),
+	}
+}
+
+func rubricJSON(rubric db.EvaluationRubric) rubricResponse {
+	return rubricResponse{
+		ID: rubric.ExternalID, Type: "evaluation_rubric", Name: rubric.Name, Desc: rubric.Description,
+		VersionID: rubric.VersionExternalID, Version: rubric.Version, Body: rubric.Body, PassScore: rubric.PassScore,
+		Model: rubric.Model, CreatedAt: formatTime(rubric.CreatedAt), UpdatedAt: formatTime(rubric.UpdatedAt),
+	}
+}

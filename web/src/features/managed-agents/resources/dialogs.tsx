@@ -36,6 +36,7 @@ import { EnvOAuthCredentialFields } from './credential-env-oauth-fields';
 import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
   credentialAuthTypeLabel,
+  credentialCustomOAuthProvider,
   credentialFormReady,
   credentialNetworkingBody,
   credentialFormValues,
@@ -195,11 +196,9 @@ export function CredentialDialog({
     ((values.authType === 'mcp_oauth' && !values.token.trim()) ||
       (values.authType === 'env_oauth' && !values.envOAuthManualToken.trim()));
   const waitingForOAuth = (needsOAuthConnect || reauthorizing) && submitting;
-  const envOAuthConfigured = Boolean(
-    envOAuthProviders?.some(
-      (provider) => provider.id === values.envOAuthProviderId && (provider.configured || provider.workspace_scoped),
-    ),
-  );
+  const envOAuthConfigured =
+    values.envOAuthProviderId === 'custom:inline' ||
+    Boolean(envOAuthProviders?.some((provider) => provider.id === values.envOAuthProviderId && provider.configured));
   const { showMcpUrl, showDirectoryPicker, showBearerToken, showOAuthFields, showCredentialCommitment } =
     credentialDialogTypeSteps(values, mode);
   const patchValues = (patch: Partial<CredentialFormValues>) => {
@@ -442,12 +441,12 @@ export function CredentialDialog({
     try {
       // GitHub Apps require an exact callback URL match with no extra query params.
       if (envOAuth) {
-        await clientFields?.save();
         const started = await startEnvOAuthVaultAuth(
           orgUuid,
           {
             ...(reauthorize ? { credential_id: credential?.id } : {}),
             provider_id: values.envOAuthProviderId,
+            custom_provider: credentialCustomOAuthProvider(values),
             vault_id: vaultId,
             workspace_id: workspaceId,
             secret_name: values.secretName.trim(),
@@ -594,15 +593,7 @@ export function CredentialDialog({
                   ) : null}
                   {values.authType === 'env_oauth' ? (
                     <EnvOAuthCredentialFields
-                      orgUuid={orgUuid}
-                      workspaceId={workspaceId}
                       clientFieldsRef={envOAuthClientRef}
-                      onProviderSaved={(provider) =>
-                        setEnvOAuthProviders((current) => [
-                          ...(current ?? []).filter((item) => item.id !== provider.id),
-                          provider,
-                        ])
-                      }
                       values={values}
                       providers={envOAuthProviders ?? []}
                       providersLoading={envOAuthProviders === null}

@@ -42,14 +42,14 @@
     <update id="Complete" result="rows">
         UPDATE env_oauth_flows
         SET status = 'completed', credential_external_id = #{credentialExternalID},
-            error_code = '', completed_at = #{completedAt}, updated_at = #{completedAt}
+            client_id_envelope = NULL, code_verifier_envelope = NULL, error_code = '', completed_at = #{completedAt}, updated_at = #{completedAt}
         WHERE external_id = #{externalID,sensitive=true}
         AND status = 'processing'
     </update>
 
     <update id="Fail" result="rows">
         UPDATE env_oauth_flows
-        SET status = 'failed', error_code = #{errorCode}, updated_at = #{failedAt}
+        SET status = 'failed', client_id_envelope = NULL, code_verifier_envelope = NULL, error_code = #{errorCode}, updated_at = #{failedAt}
         WHERE external_id = #{externalID,sensitive=true}
         AND status IN ('pending', 'processing')
     </update>

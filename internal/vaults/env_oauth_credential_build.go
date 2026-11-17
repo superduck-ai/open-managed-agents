@@ -22,6 +22,7 @@ func EnvOAuthCredentialPlaceholder(authJSON []byte) (string, bool) {
 }
 
 type EnvOAuthCredentialBuildInput struct {
+	CustomProvider   *EnvOAuthCustomProvider
 	Provider         string
 	SecretName       string
 	Placeholder      string
@@ -67,6 +68,8 @@ func BuildEnvOAuthCredentialPayloads(input EnvOAuthCredentialBuildInput) (public
 		scope = &value
 	}
 	public := &envOAuthCredentialAuth{
+		HasClientSecret:   customProviderSecret(input.CustomProvider) != "",
+		CustomProvider:    customProviderDefinition(input.CustomProvider),
 		Type:              credentialAuthTypeEnvOAuth,
 		Provider:          input.Provider,
 		SecretName:        secretName,
@@ -78,6 +81,7 @@ func BuildEnvOAuthCredentialPayloads(input EnvOAuthCredentialBuildInput) (public
 		HasRefreshToken:   input.RefreshToken != "",
 	}
 	secret := envOAuthCredentialSecret{
+		ClientSecret: customProviderSecret(input.CustomProvider),
 		Type:         credentialAuthTypeEnvOAuth,
 		AccessToken:  input.AccessToken,
 		RefreshToken: input.RefreshToken,

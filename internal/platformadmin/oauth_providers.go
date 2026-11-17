@@ -23,7 +23,6 @@ import (
 )
 
 type OAuthProviderCreateInput struct {
-	WorkspaceUUID           string   `json:"-"`
 	DefaultAllowedHosts     []string `json:"default_allowed_hosts"`
 	DefaultSecretName       string   `json:"default_secret_name"`
 	Enabled                 *bool    `json:"enabled"`
@@ -39,7 +38,6 @@ type OAuthProviderCreateInput struct {
 }
 
 type OAuthProviderUpdateInput struct {
-	WorkspaceUUID           string    `json:"-"`
 	DefaultAllowedHosts     *[]string `json:"default_allowed_hosts"`
 	Archived                *bool     `json:"archived"`
 	DefaultSecretName       *string   `json:"default_secret_name"`
@@ -173,16 +171,16 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	}
 	now := time.Now().UTC()
 	provider := db.PlatformOAuthProvider{
-		WorkspaceUUID: input.WorkspaceUUID, DefaultAllowedHosts: hosts,
-		UUID:              uuid.NewV4().String(),
-		DefaultSecretName: secretName,
-		Enabled:           enabled,
-		ExternalID:        externalID,
-		Name:              name,
-		LogoURL:           logoURL,
-		AuthorizeEndpoint: authorizeEndpoint,
-		TokenEndpoint:     tokenEndpoint,
-		Scope:             strings.TrimSpace(input.Scope),
+		DefaultAllowedHosts: hosts,
+		UUID:                uuid.NewV4().String(),
+		DefaultSecretName:   secretName,
+		Enabled:             enabled,
+		ExternalID:          externalID,
+		Name:                name,
+		LogoURL:             logoURL,
+		AuthorizeEndpoint:   authorizeEndpoint,
+		TokenEndpoint:       tokenEndpoint,
+		Scope:               strings.TrimSpace(input.Scope),
 
 		TokenEndpointAuthMethod:    authMethod,
 		TokenEndpointEncoding:      encoding,
@@ -207,17 +205,6 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	return oauthProviderView(created, clientID), nil
 }
 
-func (s *OAuthProviderService) GetWorkspace(ctx context.Context, workspaceUUID, externalID string) (OAuthProviderView, error) {
-	provider, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
-	if err != nil {
-		return OAuthProviderView{}, mapOAuthProviderError(err)
-	}
-	if provider.WorkspaceUUID != workspaceUUID {
-		return OAuthProviderView{}, ErrNotFound
-	}
-	return s.view(ctx, provider)
-}
-
 func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (view OAuthProviderView, failure error) {
 	current, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
 	defer func() {
@@ -230,9 +217,6 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 			return OAuthProviderView{}, ErrNotFound
 		}
 		return OAuthProviderView{}, err
-	}
-	if current.WorkspaceUUID != input.WorkspaceUUID {
-		return OAuthProviderView{}, ErrNotFound
 	}
 	if input.ExpectedVersion < 1 {
 		return OAuthProviderView{}, invalid("必须提供 expected_version")
@@ -298,9 +282,6 @@ func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, external
 	}()
 	if err != nil {
 		return mapOAuthProviderError(err)
-	}
-	if current.WorkspaceUUID != "" {
-		return ErrNotFound
 	}
 	if expectedVersion < 1 {
 		return invalid("必须提供 expected_version")
@@ -402,7 +383,7 @@ func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider 
 		result, code = "denied", publicError(failure).Code
 	}
 	s.logger.InfoContext(ctx, "platform oauth provider audit", "actor_account_uuid", actor.AccountUUID, "actor_type", actorType,
-		"workspace_uuid", provider.WorkspaceUUID, "provider_uuid", provider.UUID, "provider_key", key, "action", action,
+		"provider_uuid", provider.UUID, "provider_key", key, "action", action,
 		"changed_fields", fields, "result", result, "error_code", code, "request_id", httpapi.RequestID(ctx))
 }
 

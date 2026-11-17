@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	EnvOAuthProviderInline            = "custom:inline"
 	EnvOAuthProviderBuiltinFeishu     = "builtin:feishu"
 	EnvOAuthFeishuDefaultSecretName   = "LARKSUITE_CLI_USER_ACCESS_TOKEN"
 	envOAuthProviderCustomPrefix      = "custom:"
@@ -20,7 +21,6 @@ const (
 var errEnvOAuthProviderKeyInvalid = errors.New("env_oauth provider is invalid")
 
 type EnvOAuthProviderSnapshot struct {
-	WorkspaceUUID           string
 	Enabled                 bool
 	Version                 int64
 	ProviderKey             string

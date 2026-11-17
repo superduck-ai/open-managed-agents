@@ -24,7 +24,7 @@ func TestPlatformOAuthProviderMapperBuilders(t *testing.T) {
 		wantID:    "PlatformOAuthProviderMapper.Insert",
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
-			"params.UUID", "params.WorkspaceUUID", "params.ExternalID", "params.Name", "params.LogoURL", "params.AuthorizeEndpoint",
+			"params.UUID", "params.ExternalID", "params.Name", "params.LogoURL", "params.AuthorizeEndpoint",
 			"params.TokenEndpoint", "params.Scope", "params.ClientIDEnvelope", "params.ClientSecretEnvelope",
 			"params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
 			"params.CreatedByPlatformAdminUUID", "params.CreatedAt", "params.UpdatedAt", "params.DefaultSecretName", "params.DefaultAllowedHosts", "params.Enabled", "params.Archived",

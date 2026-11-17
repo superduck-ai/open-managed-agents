@@ -37,82 +37,95 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidSessionCreateBody(err)
 	}
+	created, err := h.createFromBody(r, principal, *body)
+	if err != nil {
+		return err
+	}
+	response, err := h.responseFromSession(r, created, true)
+	if err != nil {
+		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", created.ExternalID, err))
+	}
+	trace.SpanFromContext(r.Context()).SetAttributes(telemetry.AttrSessionID.String(created.ExternalID))
+	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
+}
 
+func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body sessionCreateRequest) (db.Session, error) {
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return environmentNotFound(environmentID, err)
+			return db.Session{}, environmentNotFound(environmentID, err)
 		}
-		return internalError("Could not create session", fmt.Errorf("get environment %q for session: %w", environmentID, err))
+		return db.Session{}, internalError("Could not create session", fmt.Errorf("get environment %q for session: %w", environmentID, err))
 	}
 	if env.ArchivedAt != nil {
-		return invalidRequest(errors.New("environment must not be archived"))
+		return db.Session{}, invalidRequest(errors.New("environment must not be archived"))
 	}
 	if err := webtools.ValidateSession(env.Config, snapshot); err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	if err := skillsapi.NewRuntimeResolver(h.db).ValidateAgentSnapshot(r.Context(), principal.WorkspaceUUID, snapshot); err != nil {
-		return mapSkillReferenceValidationError(err)
+		return db.Session{}, mapSkillReferenceValidationError(err)
 	}
 	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	title, err := nullableStringOrMissing(body.Title, "title")
 	if err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
-		return mapVaultBindingError(err)
+		return db.Session{}, mapVaultBindingError(err)
 	}
 	sessionBudgetRaw, err := h.prepareCreateBudget(r.Context(), principal, snapshot, body.Budget)
 	if err != nil {
-		return err
+		return db.Session{}, err
 	}
 
 	sessionID, err := ids.New("sesn_")
 	if err != nil {
-		return internalError("Could not generate session ID", fmt.Errorf("generate session ID: %w", err))
+		return db.Session{}, internalError("Could not generate session ID", fmt.Errorf("generate session ID: %w", err))
 	}
 	threadID, err := ids.New("sthr_")
 	if err != nil {
-		return internalError("Could not generate thread ID", fmt.Errorf("generate thread ID: %w", err))
+		return db.Session{}, internalError("Could not generate thread ID", fmt.Errorf("generate thread ID: %w", err))
 	}
 	workID, err := ids.New("work_")
 	if err != nil {
-		return internalError("Could not generate work ID", fmt.Errorf("generate work ID: %w", err))
+		return db.Session{}, internalError("Could not generate work ID", fmt.Errorf("generate work ID: %w", err))
 	}
 	now := time.Now().UTC()
 	resources, err := h.resourcesFromCreate(r, principal, sessionID, body.Resources, now)
 	if err != nil {
-		return mapResourceBuildError(err)
+		return db.Session{}, mapResourceBuildError(err)
 	}
 	if err := validateEnvironmentSessionResources(env, resources); err != nil {
-		return err
+		return db.Session{}, err
 	}
 	var workSecret *string
 	if selfHostedMemoryCredentialRequired(env, resources) {
 		secret, secretErr := auth.NewWorkSecret(auth.WorkTokenScope{WorkspaceUUID: principal.WorkspaceUUID, EnvironmentID: env.ExternalID, WorkID: workID})
 		if secretErr != nil {
-			return internalError("Could not create work credential", secretErr)
+			return db.Session{}, internalError("Could not create work credential", secretErr)
 		}
 		workSecret = &secret
 	}
 	resourceInputs, err := sessionResourceWriteInputs(resources)
 	if err != nil {
-		return mapResourceBuildError(err)
+		return db.Session{}, mapResourceBuildError(err)
 	}
 	input := db.CreateSessionInput{
 		Session: db.Session{
@@ -169,37 +182,31 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	events, err := normalizeSessionInitialEvents(&input.Session, body.InitialEvents, now)
 	if err != nil {
-		return invalidRequest(err)
+		return db.Session{}, invalidRequest(err)
 	}
 	attachTraceContext(r, events)
 	prepared, err := h.eventPayloads.PreparePublic(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, events)
 	if err != nil {
-		return internalError("Could not prepare initial events", err)
+		return db.Session{}, internalError("Could not prepare initial events", err)
 	}
 	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared)
 	if err != nil {
 		if mapped, ok := mapFileResourcePersistenceError(err); ok {
-			return mapped
+			return db.Session{}, mapped
 		}
-		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
+		return db.Session{}, internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
 	if len(events) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	} else {
 		persisted, err = eventpayload.RestoreCreatedPublic(persisted, events)
 		if err != nil {
-			return internalError("Could not create session", fmt.Errorf("restore session %q events: %w", sessionID, err))
+			return db.Session{}, internalError("Could not create session", fmt.Errorf("restore session %q events: %w", sessionID, err))
 		}
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
 	}
-	response, err := h.responseFromSession(r, created, true)
-	if err != nil {
-		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
-	}
-	trace.SpanFromContext(r.Context()).SetAttributes(telemetry.AttrSessionID.String(sessionID))
-	httpapi.WriteJSON(w, http.StatusOK, response)
-	return nil
+	return created, nil
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
@@ -447,22 +454,30 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	removal, changed, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	archived, err := h.archiveSession(r.Context(), principal, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	h.finishSessionRemoval(r.Context(), removal)
-	archived := removal.Session
-	if changed && len(removal.StatusEvents) == 0 {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
-	}
-	h.enqueueSessionSandboxReclaims(r.Context(), archived)
 	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
+}
+
+func (h *Handler) archiveSession(ctx context.Context, principal auth.Principal, sessionID string) (db.Session, error) {
+	removal, changed, err := h.db.ArchiveSession(ctx, principal.WorkspaceUUID, sessionID)
+	if err != nil {
+		return db.Session{}, err
+	}
+	h.finishSessionRemoval(ctx, removal)
+	archived := removal.Session
+	if changed && len(removal.StatusEvents) == 0 {
+		h.enqueuePrincipalWebhook(ctx, principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
+	}
+	h.enqueueSessionSandboxReclaims(ctx, archived)
+	return archived, nil
 }
 
 func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {

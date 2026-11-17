@@ -35,7 +35,15 @@ type Store interface {
 	GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error)
 	ListEvaluationRubricVersions(context.Context, string, string, string) ([]db.EvaluationRubric, error)
 	DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error
+	CreateEvaluationTask(context.Context, db.EvaluationTask, []db.EvaluationTaskItem) (db.EvaluationTaskDetail, error)
+	ListEvaluationTasks(context.Context, string, string, int, int) ([]db.EvaluationTask, error)
+	ListEvaluationTaskChildren(context.Context, string, string, []string) ([]db.EvaluationTaskItem, []db.EvaluationTaskScore, error)
+	GetEvaluationTask(context.Context, string, string, string) (db.EvaluationTaskDetail, error)
+	GetEvaluationScorePrompt(context.Context, string, string, string) (string, string, string, error)
+	RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error)
+	SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
@@ -43,9 +51,23 @@ type Store interface {
 	GetSessionAttachmentFile(context.Context, string, string, string) (db.FileRecord, error)
 }
 
+type SessionInput struct {
+	Principal             auth.Principal
+	AgentExternalID       string
+	AgentVersion          int
+	EnvironmentExternalID string
+	Resources             json.RawMessage
+	VaultIDs              []string
+	Query                 string
+	Content               json.RawMessage
+	Title                 string
+	Metadata              map[string]string
+}
+
 type Handler struct {
 	store   Store
 	logger  *slog.Logger
+	runner  *TaskRunner
 	model   RubricModel
 	adapter *httpapi.ErrorAdapter
 }
@@ -53,6 +75,11 @@ type Handler struct {
 func NewHandler(store Store, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	return &Handler{store: store, logger: logger, adapter: httpapi.NewErrorAdapter(logger)}
+}
+
+func (h *Handler) WithTaskRunner(runner *TaskRunner) *Handler {
+	h.runner = runner
+	return h
 }
 
 func (h *Handler) WithRubricModel(model RubricModel) *Handler {
@@ -81,6 +108,12 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Get(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.listRubricVersions))
 	router.Delete(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.deleteRubric))
 	router.Post(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.appendRubricVersion))
+	router.Post(base+"/tasks", h.adapter.Wrap(h.createTask))
+	router.Get(base+"/tasks", h.adapter.Wrap(h.listTasks))
+	router.Get(base+"/tasks/{taskId}", h.adapter.Wrap(h.getTask))
+	router.Get(base+"/tasks/{taskId}/items/{itemId}/trace", h.adapter.Wrap(h.getTaskItemTrace))
+	router.Post(base+"/tasks/{taskId}/cancel", h.adapter.Wrap(h.cancelTask))
+	router.Post(base+"/tasks/{taskId}/retry", h.adapter.Wrap(h.retryTask))
 }
 
 func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
@@ -450,7 +483,7 @@ func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID strin
 		return "", internalFailure(loadFailedMessage, err)
 	}
 	if !ok {
-		return "", notFound("Session not found", nil)
+		return "", notFound(sessionNotFoundMessage, nil)
 	}
 	session.uuid = loaded.UUID
 	return session.uuid, nil

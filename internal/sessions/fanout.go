@@ -36,6 +36,9 @@ type codeSessionStreamFanout struct {
 
 func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionEvent) {
 	h.observeSessionOutcomeEvents(ctx, events)
+	if h.eventObserver != nil && len(events) > 0 {
+		h.eventObserver.ObserveSessionEvents(ctx, events)
+	}
 	if len(events) == 0 {
 		return
 	}

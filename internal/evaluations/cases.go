@@ -17,6 +17,7 @@ const (
 	maxAcceptanceLength  = 4000
 	maxTraceLength       = 16000
 	maxRubricLength      = 16000
+	maxFocusLength       = 300
 	maxImportCases       = 1000
 	maxGenerateCases     = 50
 	maxInputBlocks       = 32

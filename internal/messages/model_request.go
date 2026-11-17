@@ -217,6 +217,7 @@ func (o *responseObservation) Write(data []byte) (int, error) {
 }
 
 func (o *responseObservation) observeFrame(data []byte) {
+	o.captureCost(data)
 	if o.responses != nil {
 		o.responses.observe(o, data)
 		return
@@ -266,9 +267,6 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.stopReason = event.Delta.StopReason
 		}
 	case "message_stop":
-		if o.request != nil && o.request.ResponseCost != nil && (o.request.ResponseCost.StreamEvent == "" || o.request.ResponseCost.StreamEvent == event.Type) {
-			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
-		}
 		if o.messageID == "" {
 			o.malformed = true
 		}
@@ -284,7 +282,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		}
 	case "error":
 		if o.request != nil {
-			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+			o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), o.streaming, data)
 		}
 		o.result.ErrorType = "provider_error"
 		if o.onComplete != nil {
@@ -339,7 +337,7 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 
 func (o *responseObservation) finish() {
 	if o.request != nil && o.result.ErrorType == "http_error" && !o.streaming {
-		o.result.ProviderCost = o.request.ResponseCost.Extract(o.buffer)
+		o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), false, o.buffer)
 	}
 	o.finishOpenAI()
 	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
@@ -351,7 +349,7 @@ func (o *responseObservation) finish() {
 			o.malformed = true
 		} else {
 			if o.request != nil {
-				o.result.ProviderCost = o.request.ResponseCost.Extract(o.buffer)
+				o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), false, o.buffer)
 			}
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
@@ -464,4 +462,22 @@ func (o *responseObservation) timeToFirstToken(startedAt time.Time) time.Duratio
 		return 0
 	}
 	return o.firstTokenAt.Sub(startedAt)
+}
+
+func (o *responseObservation) costProtocol() string {
+	if o.responses != nil {
+		return "responses"
+	}
+	if o.chat != nil {
+		return "chat_completions"
+	}
+	return "messages"
+}
+func (o *responseObservation) captureCost(data []byte) {
+	if o.request == nil || o.complete || o.malformed {
+		return
+	}
+	if cost := o.request.ResponseCost.ExtractFor(o.costProtocol(), o.streaming, data); cost != nil {
+		o.result.ProviderCost = cost
+	}
 }

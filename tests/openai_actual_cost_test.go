@@ -47,7 +47,10 @@ func TestOpenAIActualCostHTTPAndSessionLedger(t *testing.T) {
 			}))
 			defer upstream.Close()
 			app := newPayloadIntegrationAppWithConfig(t, newFakeStore("openai-cost"), func(c *config.Config) {
-				c.Pricing.ResponseCosts = map[string]billing.ResponseCostRule{"default": {AmountPointer: "/gateway/amount", Currency: "CNY", ExchangeRate: "7.2"}}
+				c.Pricing.ResponseCosts = map[string]billing.ResponseCostRule{"default": {Protocols: map[string]billing.ResponseCostProtocol{
+					"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+					"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+				}, Currency: "CNY", ExchangeRate: "7.2"}}
 			})
 			clearTestLLMProviders(t, app)
 			provider := seedTestLLMProvider(t, app, "OpenAI cost", upstream.URL, "server-key", "openai-model")

@@ -6,15 +6,72 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 type ResponseCostRule struct {
-	AmountPointer string `yaml:"amount_pointer" json:"amount_pointer"`
-	StreamEvent   string `yaml:"stream_event" json:"stream_event"`
-	Currency      string `yaml:"currency" json:"currency"`
-	ExchangeRate  string `yaml:"exchange_rate" json:"exchange_rate"`
+	Protocols     map[string]ResponseCostProtocol `yaml:"protocols" json:"protocols,omitempty"`
+	AmountPointer string                          `yaml:"amount_pointer" json:"amount_pointer"`
+	StreamEvent   string                          `yaml:"stream_event" json:"stream_event"`
+	Currency      string                          `yaml:"currency" json:"currency"`
+	ExchangeRate  string                          `yaml:"exchange_rate" json:"exchange_rate"`
+}
+
+type ResponseCostProtocol struct {
+	NonStreaming *ResponseCostLocation `yaml:"non_streaming" json:"non_streaming,omitempty"`
+	Streaming    *ResponseCostLocation `yaml:"streaming" json:"streaming,omitempty"`
+}
+
+type ResponseCostLocation struct {
+	AmountPointer string   `yaml:"amount_pointer" json:"amount_pointer"`
+	EventPointer  string   `yaml:"event_pointer" json:"event_pointer,omitempty"`
+	Events        []string `yaml:"events" json:"events,omitempty"`
+}
+
+func (r *ResponseCostRule) ExtractFor(protocol string, streaming bool, data []byte) *ProviderCost {
+	if r == nil {
+		return nil
+	}
+	if len(r.Protocols) == 0 {
+		if protocol != "messages" {
+			return nil
+		}
+		if streaming && r.StreamEvent != "" {
+			var event struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(data, &event) != nil || event.Type != r.StreamEvent {
+				return nil
+			}
+		}
+		return r.Extract(data)
+	}
+	rule, ok := r.Protocols[protocol]
+	if !ok {
+		return nil
+	}
+	location := rule.NonStreaming
+	if streaming {
+		location = rule.Streaming
+	}
+	if location == nil {
+		return nil
+	}
+	if len(location.Events) > 0 {
+		raw, ok := pointerValue(jsontext.Value(data), strings.Split(strings.TrimPrefix(location.EventPointer, "/"), "/"))
+		if !ok {
+			return nil
+		}
+		var event string
+		if json.Unmarshal(raw, &event) != nil || !slices.Contains(location.Events, event) {
+			return nil
+		}
+	}
+	selected := *r
+	selected.AmountPointer = location.AmountPointer
+	return selected.Extract(data)
 }
 
 type ProviderCost struct {
@@ -25,8 +82,30 @@ type ProviderCost struct {
 }
 
 func (r ResponseCostRule) Validate() error {
-	if r.AmountPointer == "" || !jsontext.Pointer(r.AmountPointer).IsValid() || (r.StreamEvent != "" && r.StreamEvent != "message_stop") {
+	if len(r.Protocols) == 0 && (r.AmountPointer == "" || !jsontext.Pointer(r.AmountPointer).IsValid() || (r.StreamEvent != "" && r.StreamEvent != "message_stop")) {
 		return errors.New("响应费用需要有效的 JSON Pointer；stream_event 仅兼容 message_stop，结束位置由协议确定")
+	}
+	for protocol, rule := range r.Protocols {
+		if protocol != "messages" && protocol != "chat_completions" && protocol != "responses" {
+			return errCostProtocolInvalid
+		}
+		if rule.NonStreaming == nil && rule.Streaming == nil {
+			return errCostLocationMissing
+		}
+		for _, location := range []*ResponseCostLocation{rule.NonStreaming, rule.Streaming} {
+			if location == nil {
+				continue
+			}
+			if location.AmountPointer == "" || !jsontext.Pointer(location.AmountPointer).IsValid() {
+				return errCostPointerInvalid
+			}
+			if (len(location.Events) > 0) != (location.EventPointer != "") || location.EventPointer != "" && !jsontext.Pointer(location.EventPointer).IsValid() {
+				return errCostEventInvalid
+			}
+		}
+	}
+	if len(r.Protocols) > 0 && (r.AmountPointer != "" || r.StreamEvent != "") {
+		return errCostConfigurationMixed
 	}
 	if r.Currency != "USD" && r.Currency != "CNY" {
 		return errors.New("响应费用币种必须为 USD 或 CNY")

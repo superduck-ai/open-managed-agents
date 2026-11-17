@@ -74,7 +74,7 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 	}
 	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 		if o.request != nil {
-			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+			o.result.ProviderCost = o.request.ResponseCost.ExtractFor("chat_completions", o.streaming, data)
 		}
 		o.result.ErrorType = "provider_error"
 		o.malformed = true
@@ -86,11 +86,6 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 			return
 		}
 		o.messageID = chunk.ID
-	}
-	if len(chunk.Choices) == 0 && o.request != nil {
-		if cost := o.request.ResponseCost.Extract(data); cost != nil {
-			o.result.ProviderCost = cost
-		}
 	}
 	if chunk.Usage != nil {
 		o.mergeChatUsage(chunk.Usage)
@@ -284,7 +279,7 @@ func (c *chatObservation) nonStream(o *responseObservation, data []byte) {
 	}
 	c.observe(o, raw)
 	if o.request != nil {
-		o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+		o.result.ProviderCost = o.request.ResponseCost.ExtractFor("chat_completions", o.streaming, data)
 	}
 	if !o.malformed {
 		c.complete(o)

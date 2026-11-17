@@ -40,7 +40,10 @@ func TestOpenAIActualCostAccounting(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%v/%s", protocol, stream, tc.name), func(t *testing.T) {
 					store := &recordStore{}
 					calculator := billing.NewCalculator(map[string]billing.ModelPrice{"test/model": {Rates: &billing.Rates{Input: new("10"), Output: new("0"), CacheRead: new("0")}}})
-					calculator.ResponseCosts = map[string]billing.ResponseCostRule{"test": {AmountPointer: "/gateway/amount", Currency: "CNY", ExchangeRate: "7.2"}}
+					calculator.ResponseCosts = map[string]billing.ResponseCostRule{"test": {Protocols: map[string]billing.ResponseCostProtocol{
+						"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+						"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+					}, Currency: "CNY", ExchangeRate: "7.2"}}
 					body := openAIResponseBody(protocol, stream, tc.amount, "completed")
 					content := "application/json"
 					if stream {
@@ -78,7 +81,10 @@ func TestOpenAIActualCostAccounting(t *testing.T) {
 func TestResponsesTerminalCostAndInterruption(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		for _, status := range []string{"completed", "incomplete", "failed"} {
-			o := &observation{responses: true, streaming: stream, rule: &billing.ResponseCostRule{AmountPointer: "/gateway/amount", Currency: "CNY", ExchangeRate: "7.2"}}
+			o := &observation{responses: true, streaming: stream, rule: &billing.ResponseCostRule{Protocols: map[string]billing.ResponseCostProtocol{
+				"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+				"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+			}, Currency: "CNY", ExchangeRate: "7.2"}}
 			body := openAIResponseBody("responses", stream, `"7.2"`, status)
 			for _, b := range []byte(body) {
 				o.write([]byte{b})

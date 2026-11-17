@@ -43,11 +43,6 @@ func (c *chatObservation) frame(o *observation, data []byte) {
 		o.failed = true
 		return
 	}
-	if !o.streaming || len(response.Choices) == 0 {
-		if cost := o.rule.Extract(data); cost != nil {
-			o.cost = cost
-		}
-	}
 	if response.Usage != nil {
 		usage, valid := response.Usage.billingUsage()
 		if !valid {
@@ -57,7 +52,6 @@ func (c *chatObservation) frame(o *observation, data []byte) {
 		o.usage = usage
 	}
 	if len(response.Error) > 0 && string(response.Error) != "null" {
-		o.cost = o.rule.Extract(data)
 		o.failed = true
 		return
 	}

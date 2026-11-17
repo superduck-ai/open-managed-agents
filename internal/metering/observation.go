@@ -57,8 +57,17 @@ func (o *observation) frame(data []byte) {
 	if (o.failed && !o.httpError) || o.complete || o.terminal {
 		return
 	}
+	protocol := "messages"
+	if o.chat != nil {
+		protocol = "chat_completions"
+	}
+	if o.responses {
+		protocol = "responses"
+	}
+	if cost := o.rule.ExtractFor(protocol, o.streaming, data); cost != nil {
+		o.cost = cost
+	}
 	if o.httpError {
-		o.cost = o.rule.Extract(data)
 		return
 	}
 	if o.responses {
@@ -82,15 +91,10 @@ func (o *observation) frame(data []byte) {
 	case "message_delta":
 		mergeUsage(&o.usage, event.Usage)
 	case "message_stop":
-		if o.rule != nil && (o.rule.StreamEvent == "" || o.rule.StreamEvent == event.Type) {
-			o.cost = o.rule.Extract(data)
-		}
 		o.complete = true
 	case "message":
-		o.cost = o.rule.Extract(data)
 		o.usage, o.complete = event.Usage, true
 	case "error":
-		o.cost = o.rule.Extract(data)
 		o.failed = true
 	}
 }

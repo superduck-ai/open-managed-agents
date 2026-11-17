@@ -6,7 +6,7 @@ func (o *observation) responseFrame(data []byte) {
 	if o.terminal || o.failed || o.complete {
 		return
 	}
-	response, raw, terminal, err := billing.ParseResponse(data, o.streaming)
+	response, _, terminal, err := billing.ParseResponse(data, o.streaming)
 	if err != nil {
 		o.failed = true
 		return
@@ -14,7 +14,6 @@ func (o *observation) responseFrame(data []byte) {
 	if !terminal {
 		return
 	}
-	o.cost = o.rule.Extract(raw)
 	usage, valid := response.Usage.BillingUsage()
 	if !valid {
 		o.failed = true

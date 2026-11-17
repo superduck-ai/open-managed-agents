@@ -56,9 +56,9 @@ Brain 从 `session_context.billing` 读取共享会话预算和当前模型价�
 
 `response_costs` 支持 Messages、Chat Completions 和 Responses，流式与非流式均适用。普通 API 调用及 Brain 会话代理共用实际费用优先的结算规则，写入用量账本并累计会话预算。
 
-部署可通过 `pricing.response_costs` 按供应商 slug 配置响应费用，配置包含 `amount_pointer`（JSON 对象字段路径）、可选的 `stream_event: message_stop`（兼容已有 Messages 配置）、`currency`（USD 或 CNY）和 `exchange_rate`（每美元对应的原币金额，USD 为 `"1"`）。路径、内网供应商标识和地址由私有部署配置管理，公共示例不包含供应商私有字段。
+部署通过 `pricing.response_costs` 按供应商 slug 配置币种、汇率和 `protocols`。每种协议显式配置 `non_streaming`、`streaming`，各自包含相对于原始响应或 SSE data 的 `amount_pointer`；流式可通过 `event_pointer` 和 `events` 筛选事件。未配置的协议或模式不提取实际费用。供应商扩展字段、费用载体位置与筛选条件完全由私有配置决定；标准协议代码只负责用量和终态判断。旧顶层 `amount_pointer` / `stream_event` 仅兼容 Messages，不能与 protocols 混用。
 
-非流式从完整响应读取。Messages 流式从最终 `message_stop` 读取；Chat Completions 从 `choices: []` 的用量尾块读取，包括 `include_usage` 省略、true、false；Responses 从 `response.completed`、`response.incomplete` 或 `response.failed` 的 `response` 对象读取。`amount_pointer` 相对于这些最终响应对象，协议决定结束位置，不依赖私有字段名。失败响应若携带有效金额仍记账，incomplete 不视作成功完成，重复终态不重复结算。金额必须为非负十进制字符串，最多 12 位小数；明确的零费用有效。缺失、非法或未收到最终事件时使用请求开始时固定的标价估算，不把缺失视为零。费用从可信上游响应提取，不采纳客户端提交的费用。
+非流式从完整响应读取。Messages 流式从最终 `message_stop` 读取；Chat Completions 从 `choices: []` 的用量尾块读取，包括 `include_usage` 省略、true、false；Responses 从 `response.completed`、`response.incomplete` 或 `response.failed` 的 `response` 对象读取。这些是部署配置示例对应的位置；Responses 流式的路径必须包含 `/response` 前缀，代码不自动补充。失败响应若携带有效金额仍记账，incomplete 不视作成功完成，重复终态不重复结算。金额必须为非负十进制字符串，最多 12 位小数；明确的零费用有效。缺失、非法或未收到最终事件时使用请求开始时固定的标价估算，不把缺失视为零。费用从可信上游响应提取，不采纳客户端提交的费用。
 
 普通 API 和会话代理共用解析和精确有理数换算。实际费用优先于标价计算，按现有合同四舍五入至美元美分；`usage_records.provider_cost` 保留原币小数金额、币种、汇率和换算后的美分，避免丢失小额请求原值。无实际费用时该字段为空。会话结束事件的 `billing.list_cost` 使用换算值，`billing.source` 为 `provider`，现有预算累计、触顶暂停和预算调整恢复因此使用同一金额。原值保存在事件 `_provider_cost` 中并写入账本；事件超过内联阈值转存对象存储时，数据库摘要也保留该字段，使账本和预算使用相同金额。请求仍只结算一次，实际费用不与标价估算相加。
 

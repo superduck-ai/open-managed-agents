@@ -15,16 +15,14 @@ func (*responsesObservation) observe(o *responseObservation, data []byte) {
 	if o.complete || o.malformed {
 		return
 	}
-	response, raw, terminal, err := billing.ParseResponse(data, o.streaming)
+	o.captureCost(data)
+	response, _, terminal, err := billing.ParseResponse(data, o.streaming)
 	if err != nil {
 		o.malformed = true
 		return
 	}
 	if !terminal {
 		return
-	}
-	if o.request != nil {
-		o.result.ProviderCost = o.request.ResponseCost.Extract(raw)
 	}
 	usage, valid := response.Usage.BillingUsage()
 	if !valid {

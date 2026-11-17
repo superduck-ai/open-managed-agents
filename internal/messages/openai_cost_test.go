@@ -11,7 +11,10 @@ import (
 
 func TestChatSessionActualCostBothModes(t *testing.T) {
 	for _, stream := range []bool{false, true} {
-		o := &responseObservation{chat: &chatObservation{}, streaming: stream, request: &codesessions.ModelRequest{ResponseCost: &billing.ResponseCostRule{AmountPointer: "/gateway/amount", Currency: "CNY", ExchangeRate: "7.2"}}}
+		o := &responseObservation{chat: &chatObservation{}, streaming: stream, request: &codesessions.ModelRequest{ResponseCost: &billing.ResponseCostRule{Protocols: map[string]billing.ResponseCostProtocol{
+			"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+			"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+		}, Currency: "CNY", ExchangeRate: "7.2"}}}
 		usage := `"usage":{"prompt_tokens":1000,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":200}},"gateway":{"amount":"7.2"}`
 		body := `{"id":"chat_cost","choices":[{"index":0,"message":{"content":"你好"},"finish_reason":"stop"}],` + usage + `}`
 		if stream {
@@ -31,7 +34,10 @@ func TestResponsesSessionTerminalReceipt(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		for _, status := range []string{"completed", "incomplete", "failed"} {
 			t.Run(fmt.Sprintf("%v/%s", stream, status), func(t *testing.T) {
-				o := &responseObservation{responses: &responsesObservation{}, streaming: stream, request: &codesessions.ModelRequest{ResponseCost: &billing.ResponseCostRule{AmountPointer: "/gateway/amount", Currency: "CNY", ExchangeRate: "7.2"}}}
+				o := &responseObservation{responses: &responsesObservation{}, streaming: stream, request: &codesessions.ModelRequest{ResponseCost: &billing.ResponseCostRule{Protocols: map[string]billing.ResponseCostProtocol{
+					"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+					"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+				}, Currency: "CNY", ExchangeRate: "7.2"}}}
 				body := `{"id":"resp_cost","status":"` + status + `","output":[{"id":"msg_cost","type":"message","content":[{"type":"output_text","text":"你好"}]}],"usage":{"input_tokens":1000,"output_tokens":20,"input_tokens_details":{"cached_tokens":200}},"gateway":{"amount":"7.2"}}`
 				if stream {
 					body = chatFrame(`{"type":"response.` + status + `","response":` + body + `}`)

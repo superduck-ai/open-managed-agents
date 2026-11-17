@@ -84,7 +84,8 @@ func (r *TaskRunner) complete(ctx context.Context, task db.EvaluationTask, syste
 		return Completion{}, errModelMissing
 	}
 	return r.model.Complete(ctx, CompletionRequest{
-		OrganizationUUID: task.OrganizationUUID, Model: task.RubricModel, System: system, User: user,
+		OrganizationUUID: task.OrganizationUUID, Model: task.RubricModel,
+		System: system, User: user, MaxTokens: defaultMaxTokens,
 	})
 }
 
@@ -113,7 +114,7 @@ func newScore(task db.EvaluationTask, item db.EvaluationTaskItem) (db.Evaluation
 
 func judgeScore(score *db.EvaluationTaskScore, text string, modelErr error, passScore int, finalAttempt bool) error {
 	if modelErr != nil {
-		if !finalAttempt && !errors.Is(modelErr, errModelMissing) {
+		if !finalAttempt && !errors.Is(modelErr, errModelMissing) && !errors.Is(modelErr, errModelRejected) {
 			return modelErr
 		}
 		score.Status, score.ErrorMessage = scoreFailed, clipError(modelErrorMessage(modelErr))
@@ -145,6 +146,9 @@ func limitUnansweredScore(score *db.EvaluationTaskScore, passScore int) {
 func modelErrorMessage(err error) string {
 	if errors.Is(err, errModelMissing) {
 		return modelMissingMessage
+	}
+	if errors.Is(err, errModelRejected) {
+		return modelRejectedMessage
 	}
 	return scoreFailedMessage
 }

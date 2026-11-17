@@ -210,7 +210,28 @@ func TestParseCaseDocumentReadsOptionalCSVColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed) != 1 || parsed[0].Polarity != "positive" || parsed[0].Acceptance != "包含合计" || string(parsed[0].ExpectedToolTrace) != `["lookup_sales"]` {
+	if len(parsed) != 1 || parsed[0].Polarity != "positive" || parsed[0].Acceptance != "包含合计" || string(parsed[0].ExpectedToolTrace) != `["lookup_sales"]` || parsed[0].Origin != originImport {
 		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
+func TestParseCaseDocumentIgnoresOrigin(t *testing.T) {
+	parsed, err := parseCaseDocument(`[{"query":"问题","origin":"session"}]`)
+	if err != nil || len(parsed) != 1 || parsed[0].Origin != originImport {
+		t.Fatalf("parsed = %+v err=%v", parsed, err)
+	}
+}
+
+func TestCaseOriginKeepsGeneratedAndRejectsOtherValues(t *testing.T) {
+	generated, err := normalizeCaseList([]rawCase{{Query: "问题", Origin: originGenerated}})
+	if err != nil || len(generated) != 1 || generated[0].Origin != originGenerated {
+		t.Fatalf("generated = %+v err=%v", generated, err)
+	}
+	manual, err := normalizeCaseList([]rawCase{{Query: "问题"}})
+	if err != nil || manual[0].Origin != originManual {
+		t.Fatalf("manual = %+v err=%v", manual, err)
+	}
+	if _, err := normalizeCaseList([]rawCase{{Query: "问题", Origin: originSession}}); err == nil {
+		t.Fatal("expected invalid origin")
 	}
 }

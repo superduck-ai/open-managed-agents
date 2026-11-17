@@ -125,7 +125,7 @@ sequenceDiagram
 | 表 | 前缀 | 作用 |
 | --- | --- | --- |
 | `evaluation_datasets` / `evaluation_dataset_versions` | `evalds_` / `edv_` | 评测集和版本。当前写入版本 1 |
-| `evaluation_cases` | `evalcase_` | `inputs` 是有序内容块。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注和验收要点可选 |
+| `evaluation_cases` | `evalcase_` | `inputs` 是有序内容块。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注、验收要点和 `origin` 可选。`origin` 由 `00146_evaluation_case_origin.sql` 增加，取 `manual`、`generated`、`import` 或 `session`；已有行默认为空 |
 | `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00138_evaluation_rubrics.sql`。`00137` 已被 `00137_release_env_oauth_flow_secrets.sql` 占用。已经用旧编号 `00120`、`00136` 或 `00137` 执行过评分标准迁移的开发库需要重建 |
 | `evaluation_tasks` | `evaltask_` | 只写入 `evaluate`。状态 `running`、`completed`、`failed`、`cancelled`。自迭代遗留列 `strategy`、`low_score_threshold`、`optimize_system`、`baseline_system`、`candidate_system`、`candidate_summary`、`applied_at` 由 `00144_evaluation_task_runtime.sql` 删除 |
 | `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1`。`inputs` 是用例内容块的快照，由 `00142_evaluation_task_item_inputs.sql` 增加，迁移前的 item 为空数组。`00144_evaluation_task_runtime.sql` 给 `pending` 或「`running` 且没有会话」的 item 建按 `updated_at` 的部分索引，供巡检找出未启动的 item |
@@ -139,7 +139,8 @@ sequenceDiagram
 
 - `POST/GET /datasets`，`GET/DELETE /datasets/{id}`
 - `GET/POST /datasets/{id}/cases`，`POST /datasets/{id}/cases/{caseId}`，`DELETE /datasets/{id}/cases/{caseId}`
-- `POST /datasets/{id}/cases:import`，`POST /datasets/{id}/cases:generate`
+- `POST /datasets/{id}/cases:import`
+- `POST /case-drafts:plan`，`POST /case-drafts:generate`
 - `GET /datasets/{id}/session-turns?session_id=`，`POST /datasets/{id}/cases:from-session`
 - `POST/GET /rubrics`，`GET/DELETE /rubrics/{id}`，`GET /rubrics/{id}/versions`，`POST /rubrics/{id}/versions`，`POST /rubrics/generate`
 - `POST/GET /tasks`，`GET /tasks/{id}`，`POST /tasks/{id}/cancel`，`POST /tasks/{id}/retry`
@@ -151,13 +152,38 @@ sequenceDiagram
 
 前端入口在托管智能体的「评测」。页面有任务、评测集和评分标准。
 
-新建评测集可以上传或粘贴 JSON、JSONL、CSV，也可以上传带单元格图片的 xlsx，并下载样例。上传页写明只有 xlsx 能放图片。JSON、JSONL、CSV 样例只有文字，Excel 样例在单元格里带一张图片。上传和粘贴各自保留内容。文件内容随创建请求一次写入；解析失败时不会留下空评测集。只提供 `query` 时，服务端保存成一个文字块。`inputs` 可以按顺序包含文字、图片和文档。图片和文档只引用当前工作区的 `file_id`，类型与会话消息一致；Base64 和外部 URL 会被拒绝。详情页列出用户问题、期望回答和按行保存的验收要点。问题列在文字下显示图片缩略图，点开查看大图；文档显示文件名。缩略图走控制台预览，读取当前工作区里的图片字节。会话导入的图片会带上用例里的会话，再读取会话附件。公开文件下载接口仍然拒绝不可下载的上传文件。不能预览的文件返回 “File is not previewable”。图片加载失败时显示「图片」。编辑用例使用同样的缩略图，移除按钮在缩略图角上，界面不显示文件编号。没有改问题和附件时，保存保持原来的输入顺序；改了问题才替换文字块，图片和文档留在原位置，新附件加在末尾。标注分不标注、正例和负例；只有负例按条填写验收要点。编辑用例时未提交的工具轨迹保持原值，并只读取这一条用例的轨迹。多行 JSONL 按行导入；`{"cases":[...]}` 也会被接受。xlsx 里单元格图片（`DISPIMG`）和浮动图片由浏览器直接读出字节，上传到文件库后再保存文件编号。只有浮动图片、没有单元格的行也会成为用例。共享字符串和单元格文字里的十进制、十六进制字符引用会解码。用户不填写 `file_id`，也不用按文件名再选一次。CSV 和旧版 xls 没有图片字节，遇到单元格图片公式时提示改传 xlsx。编辑从会话导入的用例时，文件库里已有的文件直接使用。只有文件不在文件库时，才按用例记录的会话读取会话附件。该会话已不存在时，这个附件返回 Session not found。只改文字或文件库文件时，不因会话消失而失败。编辑用例和从会话导入仍然直接使用已经上传或会话里已有的文件。名称、说明、问题和验收要点按字符计数。
+新建评测集可以上传或粘贴 JSON、JSONL、CSV，也可以上传带单元格图片的 xlsx，并下载样例。上传页写明只有 xlsx 能放图片。JSON、JSONL、CSV 样例只有文字，Excel 样例在单元格里带一张图片。上传和粘贴各自保留内容。文件内容随创建请求一次写入；解析失败时不会留下空评测集。只提供 `query` 时，服务端保存成一个文字块。`inputs` 可以按顺序包含文字、图片和文档。图片和文档只引用当前工作区的 `file_id`，类型与会话消息一致；Base64 和外部 URL 会被拒绝。详情页列出用户问题、期望回答和按行保存的验收要点。来源按 `origin` 显示：`generated` 为自动生成，`import` 为文件导入，`session` 或非空 `source_session_id` 为会话导入，其余为手动创建。编辑用例不改变来源。此前没有 `origin` 的用例仍显示手动创建。问题列在文字下显示图片缩略图，点开查看大图；文档显示文件名。缩略图走控制台预览，读取当前工作区里的图片字节。会话导入的图片会带上用例里的会话，再读取会话附件。公开文件下载接口仍然拒绝不可下载的上传文件。不能预览的文件返回 “File is not previewable”。图片加载失败时显示「图片」。编辑用例使用同样的缩略图，移除按钮在缩略图角上，界面不显示文件编号。没有改问题和附件时，保存保持原来的输入顺序；改了问题才替换文字块，图片和文档留在原位置，新附件加在末尾。标注分不标注、正例和负例；只有负例按条填写验收要点。编辑用例时未提交的工具轨迹保持原值，并只读取这一条用例的轨迹。多行 JSONL 按行导入；`{"cases":[...]}` 也会被接受。xlsx 里单元格图片（`DISPIMG`）和浮动图片由浏览器直接读出字节，上传到文件库后再保存文件编号。只有浮动图片、没有单元格的行也会成为用例。共享字符串和单元格文字里的十进制、十六进制字符引用会解码。用户不填写 `file_id`，也不用按文件名再选一次。CSV 和旧版 xls 没有图片字节，遇到单元格图片公式时提示改传 xlsx。编辑从会话导入的用例时，文件库里已有的文件直接使用。只有文件不在文件库时，才按用例记录的会话读取会话附件。该会话已不存在时，这个附件返回 Session not found。只改文字或文件库文件时，不因会话消失而失败。编辑用例和从会话导入仍然直接使用已经上传或会话里已有的文件。名称、说明、问题和验收要点按字符计数。
 
 评测集列表按 15 条分页。从会话导入时先选择当前工作区的会话，选择器可以继续加载后续会话，再把轮次从左侧移到右侧。一轮从一条用户消息开始，到下一条用户消息之前。可以导入的轮次保留文字，以及这场会话能读到的图片和文档文件。手动添加和 JSON 导入只接受文件库里可见的 `file_id`。只有 Base64 或 URL 的轮次不出现在选择器里；如果导入请求仍指向这样的轮次，该轮次计入 `skipped`，不写入用例。已经导入成功的轮次会从可选列表移除，避免再次导入变成重复用例。导入进行中不能更换会话或轮次，完成后按提交时的会话和轮次标记已导入。Agent 的文字回复只用来辨认该轮，不写入期望回答。每个选中且可导入的轮次各成为一条用例。轮次移到右侧之后再选标注；只有负例填写验收要点，并应用到这次导入的全部用例。超过 2000 个事件的会话拒绝导入。
 
-生成用例接受 1 到 50 条，可以带补充说明、Agent 和该 Agent 的版本。指定版本时使用该版本的系统提示词。生成调用组织模型目录中的第一个模型。模型返回用例 JSON 数组；`{"cases":[...]}` 也会被接受。外层 Markdown 代码围栏会先去掉。模型输出无法解析时按生成失败返回。生成失败时删除刚创建的空评测集。
+生成用例分两步，两步都只返回草稿，不写库；用户确认后才通过创建评测集（`cases` 字段）或 `POST /datasets/{id}/cases` 一次写入，生成失败不会留下空评测集。前端默认一键完成：拿到计划后立即用原计划生成用例，直接进入确认页；也可以先点「先看覆盖计划」编辑场景再生成。确认页的「调整计划」回到计划编辑。计划没有改动时，主按钮是「返回用例」，不重新请求模型；改了计划才显示「重新生成」。两种情况下都可以回到上次已经生成的用例。生成用例失败时停在计划页，保留计划供调整或重试。点击「先看覆盖计划」或「生成」后，对话框立刻显示进行中说明，指出这一步会调用模型、通常需要几十秒；失败原因显示在按钮上方。
 
-评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。生成要求模型直接返回 Markdown；若整段回复是 JSON 对象或数组，则拒绝落库。模型若用 Markdown 代码块包住正文，保存时去掉围栏。生成同样使用组织模型目录；请求里指定了模型就用该模型，否则用目录中的第一个。标题可以留空。列表按 15 条分页。正文和模型名按字符计数。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
+```mermaid
+sequenceDiagram
+  participant UI as 控制台
+  participant API as case-drafts
+  participant LLM as 组织模型
+  UI->>API: plan（count、来源）
+  API->>LLM: 一次调用，返回场景 JSON
+  API-->>UI: scenarios（条数已按 count 配平）
+  Note over UI: 默认直接继续；选了「先看覆盖计划」时可增删场景、改名称/描述/画像/正负例/条数
+  UI->>API: generate（scenarios、来源）
+  par 每个场景按 5 条一批，最多 4 批并发
+    API->>LLM: 批次调用
+  end
+  API->>API: 强制正负例、清洗、批内与已有用例去重
+  API-->>UI: data、requested、duplicates、failed
+  Note over UI: 勾选、改写后保存
+  UI->>API: POST /datasets 或 /datasets/{id}/cases
+```
+
+两个接口的来源字段相同：`agent_id`、`agent_version`、`dataset_id`、`note`，至少给一项，否则返回 “choose an agent or a dataset, or describe what to cover”。补充说明去掉首尾空白后最多 2000 个字符。Agent 部分写入名称、说明、系统提示词（最多 8000 字符）、启用的内置工具、MCP 服务及其启用的工具、自定义工具和说明，以及技能编号；指定版本时读取该版本。`dataset_id` 用于种子扩写：从已有用例里均匀取最多 10 条作为参考，并把全部已有问题用于去重。参考材料都放在标签里，提示词要求模型不执行其中的指令。
+
+`plan` 接受 1 到 50 条，模型返回 `{"scenarios":[...]}`，每个场景有 `name`、`description`、`persona`、`polarity`、`count`。名称和描述都为空的场景丢弃，名称为空时补成「场景 N」，`polarity` 不是 `negative` 时按 `positive`，最多保留 12 个；条数按比例缩放到总数，每个场景至少 1 条，场景多于总数时只保留前面的。没有可用场景或输出无法解析时按生成失败返回。
+
+`generate` 接受用户修改后的计划：至少 1 个、最多 12 个场景，合计不超过 50 条；名称必填，正负例只能是 `positive` 或 `negative`，条数至少 1。名称最多 80 字符，画像 200，描述 1000。每批要求模型返回 JSON 数组（`{"cases":[...]}` 也接受，外层代码围栏先去掉），字段是 `query`、`expected_answer`、`expected_tool_trace`（工具名数组，没有 Agent 时固定为空）和 `acceptance`（负例 2 到 4 条、按行分隔）。`query` 必须自带要处理的正文，因为生成结果不带文件；不能只写“正文如下”或“见附件”。提示注入放在真实材料里面或后面。服务端按场景强制写入正负例，正例清空验收要点，空数组轨迹视为未指定，并去掉会话、文件和 `inputs` 字段，之后走与导入相同的用例校验。去重先把问题转小写、只保留字母和数字，完全相同或字符二元组 Dice 相似度不低于 0.85 视为重复，与已有用例和本次先生成的草稿比较。单批失败只记 `Warn` 日志并计入 `failed`，全部批次都没有用例时才返回错误。响应里的 `requested` 是计划总数，`duplicates` 是去掉的重复数，`failed` 是没生成出来的条数，每条草稿带所属 `scenario`。
+
+评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。生成接口 `POST /rubrics/generate` 只返回草稿 `{"type":"evaluation_rubric_draft","body":...,"pass_score":...}`，不写库；前端把草稿放进编辑框，用户确认或修改后再走创建接口。提示词要求按「评分维度」（3 到 6 个维度，权重合计 100，每个维度 2 到 4 条可以回答是或否的检查项）、「扣分项」和「计分方法」组织；Agent 部分与生成用例相同，评测集均匀取最多 12 条用例，带期望回答、期望工具和验收要点。生成要求模型直接返回 Markdown；若整段回复是 JSON 对象或数组，则拒绝。模型若用 Markdown 代码块包住正文，去掉围栏后返回。生成和评分都使用组织模型目录；请求指定了模型就用该模型，否则用目录中的第一个。评测模块的模型 HTTP 调用超时为 120 秒，评分调用同样适用。网关返回 401 或 403 时接口返回 “The model gateway denied access. Check the provider API key and model permission.”，不再重试评分。计划和评分标准生成不使用 4096 这一档产品上限。messages 后端必须带 `max_tokens`，未指定时传 128000，只作为协议上限，模型写完即停止。chat_completions 后端在未指定时不传 `max_tokens`。每批用例为 8192。评分调用在 messages 后端指定 2048，chat_completions 后端不传 `max_tokens`。messages 请求显式关闭扩展思考（`thinking.type=disabled`）。标题可以留空。列表按 15 条分页。正文和模型名按字符计数。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
 
 任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准，去掉首尾空白后最多 300 个字符，超出返回 “focus must be at most 300 characters”。评分标准正文和评测集一样按字符计数，上限 16000，关注项不占这个额度。下拉里的智能体、运行环境、凭据库、记忆库、评测集和评分标准都加载全部分页，不只取第一页。任务列表按 15 条分页，状态筛选只有运行中、已完成、失败和已中止。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。创建、取消和重试都立即返回，会话在后台启动，详情页轮询看到进度。取消只作用于尚未结束的任务，并归档已经启动的会话。重试只作用于已结束的任务，在一个事务里把任务改回 `running`、把本轮会话失败的用例重置为 `pending`，并删除本轮已完成用例上的失败分数；两类都没有时回滚并返回 “Only a finished evaluation task can retry failed cases”。重置的用例在后台重新创建会话；只删了失败分数时，立即插入结算任务重新打分，已成功的分数保持不变。
 

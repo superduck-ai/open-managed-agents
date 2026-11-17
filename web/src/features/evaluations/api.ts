@@ -26,6 +26,7 @@ export type EvaluationCase = {
   expected_answer: string;
   expected_tool_trace: unknown;
   source_session_id: string;
+  origin: string;
   polarity: string;
   acceptance: string;
   inputs?: EvaluationContentBlock[];
@@ -168,10 +169,46 @@ export function listEvaluationDatasets(orgUuid: string, workspaceId: string, pag
   );
 }
 
+export type EvaluationCaseInput = Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance'> &
+  Partial<Pick<EvaluationCase, 'expected_tool_trace' | 'inputs' | 'origin'>>;
+
+export type EvaluationCasePolarity = 'positive' | 'negative';
+
+export type EvaluationCaseScenario = {
+  name: string;
+  description: string;
+  persona: string;
+  polarity: EvaluationCasePolarity;
+  count: number;
+};
+
+export type EvaluationCaseDraft = {
+  query: string;
+  expected_answer: string;
+  expected_tool_trace: unknown;
+  polarity: EvaluationCasePolarity;
+  acceptance: string;
+  scenario: string;
+};
+
+export type EvaluationCaseDrafts = {
+  data: EvaluationCaseDraft[];
+  requested: number;
+  duplicates: number;
+  failed: number;
+};
+
+export type EvaluationGenerationSource = {
+  note: string;
+  agent_id?: string;
+  agent_version?: number;
+  dataset_id?: string;
+};
+
 export function createEvaluationDataset(
   orgUuid: string,
   workspaceId: string,
-  input: { name: string; desc: string; content?: string },
+  input: { name: string; desc: string; content?: string; cases?: EvaluationCaseInput[] },
 ) {
   return consoleApi<EvaluationDataset>(`${evaluationBase(orgUuid, workspaceId)}/datasets`, {
     method: 'POST',
@@ -179,7 +216,33 @@ export function createEvaluationDataset(
       name: input.name,
       desc: input.desc,
       content: input.content?.trim() ? input.content : undefined,
+      cases: input.cases?.length ? input.cases : undefined,
     }),
+  });
+}
+
+export function planEvaluationCases(
+  orgUuid: string,
+  workspaceId: string,
+  input: EvaluationGenerationSource & { count: number },
+) {
+  return consoleApi<{ scenarios: EvaluationCaseScenario[] }>(
+    `${evaluationBase(orgUuid, workspaceId)}/case-drafts:plan`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function draftEvaluationCases(
+  orgUuid: string,
+  workspaceId: string,
+  input: EvaluationGenerationSource & { scenarios: EvaluationCaseScenario[] },
+) {
+  return consoleApi<EvaluationCaseDrafts>(`${evaluationBase(orgUuid, workspaceId)}/case-drafts:generate`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 
@@ -223,7 +286,7 @@ export function createEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  cases: Array<Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance' | 'inputs'>>,
+  cases: EvaluationCaseInput[],
 ) {
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases`,
@@ -255,18 +318,6 @@ export function deleteEvaluationCase(orgUuid: string, workspaceId: string, datas
       caseId,
     )}`,
     { method: 'DELETE' },
-  );
-}
-
-export function generateEvaluationCases(
-  orgUuid: string,
-  workspaceId: string,
-  datasetId: string,
-  input: { count: number; note: string; agent_id?: string; agent_version?: number },
-) {
-  return consoleApi<EvaluationPage<EvaluationCase>>(
-    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases:generate`,
-    { method: 'POST', body: JSON.stringify(input) },
   );
 }
 
@@ -304,8 +355,6 @@ export function generateEvaluationRubric(
   orgUuid: string,
   workspaceId: string,
   input: {
-    name: string;
-    desc: string;
     pass_score: number;
     goal?: string;
     example?: string;
@@ -315,7 +364,7 @@ export function generateEvaluationRubric(
     negative?: string;
   },
 ) {
-  return consoleApi<EvaluationRubric>(`${evaluationBase(orgUuid, workspaceId)}/rubrics/generate`, {
+  return consoleApi<{ body: string; pass_score: number }>(`${evaluationBase(orgUuid, workspaceId)}/rubrics/generate`, {
     method: 'POST',
     body: JSON.stringify(input),
   });

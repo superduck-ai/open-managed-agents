@@ -72,33 +72,6 @@ func TestUpdateCaseReportsMissingSession(t *testing.T) {
 	}
 }
 
-func TestGenerateCasesStripsMarkdownFence(t *testing.T) {
-	store := &evaluationFixture{}
-	handler := NewHandler(store, nil).WithRubricModel(fixedModel{text: "```json\n[{\"query\":\"汇总销售额\"}]\n```"})
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"count":1}`))
-	request = withEvaluationRoute(request, "evalds_1", "")
-	response := httptest.NewRecorder()
-
-	if err := handler.generateCases(response, request); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "汇总销售额") {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-}
-
-func TestGenerateCasesReportsUnreadableModelOutput(t *testing.T) {
-	handler := NewHandler(&evaluationFixture{}, nil).WithRubricModel(fixedModel{text: "not a case list"})
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"count":1}`))
-	request = withEvaluationRoute(request, "evalds_1", "")
-
-	err := handler.generateCases(httptest.NewRecorder(), request)
-	var appErr *apperr.Error
-	if !errors.As(err, &appErr) || appErr.Kind != apperr.Internal || appErr.PublicMessage != generateFailedMessage {
-		t.Fatalf("error = %#v", err)
-	}
-}
-
 func withEvaluationRoute(request *http.Request, datasetID, caseID string) *http.Request {
 	route := chi.NewRouteContext()
 	route.URLParams.Add("orgUuid", "org")

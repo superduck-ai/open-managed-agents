@@ -21,6 +21,10 @@ const (
 	maxImportCases       = 1000
 	maxGenerateCases     = 50
 	maxInputBlocks       = 32
+	originManual         = "manual"
+	originGenerated      = "generated"
+	originImport         = "import"
+	originSession        = "session"
 )
 
 type caseDraft struct {
@@ -28,6 +32,7 @@ type caseDraft struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	SourceSessionID   string
+	Origin            string
 	Polarity          string
 	Acceptance        string
 	Inputs            json.RawMessage
@@ -40,6 +45,7 @@ type rawCase struct {
 	ExpectedToolTrace      json.RawMessage `json:"expected_tool_trace"`
 	ExpectedToolTraceCamel json.RawMessage `json:"expectedToolTrace"`
 	SourceSessionID        string          `json:"source_session_id"`
+	Origin                 string          `json:"origin"`
 	Polarity               string          `json:"polarity"`
 	Acceptance             string          `json:"acceptance"`
 	Inputs                 json.RawMessage `json:"inputs"`
@@ -82,11 +88,16 @@ func normalizeCase(raw rawCase) (caseDraft, error) {
 	if err != nil {
 		return caseDraft{}, err
 	}
+	origin, err := caseOrigin(raw.Origin)
+	if err != nil {
+		return caseDraft{}, err
+	}
 	draft := caseDraft{
 		Query:           query,
 		Inputs:          inputs,
 		ExpectedAnswer:  strings.TrimSpace(firstText(raw.ExpectedAnswer, raw.ExpectedAnswerCamel)),
 		SourceSessionID: strings.TrimSpace(raw.SourceSessionID),
+		Origin:          origin,
 		Polarity:        strings.TrimSpace(raw.Polarity),
 		Acceptance:      strings.TrimSpace(raw.Acceptance),
 	}
@@ -109,6 +120,24 @@ func normalizeCase(raw rawCase) (caseDraft, error) {
 	}
 	draft.ExpectedToolTrace = normalized
 	return draft, nil
+}
+
+func caseOrigin(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", originManual:
+		return originManual, nil
+	case originGenerated:
+		return originGenerated, nil
+	default:
+		return "", invalidArgument(originInvalidMessage, nil)
+	}
+}
+
+func withOrigin(drafts []caseDraft, origin string) []caseDraft {
+	for index := range drafts {
+		drafts[index].Origin = origin
+	}
+	return drafts
 }
 
 func normalizeTrace(raw json.RawMessage) (json.RawMessage, error) {
@@ -148,6 +177,14 @@ func stripCodeFence(text string) string {
 }
 
 func parseCaseDocument(content string) ([]caseDraft, error) {
+	drafts, err := readCaseDocument(content)
+	if err != nil {
+		return nil, err
+	}
+	return withOrigin(drafts, originImport), nil
+}
+
+func readCaseDocument(content string) ([]caseDraft, error) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return nil, invalidArgument(importRequiredMessage, nil)
@@ -157,7 +194,7 @@ func parseCaseDocument(content string) ([]caseDraft, error) {
 		if err := json.Unmarshal([]byte(trimmed), &rows); err != nil {
 			return nil, invalidArgument(importInvalidMessage, err)
 		}
-		return normalizeCaseList(rows)
+		return normalizeCaseList(dropOrigin(rows))
 	}
 	if strings.HasPrefix(trimmed, "{") {
 		rows, wrapped, err := caseEnvelope(trimmed)
@@ -165,7 +202,7 @@ func parseCaseDocument(content string) ([]caseDraft, error) {
 			return parseJSONL(trimmed)
 		}
 		if wrapped {
-			return normalizeCaseList(rows)
+			return normalizeCaseList(dropOrigin(rows))
 		}
 		return parseJSONL(trimmed)
 	}
@@ -185,7 +222,14 @@ func parseJSONL(content string) ([]caseDraft, error) {
 		}
 		rows = append(rows, row)
 	}
-	return normalizeCaseList(rows)
+	return normalizeCaseList(dropOrigin(rows))
+}
+
+func dropOrigin(rows []rawCase) []rawCase {
+	for index := range rows {
+		rows[index].Origin = ""
+	}
+	return rows
 }
 
 func parseCSVCases(content string) ([]caseDraft, error) {

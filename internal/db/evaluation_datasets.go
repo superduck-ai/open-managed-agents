@@ -35,6 +35,7 @@ type EvaluationCase struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	SourceSessionID   string
+	Origin            string
 	Polarity          string
 	Acceptance        string
 	Inputs            json.RawMessage
@@ -49,6 +50,7 @@ type EvaluationCaseWrite struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	SourceSessionID   string
+	Origin            string
 	Polarity          string
 	Acceptance        string
 	Inputs            json.RawMessage
@@ -243,6 +245,7 @@ func insertCaseParams(dataset EvaluationDataset, datasetUUID, versionUUID string
 		ExpectedAnswer:    item.ExpectedAnswer,
 		ExpectedToolTrace: item.ExpectedToolTrace,
 		SourceSessionID:   item.SourceSessionID,
+		Origin:            item.Origin,
 		Polarity:          item.Polarity,
 		Acceptance:        item.Acceptance,
 		Inputs:            item.Inputs,
@@ -280,6 +283,7 @@ func caseFromRow(row evaluationCaseRow) EvaluationCase {
 		ExpectedAnswer:    row.ExpectedAnswer,
 		ExpectedToolTrace: rawJSON(row.ExpectedToolTrace),
 		SourceSessionID:   row.SourceSessionID,
+		Origin:            row.Origin,
 		Polarity:          row.Polarity,
 		Acceptance:        row.Acceptance,
 		Inputs:            rawJSON(row.Inputs),

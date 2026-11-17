@@ -37,6 +37,7 @@ import {
 import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { SessionTurnTransfer } from './SessionTurnTransfer';
 import { CaseEditorDialog } from './CaseEditorDialog';
+import { CaseGenerateDialog } from './CaseGenerateDialog';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
 import { CaseInputMedia } from './caseMedia';
 import { fileBlocks } from './caseInputs';
@@ -51,6 +52,7 @@ export function DatasetDetailPage() {
   const queryClient = useQueryClient();
   const datasetId = decodeURIComponent(location.pathname.match(/\/evaluations\/datasets\/([^/]+)/)?.[1] ?? '');
   const [importOpen, setImportOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [editor, setEditor] = useState<EvaluationCase | null>(null);
   const [creating, setCreating] = useState(false);
   const dataset = useQuery({
@@ -99,6 +101,9 @@ export function DatasetDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => setGenerateOpen(true)}>
+            {msg('evaluations.generateCases', 'Generate cases')}
+          </Button>
           <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
             {msg('evaluations.importSession', 'Import session')}
           </Button>
@@ -133,6 +138,8 @@ export function DatasetDetailPage() {
                 unset={msg('evaluations.unsetAnswer', 'No expected answer')}
                 noChecklist={msg('evaluations.noChecklist', 'No acceptance checks')}
                 sessionLabel={msg('evaluations.sessionImport', 'Imported session')}
+                generatedLabel={msg('evaluations.generated', 'Generated')}
+                importedLabel={msg('evaluations.imported', 'Imported file')}
                 manualLabel={msg('evaluations.manual', 'Manual')}
                 editLabel={msg('evaluations.edit', 'Edit')}
                 deleteLabel={msg('evaluations.delete', 'Delete')}
@@ -168,6 +175,7 @@ export function DatasetDetailPage() {
         datasetId={datasetId}
         item={editor}
       />
+      <CaseGenerateDialog open={generateOpen} onOpenChange={setGenerateOpen} datasetId={datasetId} />
       <ImportSessionDialog
         open={importOpen}
         onOpenChange={setImportOpen}
@@ -179,12 +187,25 @@ export function DatasetDetailPage() {
   );
 }
 
+export function caseSourceLabel(
+  origin: string,
+  sessionId: string,
+  labels: { session: string; generated: string; imported: string; manual: string },
+) {
+  if (sessionId || origin === 'session') return labels.session;
+  if (origin === 'generated') return labels.generated;
+  if (origin === 'import') return labels.imported;
+  return labels.manual;
+}
+
 function CaseRow({
   item,
   index,
   unset,
   noChecklist,
   sessionLabel,
+  generatedLabel,
+  importedLabel,
   manualLabel,
   editLabel,
   deleteLabel,
@@ -202,6 +223,8 @@ function CaseRow({
   unset: string;
   noChecklist: string;
   sessionLabel: string;
+  generatedLabel: string;
+  importedLabel: string;
   manualLabel: string;
   editLabel: string;
   deleteLabel: string;
@@ -245,7 +268,14 @@ function CaseRow({
           </ol>
         )}
       </TableCell>
-      <TableCell className="px-3 align-top">{item.source_session_id ? sessionLabel : manualLabel}</TableCell>
+      <TableCell className="px-3 align-top">
+        {caseSourceLabel(item.origin, item.source_session_id, {
+          session: sessionLabel,
+          generated: generatedLabel,
+          imported: importedLabel,
+          manual: manualLabel,
+        })}
+      </TableCell>
       <TableCell className="px-3 align-top">{polarityLabel(item.polarity, positiveLabel, negativeLabel)}</TableCell>
       <TableCell className="px-3 align-top">
         <DropdownMenu>

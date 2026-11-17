@@ -96,7 +96,8 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Get(base+"/datasets/{datasetId}/cases", h.adapter.Wrap(h.listCases))
 	router.Post(base+"/datasets/{datasetId}/cases", h.adapter.Wrap(h.createCases))
 	router.Post(base+"/datasets/{datasetId}/cases:import", h.adapter.Wrap(h.importCases))
-	router.Post(base+"/datasets/{datasetId}/cases:generate", h.adapter.Wrap(h.generateCases))
+	router.Post(base+"/case-drafts:plan", h.adapter.Wrap(h.planCases))
+	router.Post(base+"/case-drafts:generate", h.adapter.Wrap(h.draftCases))
 	router.Get(base+"/datasets/{datasetId}/session-turns", h.adapter.Wrap(h.listSessionTurns))
 	router.Post(base+"/datasets/{datasetId}/cases:from-session", h.adapter.Wrap(h.caseFromSession))
 	router.Post(base+"/datasets/{datasetId}/cases/{caseId}", h.adapter.Wrap(h.updateCase))
@@ -416,7 +417,7 @@ func caseWrites(drafts []caseDraft) ([]db.EvaluationCaseWrite, error) {
 func caseWrite(externalID string, draft caseDraft) db.EvaluationCaseWrite {
 	return db.EvaluationCaseWrite{
 		UUID: uuid.NewString(), ExternalID: externalID, Query: draft.Query, ExpectedAnswer: draft.ExpectedAnswer,
-		ExpectedToolTrace: draft.ExpectedToolTrace, SourceSessionID: draft.SourceSessionID, Polarity: draft.Polarity, Acceptance: draft.Acceptance,
+		ExpectedToolTrace: draft.ExpectedToolTrace, SourceSessionID: draft.SourceSessionID, Origin: draft.Origin, Polarity: draft.Polarity, Acceptance: draft.Acceptance,
 		Inputs: draft.Inputs,
 	}
 }

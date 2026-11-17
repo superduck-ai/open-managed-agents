@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,8 +19,9 @@ import (
 )
 
 const (
-	caseGenerationSystemPrompt = "Reply with one JSON array and no other text. Each item must include query."
-	maxSessionEventPages       = 20
+	maxSessionEventPages = 20
+	maxRubricCases       = 12
+	defaultPassScore     = 60
 )
 
 var errSessionTooLarge = errors.New("session events truncated")
@@ -40,11 +40,10 @@ type rubricWriteRequest struct {
 	Negative  string `json:"negative"`
 }
 
-type generateCasesRequest struct {
-	Count   int    `json:"count"`
-	Note    string `json:"note"`
-	AgentID string `json:"agent_id"`
-	Version int    `json:"agent_version"`
+type rubricDraftResponse struct {
+	Type      string `json:"type"`
+	Body      string `json:"body"`
+	PassScore int    `json:"pass_score"`
 }
 
 type fromSessionRequest struct {
@@ -186,72 +185,29 @@ func (h *Handler) generateRubric(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidArgument(invalidJSONMessage, err)
 	}
+	passScore, err := rubricPassScore(body.PassScore)
+	if err != nil {
+		return err
+	}
 	prompt, err := h.rubricGeneratePrompt(r.Context(), principal, *body)
 	if err != nil {
 		return err
 	}
-	completion, err := h.complete(r.Context(), principal.OrganizationUUID, body.Model, rubricSystemPrompt, prompt)
+	text, err := h.complete(r.Context(), CompletionRequest{
+		OrganizationUUID: principal.OrganizationUUID,
+		Model:            strings.TrimSpace(body.Model), System: rubricSystemPrompt, User: prompt,
+	})
 	if err != nil {
 		return err
 	}
-	body.Body, err = generatedRubricBody(completion.Text)
+	generated, err := generatedRubricBody(text)
 	if err != nil {
 		return err
 	}
-	rubric, err := rubricFromRequest(principal, *body)
-	if err != nil {
-		return err
+	if utf8.RuneCountInString(generated) > maxRubricLength {
+		return invalidArgument(rubricTooLongMessage, nil)
 	}
-	created, err := h.store.CreateEvaluationRubric(r.Context(), rubric)
-	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
-	}
-	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(created))
-	return nil
-}
-
-func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
-	principal, err := scopedPrincipal(r)
-	if err != nil {
-		return err
-	}
-	body, err := httpapi.DecodeObjectBodyAs[generateCasesRequest](w, r, 1<<20)
-	if err != nil {
-		return invalidArgument(invalidJSONMessage, err)
-	}
-	if body.Count < 1 || body.Count > maxGenerateCases {
-		return invalidArgument(generateCountMessage, nil)
-	}
-	prompt := "生成评测用例 JSON 数组。每条必须有 query，可以有 expectedAnswer。覆盖正常、边界和失败。条数：" + strconv.Itoa(body.Count) + "。补充：" + strings.TrimSpace(body.Note)
-	if strings.TrimSpace(body.AgentID) != "" {
-		agent, err := h.agentForGeneration(r.Context(), principal.WorkspaceUUID, strings.TrimSpace(body.AgentID), body.Version)
-		if err != nil {
-			return err
-		}
-		if agent.System != nil {
-			prompt += "\nAgent 系统提示词：" + *agent.System
-		}
-	}
-	completion, err := h.complete(r.Context(), principal.OrganizationUUID, "", caseGenerationSystemPrompt, prompt)
-	if err != nil {
-		return err
-	}
-	drafts, err := parseCaseDocument(stripCodeFence(completion.Text))
-	if err != nil {
-		return internalFailure(generateFailedMessage, err)
-	}
-	if len(drafts) > body.Count {
-		drafts = drafts[:body.Count]
-	}
-	created, err := h.appendCases(r.Context(), principal, chi.URLParam(r, "datasetId"), drafts)
-	if err != nil {
-		return err
-	}
-	data := make([]caseResponse, 0, len(created))
-	for _, item := range created {
-		data = append(data, caseJSON(item))
-	}
-	writePage(w, data, nil)
+	httpapi.WriteJSON(w, http.StatusOK, rubricDraftResponse{Type: "evaluation_rubric_draft", Body: generated, PassScore: passScore})
 	return nil
 }
 
@@ -401,42 +357,50 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 		return "", invalidArgument(rubricGenerateRequiredMessage, nil)
 	}
 	var prompt strings.Builder
-	prompt.WriteString("根据目标和样例写可检查的评分标准，包含判断条件、分值和不合格情形。")
-	if goal := strings.TrimSpace(body.Goal); goal != "" {
-		prompt.WriteString("\n目标：" + goal)
-	}
+	prompt.WriteString(rubricInstructions + "\n" + materialNotice)
+	writeOptionalTagged(&prompt, "goal", strings.TrimSpace(body.Goal))
 	if agentID := strings.TrimSpace(body.AgentID); agentID != "" {
 		agent, err := h.store.GetAgent(ctx, principal.WorkspaceUUID, agentID)
 		if err != nil {
 			return "", mapStoreError(err, agentNotFoundMessage, generateFailedMessage)
 		}
-		if agent.System != nil && strings.TrimSpace(*agent.System) != "" {
-			prompt.WriteString("\nAgent 系统提示词：" + *agent.System)
-		}
+		writeTagged(&prompt, "agent", agentBrief(agent))
 	}
 	if datasetID := strings.TrimSpace(body.DatasetID); datasetID != "" {
 		cases, err := h.store.ListEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 		if err != nil {
 			return "", mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 		}
-		limit := len(cases)
-		if limit > 12 {
-			limit = 12
-		}
-		for index := 0; index < limit; index++ {
-			prompt.WriteString("\n评测集问题：" + cases[index].Query)
-		}
+		writeOptionalTagged(&prompt, "cases", rubricCaseLines(spreadCases(cases, maxRubricCases)))
 	}
-	if positive := strings.TrimSpace(body.Positive); positive != "" {
-		prompt.WriteString("\n正例：" + positive)
-	}
-	if negative := strings.TrimSpace(body.Negative); negative != "" {
-		prompt.WriteString("\n负例：" + negative)
-	}
-	if example := strings.TrimSpace(body.Example); example != "" {
-		prompt.WriteString("\n样例：" + example)
-	}
+	writeOptionalTagged(&prompt, "positive_example", strings.TrimSpace(body.Positive))
+	writeOptionalTagged(&prompt, "negative_example", strings.TrimSpace(body.Negative))
+	writeOptionalTagged(&prompt, "sample", strings.TrimSpace(body.Example))
 	return prompt.String(), nil
+}
+
+func writeOptionalTagged(builder *strings.Builder, tag, content string) {
+	if content != "" {
+		writeTagged(builder, tag, content)
+	}
+}
+
+func rubricCaseLines(cases []db.EvaluationCase) string {
+	blocks := make([]string, 0, len(cases))
+	for _, item := range cases {
+		lines := []string{generationListMarker + "问题：" + clipRunes(item.Query, maxSeedQueryRunes)}
+		if item.ExpectedAnswer != "" {
+			lines = append(lines, "  期望回答："+clipRunes(item.ExpectedAnswer, maxSeedQueryRunes))
+		}
+		if len(item.ExpectedToolTrace) > 0 {
+			lines = append(lines, "  期望工具："+clipRunes(string(item.ExpectedToolTrace), maxSeedAnswerRunes))
+		}
+		if item.Acceptance != "" {
+			lines = append(lines, "  验收要点："+strings.ReplaceAll(clipRunes(item.Acceptance, maxSeedQueryRunes), "\n", "；"))
+		}
+		blocks = append(blocks, strings.Join(lines, "\n"))
+	}
+	return strings.Join(blocks, "\n")
 }
 
 func rubricFromRequest(principal auth.Principal, body rubricWriteRequest) (db.EvaluationRubric, error) {
@@ -511,12 +475,9 @@ func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 	if utf8.RuneCountInString(text) > maxRubricLength {
 		return db.EvaluationRubric{}, invalidArgument(rubricTooLongMessage, nil)
 	}
-	passScore := 60
-	if body.PassScore != nil {
-		passScore = *body.PassScore
-	}
-	if passScore < 0 || passScore > 100 {
-		return db.EvaluationRubric{}, invalidArgument(passScoreInvalidMessage, nil)
+	passScore, err := rubricPassScore(body.PassScore)
+	if err != nil {
+		return db.EvaluationRubric{}, err
 	}
 	model := strings.TrimSpace(body.Model)
 	if utf8.RuneCountInString(model) > maxModelLength {
@@ -529,18 +490,29 @@ func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 	return db.EvaluationRubric{VersionUUID: uuid.NewString(), VersionExternalID: versionID, Body: text, PassScore: passScore, Model: model}, nil
 }
 
-func (h *Handler) complete(ctx context.Context, organizationUUID, modelID, system, user string) (Completion, error) {
-	if h.model == nil {
-		return Completion{}, unavailable(modelMissingMessage, errModelMissing)
+func rubricPassScore(value *int) (int, error) {
+	if value == nil {
+		return defaultPassScore, nil
 	}
-	completion, err := h.model.Complete(ctx, CompletionRequest{
-		OrganizationUUID: organizationUUID, Model: modelID, System: system, User: user,
-	})
+	if *value < 0 || *value > 100 {
+		return 0, invalidArgument(passScoreInvalidMessage, nil)
+	}
+	return *value, nil
+}
+
+func (h *Handler) complete(ctx context.Context, request CompletionRequest) (string, error) {
+	if h.model == nil {
+		return "", unavailable(modelMissingMessage, errModelMissing)
+	}
+	completion, err := h.model.Complete(ctx, request)
 	if err != nil {
 		if errors.Is(err, errModelMissing) {
-			return Completion{}, unavailable(modelMissingMessage, err)
+			return "", unavailable(modelMissingMessage, err)
 		}
-		return Completion{}, internalFailure(generateFailedMessage, err)
+		if errors.Is(err, errModelRejected) {
+			return "", unavailable(modelRejectedMessage, err)
+		}
+		return "", internalFailure(generateFailedMessage, err)
 	}
-	return completion, nil
+	return completion.Text, nil
 }

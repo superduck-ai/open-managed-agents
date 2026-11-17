@@ -136,28 +136,39 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 }
 
 func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSession, input codesessions.OAuthRequest, prepare func(context.Context, db.VaultCredential) error, authorizationCompleted bool) (json.RawMessage, error) {
-	ids, err := h.db.GetCodeSessionVaultIDs(ctx, code.ExternalID, code.OrganizationUUID, code.WorkspaceUUID)
+	scope, err := h.db.GetCodeSessionCredentialScope(ctx, code.ExternalID, code.OrganizationUUID, code.WorkspaceUUID)
 	if err != nil {
 		return nil, err
 	}
-	credentials, err := h.db.ListActiveVaultCredentialsForVaultIDs(ctx, code.WorkspaceUUID, ids)
+	credentials, err := h.db.ListActiveVaultCredentialsForVaultIDs(ctx, code.WorkspaceUUID, scope.VaultIDs)
 	if err != nil {
 		return nil, err
 	}
-	for _, credential := range credentials {
-		if credential.AuthType != "env_oauth" || credential.CredentialKey != input.SecretName {
+	for _, credential := range vaults.SelectCredentialBindings(scope, credentials) {
+		if credential.AuthType != "env_oauth" && credential.AuthType != "environment_variable" || credential.CredentialKey != input.SecretName {
 			continue
 		}
-		provider, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
-		if err != nil || provider != input.Provider {
-			continue
+		if credential.AuthType == "env_oauth" {
+			provider, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
+			if err != nil {
+				return nil, err
+			}
+			if provider != input.Provider {
+				if scope.PinBindings {
+					return nil, errors.New("当前变量已绑定其他 OAuth 连接")
+				}
+				continue
+			}
+			if err := prepare(ctx, credential); err != nil {
+				if scope.PinBindings && credential.VaultExternalID != scope.OAuthVaultID && errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired) {
+					return nil, vaults.ErrCredentialAuthorizationManaged
+				}
+				return nil, err
+			}
 		}
-		if err := prepare(ctx, credential); err != nil {
+		placeholder, err := vaults.EnvironmentCredentialPlaceholder(credential)
+		if err != nil {
 			return nil, err
-		}
-		placeholder, ok := vaults.EnvOAuthCredentialPlaceholder(credential.Auth)
-		if !ok {
-			return nil, errors.New("ENV OAuth 占位符不可用")
 		}
 		return jsonv2.Marshal(struct {
 			Authorized             bool   `json:"authorized"`

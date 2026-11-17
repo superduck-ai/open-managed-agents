@@ -3,6 +3,7 @@ package environments
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -767,6 +768,13 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 	if err != nil {
 		return nil, fmt.Errorf("list vault credentials for env mount: %w", err)
 	}
+	var binding struct {
+		Mode string `json:"credential_binding_mode"`
+	}
+	if err := jsonv2.Unmarshal(session.Metadata, &binding); err != nil {
+		return nil, err
+	}
+	credentials = vaults.SelectCredentialBindings(db.CredentialScope{VaultIDs: session.VaultIDs, PinBindings: binding.Mode == "first_vault"}, credentials)
 	placeholders, err := vaults.PrepareEnvCredentialMount(r.cfg.CodeSession.UpstreamProxyMITMEnabled, credentials)
 	if err != nil {
 		return nil, err

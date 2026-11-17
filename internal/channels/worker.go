@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -162,8 +163,13 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 	}
 	metadata := channelSessionMetadata(w.record, msg, scopeKey)
 	metadata["channel_resources"] = resources.Fingerprint
+	metadata["credential_binding_mode"] = "first_vault"
 	if personalID != "" {
-		resources.VaultIDs = append(resources.VaultIDs, personalID)
+		if !slices.Contains(resources.VaultIDs, personalID) {
+			resources.VaultIDs = append(resources.VaultIDs, personalID)
+		}
+		metadata["personal_vault_id"] = personalID
+		metadata["oauth_vault_id"] = personalID
 	}
 	created, err := w.supervisor.oma.createSession(ctx, apiKey, w.record.AgentExternalID, parseChannelMounts(w.record.Mounts).AgentVersion, environmentID, channelSessionTitle(msg.Content), metadata, resources.Resources, resources.VaultIDs)
 	if err != nil {

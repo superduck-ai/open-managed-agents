@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"net/url"
 	"strings"
@@ -14,6 +15,7 @@ import (
 type OAuthRequest struct {
 	Kind          string `json:"kind"`
 	Provider      string `json:"provider,omitempty"`
+	TargetHost    string `json:"target_host,omitempty"`
 	ProviderName  string `json:"provider_name,omitempty"`
 	SecretName    string `json:"secret_name,omitempty"`
 	MCPServerName string `json:"mcp_server_name,omitempty"`
@@ -35,18 +37,32 @@ func (r OAuthRequest) Validate() error {
 	}
 	switch r.Kind {
 	case "env_oauth":
-		_, _, providerErr := vaults.ParseEnvOAuthProviderKey(r.Provider)
-		_, nameErr := vaults.ParseEnvOAuthSecretName(r.SecretName)
-		if providerErr != nil || nameErr != nil || len(r.Provider) > 256 || r.MCPServerName != "" || r.MCPServerURL != "" {
-			return errors.New("OAuth environment request requires a provider and variable")
-		}
+		return r.validateEnvironment()
 	case "mcp_oauth":
 		target, err := url.Parse(r.MCPServerURL)
-		if err != nil || len(r.MCPServerURL) > 4096 || len(r.MCPServerName) > 256 || target.Hostname() == "" || target.Scheme != "https" || target.User != nil || target.Fragment != "" || r.MCPServerName == "" || r.Provider != "" || r.SecretName != "" {
+		if err != nil || len(r.MCPServerURL) > 4096 || len(r.MCPServerName) > 256 || target.Hostname() == "" || target.Scheme != "https" || target.User != nil || target.Fragment != "" || r.MCPServerName == "" || r.Provider != "" || r.SecretName != "" || r.TargetHost != "" {
 			return errors.New("OAuth MCP request requires a configured HTTPS server")
 		}
 	default:
 		return errors.New("invalid OAuth credential kind")
+	}
+	return nil
+}
+
+func (r OAuthRequest) validateEnvironment() error {
+	var providerErr error
+	if r.Provider != "" {
+		_, _, providerErr = vaults.ParseEnvOAuthProviderKey(r.Provider)
+	}
+	_, nameErr := vaults.ParseEnvOAuthSecretName(r.SecretName)
+	if providerErr != nil || nameErr != nil || r.Provider == "" && r.TargetHost == "" || len(r.Provider) > 256 || r.MCPServerName != "" || r.MCPServerURL != "" {
+		return errors.New("OAuth environment request requires a provider or target host and variable")
+	}
+	if r.TargetHost != "" {
+		host, err := networkpolicy.NormalizeHost(r.TargetHost)
+		if err != nil || host != r.TargetHost {
+			return errors.New("invalid OAuth target host")
+		}
 	}
 	return nil
 }

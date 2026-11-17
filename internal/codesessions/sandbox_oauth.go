@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 type OAuthCredentialWaiter func(context.Context, db.CodeSession, OAuthRequest, func(context.Context, db.VaultCredential) error) (json.RawMessage, error)
@@ -46,11 +49,45 @@ func (h *Handler) handleSandboxOAuth(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "OAuth request requires its running Bash call"))
 		return
 	}
-	provider, err := h.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), input.Provider)
-	if err != nil || !provider.Enabled || !provider.Configured || provider.WorkspaceUUID != "" && provider.WorkspaceUUID != claims.WorkspaceUUID || provider.DefaultSecretName != input.SecretName {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "OAuth 服务未配置到当前工作区"))
+	static := false
+	if input.Provider == "" {
+		scope, err := h.db.GetCodeSessionCredentialScope(r.Context(), claims.SessionID, claims.OrganizationUUID, claims.WorkspaceUUID)
+		if err != nil {
+			h.errorAdapter.Write(w, r, toolCallOperationError(err))
+			return
+		}
+		credentials, err := h.db.ListActiveVaultCredentialsForVaultIDs(r.Context(), claims.WorkspaceUUID, scope.VaultIDs)
+		if err != nil {
+			h.errorAdapter.Write(w, r, toolCallOperationError(err))
+			return
+		}
+		for _, credential := range vaults.SelectCredentialBindings(scope, credentials) {
+			if credential.CredentialKey != input.SecretName {
+				continue
+			}
+			if credential.AuthType == "environment_variable" {
+				static = true
+				break
+			}
+			if credential.AuthType == "env_oauth" {
+				input.Provider, err = vaults.EnvOAuthCredentialProvider(credential.Auth)
+				if err != nil {
+					h.errorAdapter.Write(w, r, toolCallOperationError(err))
+					return
+				}
+				break
+			}
+		}
+	}
+	var provider vaults.EnvOAuthProviderSnapshot
+	if !static {
+		provider, err = h.resolveSandboxOAuthProvider(r.Context(), claims.WorkspaceUUID, *input)
+	}
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
+	input.Provider = provider.ProviderKey
 	input.ProviderName = provider.Name
 	code, found, err := h.db.GetScopedCodeSession(r.Context(), claims.OrganizationUUID, claims.WorkspaceUUID, claims.SessionID)
 	if err != nil || !found {
@@ -73,10 +110,51 @@ func (h *Handler) handleSandboxOAuth(w http.ResponseWriter, r *http.Request) {
 		err = resumeErr
 	}
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "invalid_request_error", "OAuth 未完成，当前操作未继续"))
+		message := "OAuth 未完成，当前操作未继续"
+		if errors.Is(err, vaults.ErrCredentialAuthorizationManaged) {
+			message = vaults.ErrCredentialAuthorizationManaged.Error()
+		}
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "invalid_request_error", message))
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) resolveSandboxOAuthProvider(ctx context.Context, workspaceUUID string, input OAuthRequest) (vaults.EnvOAuthProviderSnapshot, error) {
+	var candidates []vaults.EnvOAuthProviderSnapshot
+	if input.Provider != "" {
+		provider, err := h.envOAuthProviders.ResolveEnvOAuthProvider(ctx, input.Provider)
+		if err != nil {
+			return vaults.EnvOAuthProviderSnapshot{}, fmt.Errorf("OAuth 客户端不可用")
+		}
+		candidates = []vaults.EnvOAuthProviderSnapshot{provider}
+	} else {
+		var err error
+		candidates, err = h.envOAuthProviders.ListProviders(ctx, workspaceUUID)
+		if err != nil {
+			return vaults.EnvOAuthProviderSnapshot{}, fmt.Errorf("OAuth 客户端目录不可用")
+		}
+	}
+	var selected *vaults.EnvOAuthProviderSnapshot
+	for _, provider := range candidates {
+		if !provider.Enabled || !provider.Configured || provider.WorkspaceUUID != "" && provider.WorkspaceUUID != workspaceUUID || provider.DefaultSecretName != input.SecretName {
+			continue
+		}
+		if input.TargetHost != "" {
+			allowed, err := networkpolicy.AllowsHost(provider.DefaultAllowedHosts, input.TargetHost, "443")
+			if err != nil || !allowed {
+				continue
+			}
+		}
+		if selected != nil {
+			return vaults.EnvOAuthProviderSnapshot{}, fmt.Errorf("存在多个匹配的 OAuth 客户端，请明确指定连接")
+		}
+		selected = new(provider)
+	}
+	if selected == nil {
+		return vaults.EnvOAuthProviderSnapshot{}, fmt.Errorf("没有匹配当前变量和目标服务的可用 OAuth 客户端")
+	}
+	return *selected, nil
 }
 
 func (s *Service) RequestSandboxOAuth(ctx context.Context, code db.CodeSession, input OAuthRequest) (string, error) {

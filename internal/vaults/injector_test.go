@@ -254,6 +254,7 @@ func TestWrapTransportExcludesByPlanCredIDWhenUpdateReturnsEmptyRow(t *testing.T
 }
 
 type fakeCredentialStore struct {
+	scope           db.CredentialScope
 	clearErr        error
 	clearCalls      int
 	getErr          error
@@ -322,9 +323,11 @@ func (f *fakeCredentialStore) GetVaultCredential(
 	return f.get, nil
 }
 
-func (f *fakeCredentialStore) GetCodeSessionVaultIDs(context.Context, string, string, string) ([]string, error) {
+func (f *fakeCredentialStore) GetCodeSessionCredentialScope(context.Context, string, string, string) (db.CredentialScope, error) {
 	f.vaultIDCalls++
-	return append([]string(nil), f.vaultIDs...), nil
+	scope := f.scope
+	scope.VaultIDs = append([]string(nil), f.vaultIDs...)
+	return scope, nil
 }
 
 func (f *fakeCredentialStore) ListActiveVaultCredentialsForVaultIDs(context.Context, string, []string) ([]db.VaultCredential, error) {

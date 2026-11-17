@@ -30,7 +30,7 @@ type credentialStore interface {
 	GetWorkspaceIdentifiers(context.Context, string) (db.WorkspaceIdentifiers, error)
 	UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next db.VaultCredential) (db.VaultCredential, error)
 	GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (db.VaultCredential, error)
-	GetCodeSessionVaultIDs(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) ([]string, error)
+	GetCodeSessionCredentialScope(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) (db.CredentialScope, error)
 	ListActiveVaultCredentialsForVaultIDs(ctx context.Context, workspaceUUID string, vaultExternalIDs []string) ([]db.VaultCredential, error)
 }
 
@@ -142,14 +142,16 @@ func (i *Injector) clock() time.Time {
 }
 
 type resolvedInjection struct {
-	token      string
-	planCredID string
-	authType   string
+	managedAuthorization bool
+	token                string
+	planCredID           string
+	authType             string
 }
 
 // injectionPlan is the vault_ids-ordered match set for one outbound MCP URL.
 // Loaded once per RoundTrip; walk/401 retries reuse it without re-querying.
 type injectionPlan struct {
+	scope       db.CredentialScope
 	matches     []*db.VaultCredential
 	hostCovered bool
 }
@@ -283,6 +285,9 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 				continue
 			}
 		}
+		if result.managedAuthorization {
+			return nil, injectionRejected(ErrCredentialAuthorizationManaged)
+		}
 		excluded[credID] = struct{}{}
 	}
 }
@@ -295,14 +300,14 @@ func (i *Injector) loadInjectionPlan(
 	requestURL *url.URL,
 	mcpEndpoint bool,
 ) (injectionPlan, error) {
-	vaultIDs, err := i.store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
+	scope, err := i.store.GetCodeSessionCredentialScope(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("load vault_ids: %w", err))
 	}
-	if len(vaultIDs) == 0 {
+	if len(scope.VaultIDs) == 0 {
 		return injectionPlan{}, nil
 	}
-	credentials, err := i.store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
+	credentials, err := i.store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, scope.VaultIDs)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("load credentials: %w", err))
 	}
@@ -310,11 +315,12 @@ func (i *Injector) loadInjectionPlan(
 	if mcpEndpoint {
 		match = listMCPInjectableMatches
 	}
+	credentials = SelectCredentialBindings(scope, credentials)
 	matches, hostCovered, err := match(requestURL, credentials)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("match credentials: %w", err))
 	}
-	return injectionPlan{matches: matches, hostCovered: hostCovered}, nil
+	return injectionPlan{matches: matches, hostCovered: hostCovered, scope: scope}, nil
 }
 
 func (i *Injector) resolveFromPlan(
@@ -331,11 +337,18 @@ func (i *Injector) resolveFromPlan(
 		_, force := forceRefresh[cred.ExternalID]
 		result, err := i.resolveInjectableToken(ctx, cred, force)
 		if err != nil {
+			if plan.scope.PinBindings {
+				if cred.VaultExternalID != plan.scope.OAuthVaultID && errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
+					return nil, injectionRejected(ErrCredentialAuthorizationManaged)
+				}
+				return nil, injectionRejected(err)
+			}
 			failure = errors.Join(failure, err)
 			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
 			continue
 		}
 		result.planCredID = cred.ExternalID
+		result.managedAuthorization = plan.scope.PinBindings && cred.VaultExternalID != plan.scope.OAuthVaultID
 		result.authType = cred.AuthType
 		return result, nil
 	}

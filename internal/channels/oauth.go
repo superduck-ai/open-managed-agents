@@ -58,7 +58,10 @@ func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.
 			return OAuthTarget{}, errors.New("目标 MCP 未挂载到原会话")
 		}
 	}
-	id := personalVaultID(scope.Channel, scope.ActorID)
+	id, err := s.store.GetChannelPersonalVaultID(ctx, personalVaultIdentity(scope.Channel, scope.ActorID))
+	if err != nil {
+		return OAuthTarget{}, err
+	}
 	if !slices.Contains(scope.Session.VaultIDs, id) {
 		return OAuthTarget{}, errors.New("当前会话未挂载个人连接保险库，请新建私聊会话")
 	}

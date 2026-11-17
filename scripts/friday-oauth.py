@@ -7,6 +7,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 
 
@@ -24,7 +25,7 @@ if not executable:
 environment = os.environ.copy()
 provider = environment.get("OMA_FRIDAY_OAUTH_PROVIDER")
 offline = any(argument in {"-h", "--help", "--version"} for argument in arguments)
-if provider and not offline:
+if not offline and (provider or environment.get("OMA_TOOL_CALL_ID")):
     if any(argument == "--api-key" or argument.startswith("--api-key=") for argument in arguments):
         sys.exit("OMA 个人 OAuth 入口不接受 API Key。")
     call_id = environment.get("OMA_TOOL_CALL_ID")
@@ -36,7 +37,8 @@ if provider and not offline:
         data=json.dumps(
             {
                 "kind": "env_oauth",
-                "provider": provider,
+                "provider": provider or "",
+                "target_host": urllib.parse.urlparse(environment.get("FRIDAY_BASE_URL", "https://friday-tx.seewo.com")).hostname,
                 "secret_name": "FRIDAY_4A_TOKEN",
                 "parent_call_id": call_id,
                 "invocation_id": str(uuid.uuid4()),
@@ -49,6 +51,12 @@ if provider and not offline:
     try:
         with urllib.request.urlopen(request, timeout=None) as response:
             result = json.load(response)
+    except urllib.error.HTTPError as error:
+        try:
+            failure = json.load(error)
+        except (ValueError, OSError):
+            sys.exit("Friday 授权未完成，当前命令未执行；请查看原对话。")
+        sys.exit(failure.get("error", {}).get("message", "Friday 授权未完成，当前命令未执行。"))
     except (urllib.error.URLError, OSError):
         sys.exit("Friday 授权未完成，当前命令未执行；请查看原对话。")
     if result.get("authorized") is not True or not isinstance(

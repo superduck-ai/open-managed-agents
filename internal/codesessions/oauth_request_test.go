@@ -15,6 +15,7 @@ func TestOAuthRequestValidation(t *testing.T) {
 		}
 	}
 	for _, input := range []OAuthRequest{
+		{Kind: "env_oauth", ParentCallID: "bash-call", TargetHost: "friday.example", SecretName: "FRIDAY_4A_TOKEN", Reason: "missing"},
 		{Kind: "env_oauth", ParentCallID: "bash-call", Provider: "custom:friday", SecretName: "FRIDAY_4A_TOKEN", Reason: "missing"},
 		{Kind: "mcp_oauth", ParentCallID: "mcp-call", MCPServerName: "notion", MCPServerURL: "https://mcp.notion.com/mcp", Reason: "reauthorization_required"},
 	} {

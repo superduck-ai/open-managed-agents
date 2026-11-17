@@ -43,6 +43,11 @@ type EnvOAuthProviderResolver interface {
 	ResolveEnvOAuthProvider(ctx context.Context, providerKey string) (EnvOAuthProviderSnapshot, error)
 }
 
+type EnvOAuthProviderDirectory interface {
+	EnvOAuthProviderResolver
+	ListProviders(ctx context.Context, workspaceUUID string) ([]EnvOAuthProviderSnapshot, error)
+}
+
 func ParseEnvOAuthProviderKey(value string) (custom bool, id string, err error) {
 	key := strings.TrimSpace(value)
 	if key == "" {

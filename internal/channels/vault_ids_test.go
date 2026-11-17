@@ -90,6 +90,16 @@ func TestChannelVaultListCompatibility(t *testing.T) {
 	}
 }
 
+func TestManuallyMountedOwnVaultIsNotAttachedTwice(t *testing.T) {
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused.test")
+	worker.supervisor.personalVault = func(context.Context, db.ChannelRecord, string) (string, error) { return "vault-a", nil }
+	worker.record.Mounts = `{"vault_ids":["vault-a"]}`
+	session := omaSession{VaultIDs: []string{"vault-a"}, Metadata: map[string]string{"chat_type": "p2p", "actor_id": "user-a", "personal_vault_id": "vault-a", "credential_binding_mode": "first_vault"}}
+	if !worker.compatibleMounts(session) {
+		t.Fatal("手动挂载本人 Vault 不应重复追加同一资源")
+	}
+}
+
 func TestLegacyVaultUpdateDoesNotDiscardMultipleVaults(t *testing.T) {
 	service := newLocalService(&vaultListStore{}, nil, nil, nil)
 	for _, raw := range []string{`{"vault_id":null}`, `{"vault_id":"vault-a"}`} {

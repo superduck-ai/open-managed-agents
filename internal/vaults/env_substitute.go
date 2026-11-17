@@ -140,18 +140,18 @@ func (s *EgressSubstitutor) loadCredentials(
 	if s == nil || s.store == nil {
 		return nil, substitutionRejected(errCredentialStoreUnavailable)
 	}
-	vaultIDs, err := s.store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
+	scope, err := s.store.GetCodeSessionCredentialScope(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
 		return nil, substitutionRejected(err)
 	}
-	if len(vaultIDs) == 0 {
+	if len(scope.VaultIDs) == 0 {
 		return nil, nil
 	}
-	credentials, err := s.store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
+	credentials, err := s.store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, scope.VaultIDs)
 	if err != nil {
 		return nil, substitutionRejected(err)
 	}
-	return credentials, nil
+	return SelectCredentialBindings(scope, credentials), nil
 }
 
 func (s *EgressSubstitutor) applyEnvSubstitutions(

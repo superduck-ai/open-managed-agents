@@ -43,12 +43,24 @@ func (f *fakeRuntimeStore) SaveChannelReplyReceipt(_ context.Context, scope db.C
 	defer f.mu.Unlock()
 	key := scope.ChannelExternalID + ":" + id
 	row := f.deliveries[key]
-	if row.State != "sending" || row.LeaseOwner != owner || row.LeaseUntil.Before(time.Now()) {
+	if row.State != "sending" && row.State != "unconfirmed" || row.LeaseOwner != owner {
 		return db.ErrInvalidState
 	}
 	row.State = "sent"
 	row.ReplyMessageID = receipt
 	f.deliveries[key] = row
+	return nil
+}
+
+func (f *fakeRuntimeStore) RetireChannelReplyDelivery(_ context.Context, scope db.ChannelDeliveryScope, id, owner string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := scope.ChannelExternalID + ":" + id
+	row, ok := f.deliveries[key]
+	if ok && (row.State == "sending" || row.State == "sent") && (row.LeaseOwner == owner || row.LeaseUntil.Before(time.Now())) {
+		row.State = "unconfirmed"
+		f.deliveries[key] = row
+	}
 	return nil
 }
 func (f *fakeRuntimeStore) RenewChannelReplyDelivery(_ context.Context, scope db.ChannelDeliveryScope, id, owner string) error {
@@ -94,7 +106,7 @@ func (f *fakeRuntimeStore) ListChannelReplyDeliveries(_ context.Context, scope d
 	defer f.mu.Unlock()
 	var rows []db.ChannelReplyDelivery
 	for _, row := range f.deliveries {
-		if row.ChannelExternalID == scope.ChannelExternalID && row.State == "sent" && row.LeaseUntil.Before(time.Now()) {
+		if row.ChannelExternalID == scope.ChannelExternalID && (row.State == "sent" || row.State == "sending") && row.LeaseUntil.Before(time.Now()) {
 			rows = append(rows, row)
 		}
 	}
@@ -119,7 +131,7 @@ func (f *fakeRuntimeStore) NextChannelReplyRecovery(_ context.Context, scope db.
 	defer f.mu.Unlock()
 	var next time.Time
 	for _, row := range f.deliveries {
-		if row.ChannelExternalID == scope.ChannelExternalID && row.State == "sent" && row.LeaseOwner != owner && (next.IsZero() || row.LeaseUntil.Before(next)) {
+		if row.ChannelExternalID == scope.ChannelExternalID && (row.State == "sent" || row.State == "sending") && row.LeaseOwner != owner && (next.IsZero() || row.LeaseUntil.Before(next)) {
 			next = row.LeaseUntil
 		}
 	}

@@ -13,6 +13,26 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestMCPOAuthCredentialServiceURL(t *testing.T) {
+	for _, test := range []struct{ service, target string }{
+		{"https://bridge.example/oauth", "https://api.example/business"},
+		{"https://mcp.example/mcp", "https://mcp.example/mcp"},
+	} {
+		auth, _, err := BuildMCPOAuthStoredCredentialJSON(MCPOAuthStoredCredentialInput{MCPServerURL: test.target, OAuthServiceURL: test.service, AccessToken: "synthetic"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := MCPOAuthCredentialServiceURL(auth)
+		if err != nil || got != test.service {
+			t.Fatalf("OAuth 服务地址读取错误：%s %v", got, err)
+		}
+	}
+	got, err := MCPOAuthCredentialServiceURL([]byte(`{"type":"mcp_oauth","mcp_server_url":"https://legacy.example/mcp"}`))
+	if err != nil || got != "https://legacy.example/mcp" {
+		t.Fatalf("旧凭据缺省地址错误：%s %v", got, err)
+	}
+}
+
 func TestOAuthServiceURLSurvivesRepeatedRefresh(t *testing.T) {
 	const target = "https://open.feishu.cn/open-apis"
 	const service = "https://bridge.example"

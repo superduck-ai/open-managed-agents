@@ -6,10 +6,48 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestChannelReplyDeliveryIdentityMigration(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("未配置 PostgreSQL 集成测试地址")
+	}
+	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
+	if _, err := migrations.UpTo(ctx, 147); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+ALTER TABLE channel_reply_deliveries DROP COLUMN id, DROP COLUMN uuid, DROP COLUMN external_id, DROP COLUMN channel_uuid;
+ALTER TABLE channel_reply_deliveries ADD PRIMARY KEY (channel_external_id, input_event_id);
+INSERT INTO channels (external_id, organization_uuid, workspace_uuid, agent_external_id, name, mode)
+VALUES ('chnl_migration', gen_random_uuid(), gen_random_uuid(), 'agent_migration', '迁移验收', 'open');
+INSERT INTO channel_reply_deliveries (channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, artifact_delivery)
+VALUES ('chnl_migration', 'feishu', 'app_migration', 'input_migration', 'session_migration', 'chat:migration', 'message_migration', 'chat_migration', 'p2p', 'actor_migration', 'card_migration', true, true, 'sent', 'owner_migration', '{"files":[{"message_id":"file_migration"}]}');`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrations.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var preserved bool
+	if err := database.QueryRowContext(ctx, `SELECT
+d.id > 0 AND d.uuid IS NOT NULL AND d.external_id LIKE 'crdl_%' AND d.channel_uuid=c.uuid
+AND d.input_event_id='input_migration' AND d.session_external_id='session_migration'
+AND d.reply_message_id='card_migration' AND d.state='sent' AND d.lease_owner='owner_migration'
+AND d.artifact_delivery->'files'->0->>'message_id'='file_migration'
+AND d.include_thinking AND d.include_tool_calls
+FROM channel_reply_deliveries d JOIN channels c ON c.external_id=d.channel_external_id`).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("升级未完整保留交付关联和回执: %v", err)
+	}
+	var foreignKeys int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='channel_reply_deliveries'::regclass AND contype='f'`).Scan(&foreignKeys); err != nil || foreignKeys != 0 {
+		t.Fatalf("回执表不应引入外键: %d %v", foreignKeys, err)
+	}
+}
 
 func testChannelReplyDeliveriesPostgres(t *testing.T, store *DB, database *sql.DB, scope ChannelDeliveryScope, otherWorkspace string) {
 	t.Helper()
@@ -19,6 +57,9 @@ func testChannelReplyDeliveriesPostgres(t *testing.T, store *DB, database *sql.D
 	row, err := store.PrepareChannelReplyDelivery(ctx, scope, input)
 	if err != nil || row.State != "pending" || row.ChannelType != "feishu" || row.AccountID != "app_1" {
 		t.Fatalf("准备回执: %+v %v", row, err)
+	}
+	if row.UUID == "" || row.ExternalID == "" || row.ChannelUUID == "" {
+		t.Fatal("交付回执缺少原生标识或渠道 UUID")
 	}
 	changed := input
 	changed.ChatID = "不应覆盖"
@@ -158,5 +199,17 @@ func testChannelReplyDeliveriesPostgres(t *testing.T, store *DB, database *sql.D
 	}
 	if _, ok, err := store.ClaimChannelReplyDelivery(ctx, scope, input.InputEventID, "owner_retry"); err != nil || ok {
 		t.Fatalf("发送结果未知不可重发: %v %v", ok, err)
+	}
+	if err := store.RetireChannelReplyDelivery(ctx, scope, input.InputEventID, "owner_retry"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.NextChannelReplyRecovery(ctx, scope, "another"); err != nil || found {
+		t.Fatalf("未知交付未退出恢复扫描：%v %v", found, err)
+	}
+	if err := store.SaveChannelReplyReceipt(ctx, scope, input.InputEventID, "owner_unknown", "late-known-card"); err != nil {
+		t.Fatalf("原发送者的迟到回执应恢复原卡：%v", err)
+	}
+	if _, err := store.GetChannelReplyDeliveryByReceipt(ctx, scope, "late-known-card"); err != nil {
+		t.Fatal(err)
 	}
 }

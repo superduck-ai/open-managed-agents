@@ -11,19 +11,12 @@ const (
 	ObservabilityBackendOpenObserve = "openobserve"
 )
 
-type ChannelBridgeConfig struct {
-	URL   string `yaml:"url"`
-	Token string `yaml:"token"`
-}
-
 type ChannelsConfig struct {
-	Runtime string `yaml:"runtime"`
-	OMAURL  string `yaml:"oma_url"`
+	OMAURL string `yaml:"oma_url"`
 }
 
 type Config struct {
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
-	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
 	Channels               ChannelsConfig             `yaml:"channels"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
 	WebTools               WebToolsConfig             `yaml:"web_tools"`

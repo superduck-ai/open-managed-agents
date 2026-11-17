@@ -516,7 +516,11 @@ func (s *localService) bindCredentials(ctx context.Context, record *db.ChannelRe
 		appSecret = strings.TrimSpace(*input.AppSecret)
 	}
 	if appSecret == "" && input.AppID == nil {
-		appSecret, _ = openChannelSecret(ctx, s.cipher, *record)
+		var err error
+		appSecret, err = openChannelSecret(ctx, s.cipher, *record)
+		if err != nil {
+			return unavailable(err)
+		}
 	}
 	if appID == "" || appSecret == "" {
 		return invalidAppCredentials()

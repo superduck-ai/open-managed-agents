@@ -182,6 +182,7 @@
     </insert>
 
     <sql id="replyDeliveryColumns">
+        d.uuid, d.external_id, d.channel_uuid,
         d.channel_external_id, d.channel_type, d.account_id, d.input_event_id, d.session_external_id, d.scope_key,
         d.message_id, d.chat_id, d.chat_type, d.actor_id, d.root_id, d.thread_id,
         d.reply_message_id, d.include_thinking, d.include_tool_calls, d.state,
@@ -189,22 +190,22 @@
     </sql>
     <sql id="replyDeliveryScope">
         d.channel_external_id = #{scope.ChannelExternalID}
-        AND EXISTS (SELECT 1 FROM channels c WHERE c.external_id = d.channel_external_id
+        AND EXISTS (SELECT 1 FROM channels c WHERE c.uuid = d.channel_uuid AND c.external_id = d.channel_external_id
           AND c.organization_uuid = #{scope.OrganizationUUID} AND c.workspace_uuid = #{scope.WorkspaceUUID}
           AND c.deleted_at IS NULL)
     </sql>
     <select id="InsertReplyDelivery" result="optional" resultType="ChannelReplyDelivery">
  WITH changed AS (
-        INSERT INTO channel_reply_deliveries AS d (channel_external_id, channel_type, account_id, input_event_id, session_external_id,
+        INSERT INTO channel_reply_deliveries AS d (uuid, external_id, channel_uuid, channel_external_id, channel_type, account_id, input_event_id, session_external_id,
           scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, include_thinking, include_tool_calls, artifact_delivery)
-        SELECT c.external_id, #{input.ChannelType}, #{input.AccountID}, #{input.InputEventID}, #{input.SessionExternalID}, #{input.ScopeKey},
+        SELECT #{input.UUID}, #{input.ExternalID}, c.uuid, c.external_id, #{input.ChannelType}, #{input.AccountID}, #{input.InputEventID}, #{input.SessionExternalID}, #{input.ScopeKey},
           #{input.MessageID}, #{input.ChatID}, #{input.ChatType}, #{input.ActorID}, #{input.RootID}, #{input.ThreadID},
           #{input.IncludeThinking}, #{input.IncludeToolCalls}, COALESCE(CAST(NULLIF(#{input.ArtifactDelivery,sensitive=true}, '') AS jsonb), CAST('{}' AS jsonb))
         FROM channels c WHERE c.external_id = #{scope.ChannelExternalID}
           AND c.organization_uuid = #{scope.OrganizationUUID} AND c.workspace_uuid = #{scope.WorkspaceUUID}
           AND c.deleted_at IS NULL
-        ON CONFLICT (channel_external_id, input_event_id) DO NOTHING
-        RETURNING channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
+        ON CONFLICT (channel_uuid, input_event_id) DO NOTHING
+        RETURNING uuid, external_id, channel_uuid, channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
     ) SELECT <include refid="replyDeliveryColumns"/> FROM changed d
  </select>
     <select id="FindReplyDelivery" resultType="ChannelReplyDelivery">
@@ -222,7 +223,7 @@
           state = CASE WHEN state = 'pending' THEN 'sending' ELSE state END, updated_at = now()
         WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
           AND (d.state = 'pending' OR d.state = 'sent' AND d.lease_until &lt; now())
-        RETURNING channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
+        RETURNING uuid, external_id, channel_uuid, channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
     ) SELECT <include refid="replyDeliveryColumns"/> FROM changed d
  </select>
     <select id="SaveReplyReceipt" result="optional" resultType="string">
@@ -230,7 +231,7 @@
         UPDATE channel_reply_deliveries d SET reply_message_id = #{receipt}, state = 'sent',
           lease_until = now() + interval '30 seconds', updated_at = now()
         WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
-          AND d.lease_owner = #{owner} AND d.state = 'sending' AND d.lease_until &gt; now()
+          AND d.lease_owner = #{owner} AND d.state IN ('sending', 'unconfirmed')
         RETURNING input_event_id
     ) SELECT input_event_id FROM changed
  </select>
@@ -269,12 +270,20 @@
  </select>
     <select id="NextReplyRecovery" result="optional" resultType="time.Time">
         SELECT d.lease_until FROM channel_reply_deliveries d
-        WHERE <include refid="replyDeliveryScope"/> AND d.state = 'sent' AND d.lease_owner &lt;&gt; #{owner}
+        WHERE <include refid="replyDeliveryScope"/> AND d.state IN ('sent', 'sending') AND d.lease_owner &lt;&gt; #{owner}
         ORDER BY d.lease_until LIMIT 1
     </select>
     <select id="ListReplyDeliveries" resultType="ChannelReplyDelivery">
         SELECT <include refid="replyDeliveryColumns"/> FROM channel_reply_deliveries d
-        WHERE <include refid="replyDeliveryScope"/> AND d.state = 'sent' AND d.lease_until &lt; now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.state IN ('sent', 'sending') AND d.lease_until &lt; now()
         ORDER BY d.created_at LIMIT 100
     </select>
+    <select id="RetireReplyDelivery" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET state = 'unconfirmed', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.state IN ('sending', 'sent') AND (d.lease_owner = #{owner} OR d.lease_until &lt; now())
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
 </mapper>

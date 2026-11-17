@@ -12,6 +12,38 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestReplyRecoveryRetiresUnknownAndUnboundReceipts(t *testing.T) {
+	for _, state := range []string{"sending", "sent"} {
+		t.Run(state, func(t *testing.T) {
+			store := &fakeRuntimeStore{}
+			worker, _ := testWorker(t, store, "http://unused.test")
+			worker.online.Store(true)
+			scope := worker.deliveryScope()
+			_, err := store.PrepareChannelReplyDelivery(t.Context(), scope, db.ChannelReplyDelivery{InputEventID: "input", SessionExternalID: "old", ScopeKey: "chat:old", ChannelType: worker.record.ChannelType, AccountID: worker.record.AppID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.mu.Lock()
+			row := store.deliveries[scope.ChannelExternalID+":input"]
+			row.State = state
+			row.LeaseOwner = "previous"
+			row.LeaseUntil = time.Now().Add(-time.Second)
+			store.deliveries[scope.ChannelExternalID+":input"] = row
+			store.mu.Unlock()
+			worker.restoreReplies(t.Context())
+			store.mu.Lock()
+			got := store.deliveries[scope.ChannelExternalID+":input"]
+			store.mu.Unlock()
+			if got.State != "unconfirmed" {
+				t.Fatalf("交付未收敛：%s", got.State)
+			}
+			if _, found, err := store.NextChannelReplyRecovery(t.Context(), scope, worker.deliveryOwner); err != nil || found {
+				t.Fatalf("终态仍触发恢复时钟：%v %v", found, err)
+			}
+		})
+	}
+}
+
 func TestRestartRestoresOriginalCardFromOMAHistory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

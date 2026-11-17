@@ -92,6 +92,7 @@ type ChannelRecordMapper interface {
 	RenewReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
 	ReleaseReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
 	CompleteReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
+	RetireReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
 	NextReplyRecovery(ctx context.Context, scope ChannelDeliveryScope, owner string) (time.Time, bool, error)
 	ListReplyDeliveries(ctx context.Context, scope ChannelDeliveryScope) ([]ChannelReplyDelivery, error)
 	LockAgent(ctx context.Context, workspaceUUID, agentExternalID string) (string, error)

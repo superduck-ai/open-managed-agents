@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -28,6 +30,16 @@ func testCipher(t *testing.T) *secrets.Service {
 		t.Fatalf("local provider: %v", err)
 	}
 	return secrets.NewService(provider)
+}
+
+func TestBindCredentialsPreservesDecryptionFailure(t *testing.T) {
+	service := newLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
+	record := db.ChannelRecord{AppID: "cli_test", AppSecretEnvelope: new("{invalid-envelope")}
+	err := service.bindCredentials(t.Context(), &record, channelMutation{})
+	app, ok := errors.AsType[*apperr.Error](err)
+	if !ok || app.Kind != apperr.Unavailable || errors.Unwrap(app) == nil {
+		t.Fatalf("解密失败被误报为错误凭据：%v", err)
+	}
 }
 
 type fakeLocalStore struct {
@@ -107,10 +119,10 @@ func (f *fakeLocalStore) GetChannelAgentEnvironment(context.Context, string, str
 }
 
 func TestServiceAlwaysUsesNativeRuntime(t *testing.T) {
-	cfg := config.Config{ChannelBridge: config.ChannelBridgeConfig{URL: "http://bridge", Token: "token"}, Channels: config.ChannelsConfig{Runtime: "bridge"}}
+	cfg := config.Config{}
 	service := NewService(cfg, nil, nil, nil)
 	if service.local == nil || service.supervisor == nil {
-		t.Fatal("即使配置了旧桥接参数也必须创建原生运行时")
+		t.Fatal("缺省配置必须创建原生运行时")
 	}
 }
 

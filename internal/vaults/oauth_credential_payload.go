@@ -1,9 +1,18 @@
 package vaults
 
 import (
+	"cmp"
 	"encoding/json"
 	"time"
 )
+
+func MCPOAuthCredentialServiceURL(authJSON []byte) (string, error) {
+	auth, err := decodeMCPOAuthCredentialAuth(authJSON)
+	if err != nil {
+		return "", err
+	}
+	return cmp.Or(auth.OAuthServiceURL, auth.MCPServerURL), nil
+}
 
 // MCPOAuthStoredCredentialInput is the seam for materializing mcp_oauth public
 // auth + secret JSON after a successful token exchange (e.g. platform OAuth

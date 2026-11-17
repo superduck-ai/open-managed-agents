@@ -117,7 +117,7 @@ sequenceDiagram
 
 ## 隔离与扩展
 
-渠道通过 `channel_personal_vaults` 保存组织、工作区、渠道类型、应用 ID、操作者与原生 Vault UUID 的关联。身份组合和 Vault UUID 分别唯一；首次创建复用原生 Vault 插入，并与关联在同一事务中提交。新 Vault 使用原生 `vlt_` ID，不增加类型或专属 Vault 服务。已有验收 Vault 通过迁移补关联，不改 ID、凭据或令牌。
+渠道通过 `channel_user_vaults` 保存组织、工作区、渠道类型、应用 ID、操作者与原生 Vault UUID 的关联。身份组合和 Vault UUID 分别唯一；首次创建复用原生 Vault 插入，并与关联在同一事务中提交。新 Vault 使用原生 `vlt_` ID，不增加类型或专属 Vault 服务。已有验收 Vault 通过迁移补关联，不改 ID、凭据或令牌。`00147` 将原关联表重命名为 `channel_user_vaults`，保留 `00146` 历史迁移及现有关联数据。
 
 渠道决定身份与挂载：手动挂载的 Vault 排在当前操作者关联的 Vault 前，前者用于明确共享，后者用于个人授权。群会话只使用手动挂载，个人授权继续在私聊进行。所有挂载仍通过原生 `vault_ids` 承载；其他用户的 Vault 不自动加入。
 

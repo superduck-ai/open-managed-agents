@@ -39,6 +39,7 @@ type runtimeStore interface {
 	RenewChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
 	ReleaseChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
 	CompleteChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
+	RetireChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
 	NextChannelReplyRecovery(context.Context, db.ChannelDeliveryScope, string) (time.Time, bool, error)
 	ListChannelReplyDeliveries(context.Context, db.ChannelDeliveryScope) ([]db.ChannelReplyDelivery, error)
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)

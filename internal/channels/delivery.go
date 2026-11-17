@@ -79,10 +79,10 @@ func (w *channelWorker) openReply(ctx context.Context, task *channelReplyTask, m
 	} else {
 		stream, err = w.adapter.openReply(ctx, msg)
 		if err != nil {
-			return nil, errors.Join(errChannelDeliveryUnconfirmed, err)
+			return nil, errors.Join(errChannelDeliveryUnconfirmed, err, w.supervisor.store.RetireChannelReplyDelivery(ctx, scope, task.inputEventID, w.deliveryOwner))
 		}
 		if stream.receipt() == "" {
-			return nil, errChannelDeliveryUnconfirmed
+			return nil, errors.Join(errChannelDeliveryUnconfirmed, w.supervisor.store.RetireChannelReplyDelivery(ctx, scope, task.inputEventID, w.deliveryOwner))
 		}
 		if err := w.supervisor.store.SaveChannelReplyReceipt(ctx, scope, task.inputEventID, w.deliveryOwner, stream.receipt()); err != nil {
 			return nil, err
@@ -119,7 +119,14 @@ func (w *channelWorker) restoreReplies(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
-		if row.ChannelType != w.record.ChannelType || row.AccountID != w.record.AppID || w.currentSession(ctx, row.ScopeKey) != row.SessionExternalID {
+		sessionID, bindErr := w.supervisor.store.GetChannelSessionBinding(ctx, w.record.ExternalID, row.ScopeKey)
+		if bindErr != nil && !errors.Is(bindErr, db.ErrNotFound) {
+			continue
+		}
+		if row.State == "sending" || row.ChannelType != w.record.ChannelType || row.AccountID != w.record.AppID || sessionID != row.SessionExternalID {
+			if err := w.supervisor.store.RetireChannelReplyDelivery(ctx, w.deliveryScope(), row.InputEventID, w.deliveryOwner); err != nil {
+				w.supervisor.logger.WarnContext(ctx, "retire channel reply", "channel_id", w.record.ExternalID, "error", err)
+			}
 			continue
 		}
 		w.resumeReplyDelivery(row)

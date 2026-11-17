@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"time"
+	"uuid"
 )
 
 type ChannelDeliveryScope struct {
@@ -12,6 +14,9 @@ type ChannelDeliveryScope struct {
 }
 
 type ChannelReplyDelivery struct {
+	UUID              string    `db:"uuid"`
+	ExternalID        string    `db:"external_id"`
+	ChannelUUID       string    `db:"channel_uuid"`
 	ArtifactDelivery  string    `db:"artifact_delivery"`
 	ChannelType       string    `db:"channel_type"`
 	AccountID         string    `db:"account_id"`
@@ -45,6 +50,12 @@ func (d *DB) SaveChannelArtifactDelivery(ctx context.Context, scope ChannelDeliv
 }
 
 func (d *DB) PrepareChannelReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, input ChannelReplyDelivery) (ChannelReplyDelivery, error) {
+	var err error
+	input.UUID = uuid.NewV4().String()
+	input.ExternalID, err = ids.New("crdl_")
+	if err != nil {
+		return ChannelReplyDelivery{}, err
+	}
 	mapper := NewChannelRecordMapper(d.mapperDB)
 	row, found, err := mapper.InsertReplyDelivery(ctx, scope, input)
 	if err != nil {
@@ -55,6 +66,11 @@ func (d *DB) PrepareChannelReplyDelivery(ctx context.Context, scope ChannelDeliv
 	}
 	row, err = mapper.FindReplyDelivery(ctx, scope, input.InputEventID)
 	return row, mapNoRows(err)
+}
+
+func (d *DB) RetireChannelReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) error {
+	_, _, err := NewChannelRecordMapper(d.mapperDB).RetireReplyDelivery(ctx, scope, inputID, owner)
+	return err
 }
 
 func (d *DB) ClaimChannelReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (ChannelReplyDelivery, bool, error) {

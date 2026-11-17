@@ -13,13 +13,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-func TestChannelPersonalVaultsPostgres(t *testing.T) {
+func TestChannelUserVaultsPostgres(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	fixture := devIdentityFixture()
 	if err := store.CreateDevIdentity(ctx, fixture); err != nil {
 		t.Fatal(err)
 	}
-	identity := ChannelPersonalVaultIdentity{OrganizationUUID: fixture.OrganizationUUID, WorkspaceUUID: fixture.Workspaces[0].UUID, ChannelType: "feishu", AppID: "test-app", ActorID: "user-a"}
+	identity := ChannelUserVaultIdentity{OrganizationUUID: fixture.OrganizationUUID, WorkspaceUUID: fixture.Workspaces[0].UUID, ChannelType: "feishu", AppID: "test-app", ActorID: "user-a"}
 	var group sync.WaitGroup
 	var lock sync.Mutex
 	results := map[string]bool{}
@@ -30,7 +30,7 @@ func TestChannelPersonalVaultsPostgres(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			got, err := store.EnsureChannelPersonalVault(ctx, identity, Vault{UUID: uuid.NewV4().String(), ExternalID: id, OrganizationUUID: identity.OrganizationUUID, WorkspaceUUID: identity.WorkspaceUUID, DisplayName: "用户关联测试", Metadata: json.RawMessage(`{}`), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+			got, err := store.EnsureChannelUserVault(ctx, identity, Vault{UUID: uuid.NewV4().String(), ExternalID: id, OrganizationUUID: identity.OrganizationUUID, WorkspaceUUID: identity.WorkspaceUUID, DisplayName: "用户关联测试", Metadata: json.RawMessage(`{}`), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
 			if err != nil {
 				t.Error(err)
 				return
@@ -44,7 +44,7 @@ func TestChannelPersonalVaultsPostgres(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("同一用户创建了多个 Vault：%v", results)
 	}
-	a, err := store.GetChannelPersonalVaultID(ctx, identity)
+	a, err := store.GetChannelUserVaultID(ctx, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestChannelPersonalVaultsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := store.EnsureChannelPersonalVault(ctx, identity, Vault{UUID: uuid.NewV4().String(), ExternalID: bID, OrganizationUUID: identity.OrganizationUUID, WorkspaceUUID: identity.WorkspaceUUID, DisplayName: "用户 B", Metadata: json.RawMessage(`{}`), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+	b, err := store.EnsureChannelUserVault(ctx, identity, Vault{UUID: uuid.NewV4().String(), ExternalID: bID, OrganizationUUID: identity.OrganizationUUID, WorkspaceUUID: identity.WorkspaceUUID, DisplayName: "用户 B", Metadata: json.RawMessage(`{}`), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
 	if err != nil || a == b {
 		t.Fatalf("不同用户复用了 Vault：%v", err)
 	}
@@ -62,7 +62,7 @@ func TestChannelPersonalVaultsPostgres(t *testing.T) {
 		t.Fatalf("并发创建遗留孤立 Vault：%d %v", len(page), err)
 	}
 	identity.OrganizationUUID = uuid.NewV4().String()
-	if _, err := store.GetChannelPersonalVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetChannelUserVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("跨组织读取关联：%v", err)
 	}
 	identity.OrganizationUUID = fixture.OrganizationUUID
@@ -71,17 +71,17 @@ func TestChannelPersonalVaultsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewChannelPersonalVaultMapper(store.mapperDB).Insert(ctx, identity, owned.UUID); err == nil {
+	if err := NewChannelUserVaultMapper(store.mapperDB).Insert(ctx, identity, owned.UUID); err == nil {
 		t.Fatal("同一 Vault 被关联给不同用户")
 	}
 	identity.ActorID = "user-b"
 	identity.AppID = "other-app"
-	if _, err := store.GetChannelPersonalVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetChannelUserVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("跨应用读取关联：%v", err)
 	}
 	identity.AppID = "test-app"
 	identity.WorkspaceUUID = fixture.Workspaces[1].UUID
-	if _, err := store.GetChannelPersonalVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetChannelUserVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("跨工作区读取关联：%v", err)
 	}
 	code := seedClaimCodeSession(t, ctx, database, 98, "claim", "idle")

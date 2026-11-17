@@ -58,7 +58,7 @@ func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.
 			return OAuthTarget{}, errors.New("目标 MCP 未挂载到原会话")
 		}
 	}
-	id, err := s.store.GetChannelPersonalVaultID(ctx, personalVaultIdentity(scope.Channel, scope.ActorID))
+	id, err := s.store.GetChannelUserVaultID(ctx, personalVaultIdentity(scope.Channel, scope.ActorID))
 	if err != nil {
 		return OAuthTarget{}, err
 	}
@@ -218,8 +218,11 @@ func (s *Service) OAuthCompletion(ctx context.Context, workspaceUUID string, con
 		if err != nil || provider != target.Request.Provider || credential.CredentialKey != target.Request.SecretName {
 			return OAuthTarget{}, nil, db.ErrInvalidState
 		}
-	} else if credential.CredentialKey != target.Request.MCPServerURL {
-		return OAuthTarget{}, nil, db.ErrInvalidState
+	} else {
+		serviceURL, err := vaults.MCPOAuthCredentialServiceURL(credential.Auth)
+		if err != nil || serviceURL != target.Request.MCPServerURL {
+			return OAuthTarget{}, nil, db.ErrInvalidState
+		}
 	}
 	result, err := jsonv2.Marshal(struct {
 		Authorized bool `json:"authorized"`

@@ -69,8 +69,11 @@ func (w *channelWorker) resumeAcceptedInput(task *channelReplyTask, msg *channel
 	if err != nil {
 		return err
 	}
-	if row.ReplyMessageID != "" || row.State == "completed" {
+	if row.ReplyMessageID != "" || row.State == "completed" || row.State == "unconfirmed" {
 		return w.completeInput(task.ctx, msg)
+	}
+	if row.State == "sending" {
+		return nil
 	}
 	return w.streamReply(task.ctx, task, msg, apiKey)
 }

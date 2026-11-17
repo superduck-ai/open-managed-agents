@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 )
 
@@ -26,9 +28,9 @@ func (isolatedTestSubscription) Close() {}
 
 type blockedTestReply struct{ entered chan struct{} }
 
-func (s blockedTestReply) receipt() string             { return "blocked_card" }
-func (s blockedTestReply) close(context.Context) error { return nil }
-func (s blockedTestReply) update(ctx context.Context, _ *channelReply) error {
+func (s blockedTestReply) Receipt() string             { return "blocked_card" }
+func (s blockedTestReply) Close(context.Context) error { return nil }
+func (s blockedTestReply) Update(ctx context.Context, _ contracts.Reply) error {
 	close(s.entered)
 	<-ctx.Done()
 	return ctx.Err()
@@ -40,10 +42,10 @@ type capturedTestUpdate struct {
 }
 type capturedTestReply struct{ updates chan capturedTestUpdate }
 
-func (s capturedTestReply) receipt() string             { return "fast_card" }
-func (s capturedTestReply) close(context.Context) error { return nil }
-func (s capturedTestReply) update(_ context.Context, reply *channelReply) error {
-	s.updates <- capturedTestUpdate{card: reply.render(), at: time.Now()}
+func (s capturedTestReply) Receipt() string             { return "fast_card" }
+func (s capturedTestReply) Close(context.Context) error { return nil }
+func (s capturedTestReply) Update(_ context.Context, reply contracts.Reply) error {
+	s.updates <- capturedTestUpdate{card: feishu.Render(reply), at: time.Now()}
 	return nil
 }
 

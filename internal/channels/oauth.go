@@ -7,8 +7,6 @@ import (
 	"errors"
 	"slices"
 
-	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -104,13 +102,7 @@ func (s *Service) BeginOAuth(ctx context.Context, channelID, sessionID, eventID,
 }
 
 func channelIdentityProvider(scope OAuthContext) vaults.EnvOAuthProviderSnapshot {
-	return vaults.EnvOAuthProviderSnapshot{
-		Builtin: true, Enabled: true, Configured: true, ProviderKey: "builtin:feishu", Name: "渠道操作者核验",
-		Version: 1, ClientID: scope.Channel.AppID, ClientSecret: scope.Secret,
-		AuthorizeEndpoint:       "https://accounts.feishu.cn/open-apis/authen/v1/authorize",
-		TokenEndpoint:           "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
-		TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "json", Scope: "contact:user.employee_id:readonly",
-	}
+	return scope.adapter.OAuthProvider()
 }
 
 func (s *Service) OAuthContinuationTarget(ctx context.Context, workspaceUUID string, continuation *db.OAuthContinuation) (OAuthTarget, error) {
@@ -155,9 +147,8 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 	if err := s.requirePendingOAuth(ctx, target); err != nil {
 		return "", err
 	}
-	client := lark.NewClient(target.Scope.Channel.AppID, target.Scope.Secret, lark.WithLogLevel(larkcore.LogLevelError))
-	info, err := client.Authen.V1.UserInfo.Get(ctx, larkcore.WithUserAccessToken(token))
-	if err != nil || !info.Success() || info.Data == nil || info.Data.OpenId == nil || *info.Data.OpenId != target.Scope.ActorID {
+	actor, err := target.Scope.adapter.OAuthUserID(ctx, token)
+	if err != nil || actor != target.Scope.ActorID {
 		return "", errors.New("授权用户与原消息发送者不一致")
 	}
 	next := *flow.Continuation

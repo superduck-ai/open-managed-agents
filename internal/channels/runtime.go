@@ -71,7 +71,7 @@ type runtimeSupervisor struct {
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {
 	return &runtimeSupervisor{
-		adapters: map[string]channelAdapterFactory{"feishu": newFeishuChannel},
+		adapters: make(map[string]channelAdapterFactory),
 		store:    store,
 		cipher:   cipher,
 		oma:      oma,

@@ -153,6 +153,9 @@ Friday 入口可只声明变量名与目标域名。已有匹配的挂载凭据�
 
 ## 开发中的实现映射
 
+飞书核验端点、SDK 用户信息查询及授权卡片布局位于 `internal/channels/feishu`。公共渠道层通过现有适配合同取得可信操作者标识、校验原请求并交接原生 OAuth，不包含飞书 SDK 或平台卡片格式。
+
+
 - `request_oauth` 复用原生自定义工具请求、控制输入和检查点；OAuth 满足后仍保留原工具权限条件。
 - ENV 和 MCP 原生 OAuth flow 增加可空的 `continuation`，只关联 Session、工具请求、渠道和浏览器绑定，不另建渠道运行记录。
 - 原生 ENV flow 构建逻辑由控制台和渠道共用；MCP discovery、PKCE、换票及凭据保存继续使用原实现。

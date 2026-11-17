@@ -35,7 +35,7 @@ func TestInputRecoveryDistinguishesUserCancellationFromShutdown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			msg.input = &row
+			msg.Input = &row
 			task := worker.startReplyTask(root, "chat:oc_1", "sesn_1")
 			if shutdown {
 				stop()
@@ -97,7 +97,7 @@ func TestChannelInputRecoveryAtHandoffBoundaries(t *testing.T) {
 			store.inputs[row.UUID] = pending
 			store.mu.Unlock()
 			worker.restoreInputs(t.Context())
-			worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+			worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 			waitForScope(t, worker, "chat:oc_1")
 			want := 1
 			if phase == "accepted" {
@@ -128,7 +128,7 @@ func TestChannelInputDuplicateDoesNotReenterBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	waitForScope(t, worker, "chat:oc_1")
 	if len(requests.snapshot()) != 1 || strings.Count(requests.snapshot()[0], "同一条原消息") != 1 {
 		t.Fatalf("重复回调进入了同一批次: %v", requests.snapshot())
@@ -140,7 +140,7 @@ func TestRestartPreservesPreparedBatchWithoutPlatformSDK(t *testing.T) {
 	store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}
 	worker, _ := testWorker(t, store, server.URL)
 	worker.record.ChannelType = "other"
-	worker.adapter = &independentAdapter{worker: worker}
+	worker.adapter = &independentAdapter{online: worker.online.Store}
 	var anchor db.ChannelInput
 	for _, id := range []string{"a", "b"} {
 		msg := &channelMessage{MessageID: id, MessageIDs: []string{id}, ChatID: "oc_1", ChatType: "p2p", UserID: "actor", Content: id}

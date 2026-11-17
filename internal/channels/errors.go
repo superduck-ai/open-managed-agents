@@ -3,9 +3,9 @@ package channels
 import (
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -18,21 +18,8 @@ var (
 	errOMAPaginationCycle             = errors.New("OMA 分页游标重复")
 	errChannelInputUnconfirmed        = errors.New("渠道输入提交结果未确认")
 	errOMARequestRejected             = errors.New("OMA 明确拒绝请求")
-	errChannelMediaUploadRejected     = errors.New("渠道媒体上传被明确拒绝，消息尚未发送")
-	errChannelImageUploadRejected     = errors.New("图片上传被明确拒绝，可以改为文件发送")
+	errChannelMediaUploadRejected     = contracts.ErrMediaUploadRejected
 )
-
-func feishuMediaUploadError(status, code int, image, permission bool) error {
-	err := fmt.Errorf("飞书媒体上传失败，HTTP=%d code=%d", status, code)
-	if status < 200 || status >= 500 || status == http.StatusRequestTimeout {
-		return err
-	}
-	err = fmt.Errorf("%w: %w", errChannelMediaUploadRejected, err)
-	if image && status != http.StatusForbidden && code != 99991672 && code != 99991676 && code != 99991679 && !permission {
-		return errors.Join(err, errChannelImageUploadRejected)
-	}
-	return err
-}
 
 func omaResponseError(status int) error {
 	if status >= 400 && status < 500 && status != 408 {

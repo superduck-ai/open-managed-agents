@@ -1,10 +1,13 @@
-package channels
+package feishu
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
+
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
@@ -13,40 +16,39 @@ import (
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
-	"slices"
-	"strings"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 )
 
-type feishuChannel struct {
-	worker   *channelWorker
-	client   *lark.Client
-	channel  channeltypes.Channel
-	incoming *feishuInputPipelines
+type Adapter struct {
+	Config   Config
+	Client   *lark.Client
+	Channel  channeltypes.Channel
+	Incoming *InputPipelines
 }
 
-func (f *feishuChannel) start(ctx context.Context) error { return f.channel.Start(ctx) }
-func (f *feishuChannel) close(ctx context.Context) error {
-	f.incoming.Dispose()
-	return f.channel.Stop(ctx)
+func (f *Adapter) Start(ctx context.Context) error { return f.Channel.Start(ctx) }
+func (f *Adapter) Close(ctx context.Context) error {
+	f.Incoming.Dispose()
+	return f.Channel.Stop(ctx)
 }
 
-func feishuMessage(msg *channeltypes.NormalizedMessage) *channelMessage {
+func Message(msg *channeltypes.NormalizedMessage) *contracts.Message {
 	if msg == nil {
 		return nil
 	}
-	resources := make([]channelAttachment, len(msg.Resources))
+	resources := make([]contracts.Attachment, len(msg.Resources))
 	for i, r := range msg.Resources {
-		resources[i] = channelAttachment{Type: r.Type, FileKey: r.FileKey, FileName: r.FileName}
+		resources[i] = contracts.Attachment{Type: r.Type, FileKey: r.FileKey, FileName: r.FileName}
 	}
 	rootID, threadID := "", ""
 	if msg.ChatType != "p2p" {
-		rootID = channelMessageID(msg, []string{"root_id"})
-		threadID = channelMessageID(msg, []string{"thread_id", "root_id"})
+		rootID = messageID(msg, []string{"root_id"})
+		threadID = messageID(msg, []string{"thread_id", "root_id"})
 	}
-	return &channelMessage{MessageID: msg.MessageID, MessageIDs: []string{msg.MessageID}, ChatID: msg.ChatID, ChatType: msg.ChatType, UserID: msg.UserID, Content: strings.TrimSpace(msg.Content), RawContentType: msg.RawContentType, RootID: rootID, ThreadID: threadID, Resources: resources}
+	return &contracts.Message{MessageID: msg.MessageID, MessageIDs: []string{msg.MessageID}, ChatID: msg.ChatID, ChatType: msg.ChatType, UserID: msg.UserID, Content: strings.TrimSpace(msg.Content), RawContentType: msg.RawContentType, RootID: rootID, ThreadID: threadID, Resources: resources}
 }
 
-func channelMessageID(msg *channeltypes.NormalizedMessage, keys []string) string {
+func messageID(msg *channeltypes.NormalizedMessage, keys []string) string {
 	if raw, ok := msg.RawEvent.(map[string]any); ok {
 		return messageIDFromPayload(raw, keys)
 	}
@@ -94,16 +96,16 @@ func messageIDFromMessage(payload map[string]any, keys []string) string {
 	return ""
 }
 
-func newFeishuWSClient(appID, secret string) *larkws.Client {
+func newWSClient(appID, secret string) *larkws.Client {
 	return larkws.NewClient(appID, secret, larkws.WithEventHandler(larkevent.NewEventDispatcher("", "")))
 }
 
-func newFeishuChannel(worker *channelWorker, secret string) (channelAdapter, error) {
-	if worker.record.AppID == "" || secret == "" {
+func New(config Config) (contracts.Adapter, error) {
+	if config.AppID == "" || config.Secret == "" {
 		return nil, errors.New("飞书应用凭据不完整")
 	}
-	client := lark.NewClient(worker.record.AppID, secret)
-	wsClient := newFeishuWSClient(worker.record.AppID, secret)
+	client := lark.NewClient(config.AppID, config.Secret)
+	wsClient := newWSClient(config.AppID, config.Secret)
 	requireMention := true
 	respondToMentionAll := false
 	safetyConfig := channeltypes.DefaultChannelConfig().Safety
@@ -113,19 +115,21 @@ func newFeishuChannel(worker *channelWorker, secret string) (channelAdapter, err
 		RespondToMentionAll: &respondToMentionAll,
 		DMMode:              "open",
 	}), channeltypes.WithSafetyConfig(safetyConfig))
-	adapter := &feishuChannel{worker: worker, client: client, channel: bot, incoming: newFeishuInputPipelines(channeltypes.DefaultBatchConfig())}
-	bot.OnReady(func() { worker.online.Store(true) })
-	bot.OnReconnecting(func() { worker.online.Store(false) })
-	bot.OnReconnected(func() { worker.online.Store(true) })
-	bot.OnDisconnected(func() { worker.online.Store(false) })
-	wsClient.EventHandler().OnP2MessageReceiveV1(adapter.receiveEvent)
-	bot.OnCardAction(worker.handleCardAction)
+	adapter := &Adapter{Config: config, Client: client, Channel: bot, Incoming: NewInputPipelines(channeltypes.DefaultBatchConfig())}
+	bot.OnReady(func() { config.Online(true) })
+	bot.OnReconnecting(func() { config.Online(false) })
+	bot.OnReconnected(func() { config.Online(true) })
+	bot.OnDisconnected(func() { config.Online(false) })
+	wsClient.EventHandler().OnP2MessageReceiveV1(adapter.ReceiveEvent)
+	bot.OnCardAction(func(ctx context.Context, event *channeltypes.CardActionEvent) error {
+		return config.Action(ctx, NormalizeAction(event))
+	})
 	return adapter, nil
 }
 
-func (w *channelWorker) dispatchMessage(ctx context.Context, msg *channeltypes.NormalizedMessage) error {
+func NormalizeMessage(msg *channeltypes.NormalizedMessage) (*contracts.Message, error) {
 	if msg == nil {
-		return nil
+		return nil, nil
 	}
 	normalized := *msg
 	msg = &normalized
@@ -143,7 +147,7 @@ func (w *channelWorker) dispatchMessage(ctx context.Context, msg *channeltypes.N
 			}
 			content := *raw.Event.Message.Content
 			if err := json.Unmarshal([]byte(content), &body); err != nil {
-				return fmt.Errorf("解析飞书富文本失败: %w", err)
+				return nil, fmt.Errorf("解析飞书富文本失败: %w", err)
 			}
 			if len(body.Content) > 0 || len(body.ContentV2) > 0 {
 				msg.Content, msg.Resources = normalize.ParseContent("post", `{"zh_cn":`+content+`}`)
@@ -175,20 +179,16 @@ func (w *channelWorker) dispatchMessage(ctx context.Context, msg *channeltypes.N
 			msg.Content = strings.ReplaceAll(msg.Content, mention.Key, "")
 		}
 	}
-	return w.receiveChannelMessage(ctx, feishuMessage(msg))
+	return Message(msg), nil
 }
 
-func (f *feishuChannel) queueInput(ctx context.Context, msg *channelMessage) error {
-	w := f.worker
-	scopeKey := msg.input.ScopeKey
+func (f *Adapter) QueueInput(ctx context.Context, msg *contracts.Message) error {
+	scopeKey := msg.Input.ScopeKey
 	batchKey := scopeKey + "\x00" + msg.UserID
-	w.mu.Lock()
-	queue := w.scopes[scopeKey]
-	busy := queue != nil && queue.held || len(w.replies[scopeKey]) > 0
-	w.mu.Unlock()
+	busy := f.Config.Busy(scopeKey)
 	if !busy || len(msg.Resources) > 0 || strings.HasPrefix(msg.Content, "/") {
-		return f.incoming.scope(batchKey).Run(w.baseContext(), func() error {
-			return w.prepareInputMessage(ctx, msg, scopeKey)
+		return f.Incoming.scope(batchKey).Run(f.Config.Context(), func() error {
+			return f.Config.Prepare(ctx, msg, scopeKey)
 		})
 	}
 	normalized := &channeltypes.NormalizedMessage{
@@ -196,20 +196,20 @@ func (f *feishuChannel) queueInput(ctx context.Context, msg *channelMessage) err
 		Content: msg.Content, RawContentType: msg.RawContentType,
 		RawEvent: map[string]any{"root_id": msg.RootID, "thread_id": msg.ThreadID},
 	}
-	f.incoming.scope(batchKey).Push(w.baseContext(), normalized, func(ctx context.Context, batch *channeltypes.BatchedDispatch) error {
-		message := feishuMessage(batch.Message)
+	f.Incoming.scope(batchKey).Push(f.Config.Context(), normalized, func(ctx context.Context, batch *channeltypes.BatchedDispatch) error {
+		message := Message(batch.Message)
 		message.MessageIDs = batch.SourceIDs
-		return w.prepareInputMessage(ctx, message, scopeKey)
+		return f.Config.Prepare(ctx, message, scopeKey)
 	})
 	return nil
 }
 
-func (f *feishuChannel) receiveEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+func (f *Adapter) ReceiveEvent(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	msg := normalize.ParseMessage(event)
 	if msg == nil {
 		return nil
 	}
-	identity := f.channel.GetBotIdentity(ctx)
+	identity := f.Channel.GetBotIdentity(ctx)
 	if identity != nil {
 		if msg.UserID == identity.OpenID {
 			return nil
@@ -222,9 +222,13 @@ func (f *feishuChannel) receiveEvent(ctx context.Context, event *larkim.P2Messag
 			}
 		}
 	}
-	policy := f.channel.GetPolicy()
+	policy := f.Channel.GetPolicy()
 	if safety.IsStale(msg.CreateTimeMs, channeltypes.DefaultStaleWindow) || !safety.NewPolicyGate(&policy, identity).Evaluate(msg).Allowed {
 		return nil
 	}
-	return f.worker.dispatchMessage(ctx, msg)
+	message, err := NormalizeMessage(msg)
+	if err != nil {
+		return err
+	}
+	return f.Config.Receive(ctx, message)
 }

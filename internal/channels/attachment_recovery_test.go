@@ -52,7 +52,7 @@ func TestAttachmentPreparationUsesNativePathAfterLostReceipt(t *testing.T) {
 			row := db.ChannelInput{UUID: "input", State: "prepared", LeaseOwner: worker.deliveryOwner, LeaseUntil: time.Now().Add(time.Hour)}
 			base.inputs = map[string]db.ChannelInput{row.UUID: row}
 			worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("完整附件")}
-			msg := &channelMessage{MessageID: "message", Content: "完整读取", input: &row, Resources: []channelAttachment{
+			msg := &channelMessage{MessageID: "message", Content: "完整读取", Input: &row, Resources: []channelAttachment{
 				{Type: "file", FileKey: "first", FileName: "same.csv"}, {Type: "file", FileKey: "second", FileName: "same.csv"},
 			}}
 			content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
@@ -60,7 +60,7 @@ func TestAttachmentPreparationUsesNativePathAfterLostReceipt(t *testing.T) {
 				t.Fatalf("失败不能提交部分内容: %v %v", content, err)
 			}
 			persisted := base.inputs[row.UUID]
-			msg.input = &persisted
+			msg.Input = &persisted
 			content, mounted, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
 			if err != nil || len(content) != 2 || len(mounted) != 2 || files.writes != 2 {
 				t.Fatalf("恢复应复用原生稳定路径: writes=%d mounted=%v err=%v", files.writes, mounted, err)
@@ -69,7 +69,7 @@ func TestAttachmentPreparationUsesNativePathAfterLostReceipt(t *testing.T) {
 				t.Fatal("同名附件覆盖")
 			}
 			persisted = base.inputs[row.UUID]
-			msg.input = &persisted
+			msg.Input = &persisted
 			if _, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err != nil || files.writes != 2 {
 				t.Fatal("完整准备内容被重复写入")
 			}
@@ -81,7 +81,7 @@ func TestLegacyAttachmentReceiptDoesNotRepeatUnknownUpload(t *testing.T) {
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused")
 	for _, receipt := range []channelAttachmentReceipt{{Uploading: true}, {Mounting: true}} {
 		prepared, _ := json.Marshal(channelPreparedInput{Preparing: true, Attachments: []channelAttachmentReceipt{receipt}})
-		msg := &channelMessage{MessageID: "message", input: &db.ChannelInput{PreparedContent: string(prepared)}, Resources: []channelAttachment{{Type: "file", FileKey: "first"}}}
+		msg := &channelMessage{MessageID: "message", Input: &db.ChannelInput{PreparedContent: string(prepared)}, Resources: []channelAttachment{{Type: "file", FileKey: "first"}}}
 		worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("data")}
 		if content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err == nil || content != nil {
 			t.Fatal("旧未知回执不能盲目重放")

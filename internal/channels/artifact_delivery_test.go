@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -19,7 +20,7 @@ type artifactReceiptAdapter struct {
 	empty    bool
 }
 
-func (a *artifactReceiptAdapter) sendMedia(context.Context, *channelMessage, omaResource, string, []byte) (string, error) {
+func (a *artifactReceiptAdapter) SendMedia(context.Context, *channelMessage, omaResource, string, []byte) (string, error) {
 	a.attempts++
 	if a.rejected {
 		a.rejected = false
@@ -160,14 +161,14 @@ func TestArtifactMissingMessageReceiptCannotReplay(t *testing.T) {
 
 type artifactCloseStream struct{}
 
-func (*artifactCloseStream) receipt() string                             { return "card" }
-func (*artifactCloseStream) update(context.Context, *channelReply) error { return nil }
-func (*artifactCloseStream) close(context.Context) error                 { return nil }
+func (*artifactCloseStream) Receipt() string                               { return "card" }
+func (*artifactCloseStream) Update(context.Context, contracts.Reply) error { return nil }
+func (*artifactCloseStream) Close(context.Context) error                   { return nil }
 
 func TestReplyCardCloseWaitsForArtifactDelivery(t *testing.T) {
 	worker, store, _, adapter, task, msg := artifactDeliveryFixture(t)
 	stream := &durableReplyStream{worker: worker, task: task, stream: &artifactCloseStream{}}
-	if err := stream.close(t.Context()); err != nil {
+	if err := stream.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if store.deliveries["chnl_1:input"].State != "sent" || adapter.attempts != 0 {
@@ -183,7 +184,7 @@ func TestArtifactBaselineCapturedBeforeInputAndPreserved(t *testing.T) {
 	worker, store, _, _, _, msg := artifactDeliveryFixture(t)
 	row := db.ChannelInput{UUID: "input", State: "prepared", LeaseOwner: worker.deliveryOwner, LeaseUntil: time.Now().Add(time.Hour)}
 	store.inputs = map[string]db.ChannelInput{row.UUID: row}
-	msg.input, msg.Content = &row, "本轮原始内容"
+	msg.Input, msg.Content = &row, "本轮原始内容"
 	baseline, err := worker.captureArtifactBaseline(t.Context(), msg, "sesn_1", artifactBaseline{"old": "old-file:version"})
 	if err != nil || len(baseline) != 1 || baseline["old"] != "old-file:version" {
 		t.Fatalf("原产物基线未保存: %v %v", baseline, err)
@@ -196,7 +197,7 @@ func TestArtifactBaselineCapturedBeforeInputAndPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	var prepared channelPreparedInput
-	if err := json.Unmarshal([]byte(msg.input.PreparedContent), &prepared); err != nil || prepared.ArtifactBaseline["old"] != "old-file:version" {
+	if err := json.Unmarshal([]byte(msg.Input.PreparedContent), &prepared); err != nil || prepared.ArtifactBaseline["old"] != "old-file:version" {
 		t.Fatalf("正文准备丢失原产物基线: %v", err)
 	}
 }

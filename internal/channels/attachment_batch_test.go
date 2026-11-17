@@ -19,7 +19,7 @@ type attachmentBatchAdapter struct {
 	fail  string
 }
 
-func (a *attachmentBatchAdapter) downloadAttachment(_ context.Context, _ string, resource channelAttachment, destination io.Writer) (string, error) {
+func (a *attachmentBatchAdapter) DownloadAttachment(_ context.Context, _ string, resource channelAttachment, destination io.Writer) (string, error) {
 	a.calls++
 	if a.fail == "image" && resource.Type == "image" {
 		return "", errors.New("适配器拒绝不支持的图片")
@@ -118,7 +118,7 @@ func TestInboundBinaryAndEmptyFilesMount(t *testing.T) {
 
 func TestPreparedPartialAttachmentBatchCannotResume(t *testing.T) {
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused")
-	msg := &channelMessage{input: &db.ChannelInput{PreparedContent: `{"content":[{"type":"text","text":"此前只准备了部分内容"}],"skipped":["missing.pdf"],"mounted":{}}`}}
+	msg := &channelMessage{Input: &db.ChannelInput{PreparedContent: `{"content":[{"type":"text","text":"此前只准备了部分内容"}],"skipped":["missing.pdf"],"mounted":{}}`}}
 	content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
 	if err == nil || content != nil {
 		t.Fatalf("旧版跳过附件的准备记录不能继续提交: content=%v err=%v", content, err)
@@ -127,7 +127,7 @@ func TestPreparedPartialAttachmentBatchCannotResume(t *testing.T) {
 
 type streamingAttachmentAdapter struct{ channelAdapter }
 
-func (a streamingAttachmentAdapter) downloadAttachment(_ context.Context, _ string, _ channelAttachment, destination io.Writer) (string, error) {
+func (a streamingAttachmentAdapter) DownloadAttachment(_ context.Context, _ string, _ channelAttachment, destination io.Writer) (string, error) {
 	var block [32 << 10]byte
 	for range 2048 {
 		if _, err := destination.Write(block[:]); err != nil {

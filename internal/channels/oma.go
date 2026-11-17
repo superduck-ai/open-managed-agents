@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -350,15 +351,7 @@ type omaFile struct {
 	Size     int64  `json:"size_bytes"`
 }
 
-type omaResource struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	FileID    string `json:"file_id"`
-	Filename  string `json:"filename"`
-	MimeType  string `json:"mime_type"`
-	MountPath string `json:"mount_path"`
-	UpdatedAt string `json:"updated_at"`
-}
+type omaResource = contracts.Resource
 
 func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string, expectedSize int64) ([]byte, string, error) {
 	if c.baseURL == "" {

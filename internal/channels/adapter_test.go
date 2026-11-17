@@ -13,11 +13,13 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 type independentAdapter struct {
-	worker      *channelWorker
+	online      func(bool)
 	opens       int
 	resumed     []string
 	toolDetails []string
@@ -31,46 +33,46 @@ type independentAdapter struct {
 	stopped     chan struct{}
 }
 
-func (a *independentAdapter) start(ctx context.Context) error {
-	a.worker.online.Store(true)
+func (a *independentAdapter) Start(ctx context.Context) error {
+	a.online(true)
 	close(a.started)
 	<-ctx.Done()
 	close(a.stopped)
 	return ctx.Err()
 }
-func (a *independentAdapter) close(context.Context) error { return nil }
-func (a *independentAdapter) replyText(_ context.Context, _ *channelMessage, text string) error {
+func (a *independentAdapter) Close(context.Context) error { return nil }
+func (a *independentAdapter) ReplyText(_ context.Context, _ *channelMessage, text string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.texts = append(a.texts, text)
 	return nil
 }
-func (a *independentAdapter) receipt() string { return "independent_card" }
-func (a *independentAdapter) resumeReply(receipt string) channelReplyStream {
+func (a *independentAdapter) Receipt() string { return "independent_card" }
+func (a *independentAdapter) ResumeReply(receipt string) channelReplyStream {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.resumed = append(a.resumed, receipt)
 	return a
 }
-func (a *independentAdapter) openReply(context.Context, *channelMessage) (channelReplyStream, error) {
+func (a *independentAdapter) OpenReply(context.Context, *channelMessage) (channelReplyStream, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.opens++
 	return a, nil
 }
-func (a *independentAdapter) update(_ context.Context, reply *channelReply) error {
+func (a *independentAdapter) Update(_ context.Context, reply contracts.Reply) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.replies = append(a.replies, reply.text.String())
-	for _, block := range reply.blocks {
-		if block.tool != nil {
-			a.toolDetails = append(a.toolDetails, block.tool.input+"|"+block.tool.output)
+	a.replies = append(a.replies, reply.Text)
+	for _, block := range reply.Blocks {
+		if block.Tool != nil {
+			a.toolDetails = append(a.toolDetails, block.Tool.Input+"|"+block.Tool.Output)
 		}
 	}
-	a.statuses = append(a.statuses, reply.status)
+	a.statuses = append(a.statuses, reply.Status)
 	return nil
 }
-func (a *independentAdapter) downloadAttachment(_ context.Context, _ string, file channelAttachment, destination io.Writer) (string, error) {
+func (a *independentAdapter) DownloadAttachment(_ context.Context, _ string, file channelAttachment, destination io.Writer) (string, error) {
 	a.mu.Lock()
 	a.downloads = append(a.downloads, file.FileKey)
 	a.mu.Unlock()
@@ -78,7 +80,7 @@ func (a *independentAdapter) downloadAttachment(_ context.Context, _ string, fil
 	return "application/octet-stream", err
 }
 
-func (a *independentAdapter) sendMedia(_ context.Context, _ *channelMessage, file omaResource, _ string, data []byte) (string, error) {
+func (a *independentAdapter) SendMedia(_ context.Context, _ *channelMessage, file omaResource, _ string, data []byte) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.artifacts = append(a.artifacts, file.Filename+":"+string(data))
@@ -86,7 +88,7 @@ func (a *independentAdapter) sendMedia(_ context.Context, _ *channelMessage, fil
 }
 
 func TestUnknownChannelTypeDoesNotFallBackToFeishu(t *testing.T) {
-	supervisor := newRuntimeSupervisor(&fakeRuntimeStore{}, nil, nil, nil)
+	supervisor := testRuntimeSupervisor(&fakeRuntimeStore{}, nil, nil, nil)
 	worker, err := newChannelWorker(supervisor, db.ChannelRecord{ChannelType: "unknown", AppID: "account"}, "secret")
 	appErr, ok := errors.AsType[*apperr.Error](err)
 	if !ok || worker != nil || appErr.Kind != apperr.InvalidArgument || appErr.PublicMessage != "不支持的渠道类型：unknown" {
@@ -157,7 +159,7 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	t.Cleanup(server.Close)
 	record := db.ChannelRecord{ExternalID: "other_channel", OrganizationUUID: "org", WorkspaceUUID: "workspace", AgentExternalID: "agent", ChannelType: "test-channel", AppID: "account", Enabled: true, BindingStatus: "bound", Mode: "open"}
 	store := &fakeRuntimeStore{record: record, bindings: map[string]string{}, env: "environment"}
-	supervisor := newRuntimeSupervisor(store, nil, newOMAClient(server.URL), nil)
+	supervisor := testRuntimeSupervisor(store, nil, newOMAClient(server.URL), nil)
 	supervisor.putAttachment = func(_ context.Context, _, _, attachmentPath, _ string, body io.Reader) (db.FileRecord, error) {
 		data, err := io.ReadAll(body)
 		if err != nil || string(data) != "channel_attachment" {
@@ -170,8 +172,8 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	}
 	supervisor.subscribeEvents = testEventSubscriber(t, func() []omaEvent { mu.Lock(); defer mu.Unlock(); return append([]omaEvent(nil), events...) })
 	adapter := &independentAdapter{started: make(chan struct{}), stopped: make(chan struct{})}
-	supervisor.adapters[record.ChannelType] = func(worker *channelWorker, _ string) (channelAdapter, error) {
-		adapter.worker = worker
+	supervisor.adapters[record.ChannelType] = func(config contracts.AdapterConfig) (channelAdapter, error) {
+		adapter.online = config.Online
 		return adapter, nil
 	}
 	worker, err := newChannelWorker(supervisor, record, "test-key")
@@ -208,4 +210,11 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	if writes != 1 || len(adapter.downloads) != 1 || len(adapter.artifacts) != 1 || !strings.Contains(adapter.artifacts[0], "result.csv:a,b") {
 		t.Fatalf("其他适配器必须复用附件挂载、产物基线与交付: writes=%d downloads=%v artifacts=%v", writes, adapter.downloads, adapter.artifacts)
 	}
+}
+
+func (*independentAdapter) OAuthProvider() vaults.EnvOAuthProviderSnapshot {
+	return vaults.EnvOAuthProviderSnapshot{}
+}
+func (*independentAdapter) OAuthUserID(context.Context, string) (string, error) {
+	return "", errors.New("测试渠道未启用个人授权")
 }

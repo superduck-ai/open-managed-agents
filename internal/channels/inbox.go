@@ -47,12 +47,12 @@ func (w *channelWorker) claimAndDispatchInput(ctx context.Context, inputUUID str
 	if err := json.Unmarshal([]byte(row.Payload), &msg); err != nil {
 		return err
 	}
-	msg.input = &row
+	msg.Input = &row
 	if row.State == "buffering" {
 		if adapter, ok := w.adapter.(interface {
-			queueInput(context.Context, *channelMessage) error
+			QueueInput(context.Context, *channelMessage) error
 		}); ok {
-			return adapter.queueInput(ctx, &msg)
+			return adapter.QueueInput(ctx, &msg)
 		}
 		return w.prepareInputMessage(ctx, &msg, row.ScopeKey)
 	}
@@ -68,7 +68,7 @@ func (w *channelWorker) prepareInputMessage(ctx context.Context, msg *channelMes
 	if err != nil {
 		return err
 	}
-	msg.input = &row
+	msg.Input = &row
 	return w.handleMessage(ctx, msg, scopeKey)
 }
 
@@ -86,23 +86,23 @@ func (w *channelWorker) restoreInputs(ctx context.Context) {
 }
 
 func (w *channelWorker) advanceInput(ctx context.Context, msg *channelMessage, change db.ChannelInputAdvance) error {
-	if msg.input == nil {
+	if msg.Input == nil {
 		return nil
 	}
-	row, err := w.supervisor.store.AdvanceChannelInput(ctx, w.inputScope(), msg.input.UUID, w.deliveryOwner, change)
+	row, err := w.supervisor.store.AdvanceChannelInput(ctx, w.inputScope(), msg.Input.UUID, w.deliveryOwner, change)
 	if err == nil {
-		msg.input = &row
+		msg.Input = &row
 	}
 	return err
 }
 
 func (w *channelWorker) completeInput(ctx context.Context, msg *channelMessage) error {
-	if msg.input == nil || msg.input.State == "handed_off" {
+	if msg.Input == nil || msg.Input.State == "handed_off" {
 		return nil
 	}
-	err := w.supervisor.store.CompleteChannelInput(ctx, w.inputScope(), msg.input.UUID, w.deliveryOwner)
+	err := w.supervisor.store.CompleteChannelInput(ctx, w.inputScope(), msg.Input.UUID, w.deliveryOwner)
 	if err == nil {
-		msg.input.State = "handed_off"
+		msg.Input.State = "handed_off"
 	}
 	return err
 }
@@ -117,10 +117,10 @@ func (w *channelWorker) closeInterruptedInput(task *channelReplyTask, msg *chann
 }
 
 func (w *channelWorker) releaseInput(ctx context.Context, msg *channelMessage) {
-	if msg.input == nil || msg.input.State == "handed_off" || ctx.Err() != nil {
+	if msg.Input == nil || msg.Input.State == "handed_off" || ctx.Err() != nil {
 		return
 	}
-	if err := w.supervisor.store.ReleaseChannelInput(ctx, w.inputScope(), msg.input.UUID, w.deliveryOwner); err != nil {
-		w.supervisor.logger.WarnContext(ctx, "release channel input", "channel_id", w.record.ExternalID, "input_uuid", msg.input.UUID, "error", err)
+	if err := w.supervisor.store.ReleaseChannelInput(ctx, w.inputScope(), msg.Input.UUID, w.deliveryOwner); err != nil {
+		w.supervisor.logger.WarnContext(ctx, "release channel input", "channel_id", w.record.ExternalID, "input_uuid", msg.Input.UUID, "error", err)
 	}
 }

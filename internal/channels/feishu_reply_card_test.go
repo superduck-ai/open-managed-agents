@@ -39,12 +39,12 @@ func TestConversationCardKeepsMigratedStructure(t *testing.T) {
 func TestOrdinaryConversationUsesCardWhenThinkingIsHidden(t *testing.T) {
 	worker, fake := testWorker(t, &fakeRuntimeStore{}, "")
 	worker.record.IncludeThinking = false
-	stream, err := worker.adapter.openReply(t.Context(), &channelMessage{ChatID: "oc_1"})
+	stream, err := worker.adapter.OpenReply(t.Context(), &channelMessage{ChatID: "oc_1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stream.close(context.Background())
-	if err := stream.update(t.Context(), &channelReply{}); err != nil {
+	defer stream.Close(context.Background())
+	if err := stream.Update(t.Context(), (&channelReply{}).view()); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.inputs) != 1 || fake.inputs[0].Card == "" || fake.inputs[0].Markdown != "" {

@@ -16,7 +16,7 @@ func TestFeishuEventReturnsPersistenceFailureToDispatcher(t *testing.T) {
 	worker, _ := testWorker(t, &fakeRuntimeStore{receiveInputErr: failure}, "http://unused")
 	adapter := worker.adapter.(*feishuChannel)
 	dispatcher := larkevent.NewEventDispatcher("", "")
-	dispatcher.OnP2MessageReceiveV1(adapter.receiveEvent)
+	dispatcher.OnP2MessageReceiveV1(adapter.ReceiveEvent)
 	payload, err := json.Marshal(map[string]any{
 		"schema": "2.0", "header": map[string]string{"event_type": "im.message.receive_v1", "create_time": strconv.FormatInt(time.Now().UnixMilli(), 10)},
 		"event": map[string]any{
@@ -64,7 +64,7 @@ func TestFeishuDurableEntryRetainsMentionSelfAndStalePolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			dispatcher := larkevent.NewEventDispatcher("", "")
-			dispatcher.OnP2MessageReceiveV1(worker.adapter.(*feishuChannel).receiveEvent)
+			dispatcher.OnP2MessageReceiveV1(worker.adapter.(*feishuChannel).ReceiveEvent)
 			_, err = dispatcher.Do(t.Context(), payload)
 			if test.accepted && !errors.Is(err, failure) || !test.accepted && err != nil {
 				t.Fatalf("平台入口策略改变: accepted=%v err=%v", test.accepted, err)

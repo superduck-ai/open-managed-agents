@@ -50,7 +50,7 @@ func TestChannelVaultListValidation(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.body), &input); err != nil {
 				t.Fatal(err)
 			}
-			service := newLocalService(&vaultListStore{}, nil, nil, nil)
+			service := testLocalService(&vaultListStore{}, nil, nil, nil)
 			record := db.ChannelRecord{Mounts: `{"vault_id":"vault-a"}`}
 			err := service.applyChannelMounts(t.Context(), auth.Principal{WorkspaceUUID: tc.workspace}, &record, input)
 			if (err == nil) != tc.valid {
@@ -127,7 +127,7 @@ func TestRecreatedPersonalVaultRebindsSession(t *testing.T) {
 }
 
 func TestLegacyVaultUpdateDoesNotDiscardMultipleVaults(t *testing.T) {
-	service := newLocalService(&vaultListStore{}, nil, nil, nil)
+	service := testLocalService(&vaultListStore{}, nil, nil, nil)
 	for _, raw := range []string{`{"vault_id":null}`, `{"vault_id":"vault-a"}`} {
 		record := db.ChannelRecord{Mounts: `{"vault_ids":["vault-a","vault-b"]}`}
 		var input channelMutation

@@ -15,7 +15,7 @@ type OAuthContext struct {
 	ActorID string
 	ChatID  string
 	APIKey  string
-	Secret  string
+	adapter channelAdapter
 }
 
 func (s *Service) OAuthContext(ctx context.Context, channelID, sessionID string) (OAuthContext, error) {
@@ -51,9 +51,5 @@ func (s *Service) OAuthContext(ctx context.Context, channelID, sessionID string)
 	if err != nil {
 		return OAuthContext{}, err
 	}
-	secret, err := openChannelSecret(ctx, s.supervisor.cipher, worker.record)
-	if err != nil {
-		return OAuthContext{}, err
-	}
-	return OAuthContext{Channel: worker.record, Session: session, ActorID: metadata["actor_id"], ChatID: chatID, APIKey: key, Secret: secret}, nil
+	return OAuthContext{Channel: worker.record, Session: session, ActorID: metadata["actor_id"], ChatID: chatID, APIKey: key, adapter: worker.adapter}, nil
 }

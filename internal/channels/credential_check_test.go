@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 )
 
 func TestCheckAppCredentials(t *testing.T) {
@@ -22,12 +23,12 @@ func TestCheckAppCredentials(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"t-secret","expire":7200}`))
 	}))
 	defer upstream.Close()
-	previous := feishuTokenURL
-	feishuTokenURL = upstream.URL
-	t.Cleanup(func() { feishuTokenURL = previous })
+	previous := feishu.TokenURL
+	feishu.TokenURL = upstream.URL
+	t.Cleanup(func() { feishu.TokenURL = previous })
 
 	router := chi.NewRouter()
-	service := newLocalService(&fakeLocalStore{}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service := testLocalService(&fakeLocalStore{}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	service.client = upstream.Client()
 	router.Mount("/channels", newLocalHandler(service, nil).workspaceRouter())
 

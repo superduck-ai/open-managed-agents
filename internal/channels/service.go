@@ -27,13 +27,14 @@ type Service struct {
 	logger         *slog.Logger
 }
 
-func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *secrets.Service) *Service {
+func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *secrets.Service, deps Dependencies) *Service {
 	logger = logging.LoggerOrDefault(logger)
 	oma := newOMAClient(omaBaseURL(cfg))
 	supervisor := newRuntimeSupervisor(store, cipher, oma, logger)
+	supervisor.adapters = deps.Adapters
 	supervisor.oauthOrigin = cfg.Auth.ConsoleURL
 	supervisor.fileMaxBytes = cfg.Storage.MaxFileBytes
-	service := newLocalService(store, cipher, supervisor, logger)
+	service := newLocalService(store, cipher, supervisor, logger, deps)
 	handler := newLocalHandler(service, logger)
 	result := &Service{
 		agent:      handler.agentRouter(),

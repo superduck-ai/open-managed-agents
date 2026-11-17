@@ -20,7 +20,7 @@ func TestChannelCommandsDoNotBecomeModelInput(t *testing.T) {
 			if err := worker.dispatchMessage(t.Context(), &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1", Content: command}); err != nil {
 				t.Fatal(err)
 			}
-			worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+			worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 			waitForScope(t, worker, "chat:oc_1")
 			worker.mu.Lock()
 			tasks := append([]*channelReplyTask{}, worker.replies["chat:oc_1"]...)

@@ -33,7 +33,7 @@ func TestChannelCheckUsesRuntimeKeyWithoutExecutingTasks(t *testing.T) {
 			}))
 			defer server.Close()
 			store := &fakeRuntimeStore{env: "env"}
-			runtime := newRuntimeSupervisor(store, nil, newOMAClient(server.URL), nil)
+			runtime := testRuntimeSupervisor(store, nil, newOMAClient(server.URL), nil)
 			worker := &channelWorker{}
 			worker.online.Store(true)
 			runtime.workers["channel"] = worker
@@ -78,7 +78,7 @@ func TestChannelCheckReportsUnavailableConfiguration(t *testing.T) {
 				_, _ = w.Write([]byte(`{"id":"` + id + `","archived_at":` + archived + `}`))
 			}))
 			defer server.Close()
-			runtime := newRuntimeSupervisor(&fakeRuntimeStore{env: tc.environment}, nil, newOMAClient(server.URL), nil)
+			runtime := testRuntimeSupervisor(&fakeRuntimeStore{env: tc.environment}, nil, newOMAClient(server.URL), nil)
 			worker := &channelWorker{}
 			worker.online.Store(true)
 			runtime.workers["channel"] = worker

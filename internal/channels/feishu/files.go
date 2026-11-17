@@ -1,4 +1,4 @@
-package channels
+package feishu
 
 import (
 	"bufio"
@@ -7,15 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
-	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
+
+	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 )
 
-func (w *feishuChannel) downloadAttachment(ctx context.Context, messageID string, resource channelAttachment, destination io.Writer) (string, error) {
+func (w *Adapter) DownloadAttachment(ctx context.Context, messageID string, resource contracts.Attachment, destination io.Writer) (string, error) {
 	if resource.FileKey == "" || messageID == "" {
 		return "", fmt.Errorf("附件缺少原消息或文件标识")
 	}
@@ -23,7 +25,7 @@ func (w *feishuChannel) downloadAttachment(ctx context.Context, messageID string
 	if resource.Type == "image" {
 		kind = "image"
 	}
-	response, err := w.client.Im.V1.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().MessageId(messageID).FileKey(resource.FileKey).Type(kind).Build())
+	response, err := w.Client.Im.V1.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().MessageId(messageID).FileKey(resource.FileKey).Type(kind).Build())
 	if err != nil {
 		return "", fmt.Errorf("下载附件失败: %w", err)
 	}
@@ -42,17 +44,17 @@ func (w *feishuChannel) downloadAttachment(ctx context.Context, messageID string
 	if resource.Type == "image" && !slices.Contains([]string{"image/png", "image/jpeg", "image/gif", "image/webp"}, mediaType) {
 		return "", fmt.Errorf("图片格式暂不支持，仅支持 PNG、JPEG、GIF 和 WebP")
 	}
-	size, err := io.Copy(destination, io.LimitReader(reader, w.worker.supervisor.fileMaxBytes+1))
+	size, err := io.Copy(destination, io.LimitReader(reader, w.Config.FileMaxBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("读取附件失败: %w", err)
 	}
-	if size > w.worker.supervisor.fileMaxBytes {
+	if size > w.Config.FileMaxBytes {
 		return "", fmt.Errorf("附件超过 OMA 文件大小限制")
 	}
 	return mediaType, nil
 }
 
-func (w *feishuChannel) sendMedia(ctx context.Context, msg *channelMessage, resource omaResource, contentType string, data []byte) (string, error) {
+func (w *Adapter) SendMedia(ctx context.Context, msg *contracts.Message, resource contracts.Resource, contentType string, data []byte) (string, error) {
 	name := strings.TrimSpace(resource.Filename)
 	if name == "" {
 		name = resource.FileID
@@ -74,8 +76,8 @@ func (w *feishuChannel) sendMedia(ctx context.Context, msg *channelMessage, reso
 	return w.sendMediaKey(ctx, msg, "file", "file_key", key)
 }
 
-func (w *feishuChannel) uploadImage(ctx context.Context, data []byte) (string, error) {
-	response, err := w.client.Im.V1.Image.Create(ctx, larkim.NewCreateImageReqBuilder().
+func (w *Adapter) uploadImage(ctx context.Context, data []byte) (string, error) {
+	response, err := w.Client.Im.V1.Image.Create(ctx, larkim.NewCreateImageReqBuilder().
 		Body(larkim.NewCreateImageReqBodyBuilder().ImageType("message").Image(bytes.NewReader(data)).Build()).
 		Build())
 	if err != nil {
@@ -90,8 +92,8 @@ func (w *feishuChannel) uploadImage(ctx context.Context, data []byte) (string, e
 	return *response.Data.ImageKey, nil
 }
 
-func (w *feishuChannel) uploadFile(ctx context.Context, name string, data []byte) (string, error) {
-	response, err := w.client.Im.V1.File.Create(ctx, larkim.NewCreateFileReqBuilder().
+func (w *Adapter) uploadFile(ctx context.Context, name string, data []byte) (string, error) {
+	response, err := w.Client.Im.V1.File.Create(ctx, larkim.NewCreateFileReqBuilder().
 		Body(larkim.NewCreateFileReqBodyBuilder().FileType("stream").FileName(name).File(bytes.NewReader(data)).Build()).
 		Build())
 	if err != nil {
@@ -106,12 +108,12 @@ func (w *feishuChannel) uploadFile(ctx context.Context, name string, data []byte
 	return *response.Data.FileKey, nil
 }
 
-func (w *feishuChannel) sendMediaKey(ctx context.Context, msg *channelMessage, msgType, keyField, key string) (string, error) {
+func (w *Adapter) sendMediaKey(ctx context.Context, msg *contracts.Message, msgType, keyField, key string) (string, error) {
 	content, err := json.Marshal(map[string]string{keyField: key})
 	if err != nil {
 		return "", err
 	}
-	if msg.ChatType == "group" && w.worker.record.ReplyInThread && msg.MessageID != "" {
+	if msg.ChatType == "group" && w.Config.ReplyInThread && msg.MessageID != "" {
 		return w.replyMessage(ctx, msg.MessageID, msgType, string(content))
 	}
 	input := &channeltypes.SendInput{ChatID: msg.ChatID}
@@ -120,7 +122,7 @@ func (w *feishuChannel) sendMediaKey(ctx context.Context, msg *channelMessage, m
 	} else {
 		input.FileKey = key
 	}
-	result, err := w.channel.Send(ctx, input)
+	result, err := w.Channel.Send(ctx, input)
 	if err != nil {
 		return "", err
 	}

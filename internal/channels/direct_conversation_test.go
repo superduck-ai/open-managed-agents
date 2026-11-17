@@ -1,8 +1,9 @@
 package channels
 
 import (
-	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	"testing"
+
+	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
 
 func TestDirectConversationIgnoresThreadAndKeepsLegacyHistory(t *testing.T) {
@@ -34,21 +35,21 @@ func TestDirectRepliesRemainFlatWhenGroupThreadsAreEnabled(t *testing.T) {
 	worker, channel := testWorker(t, &fakeRuntimeStore{}, "")
 	worker.record.ReplyInThread = true
 	message := &channelMessage{ChatID: "direct", ChatType: "p2p", UserID: "user", MessageID: "old_anchor", ThreadID: "old_thread"}
-	stream, err := worker.adapter.openReply(t.Context(), message)
+	stream, err := worker.adapter.OpenReply(t.Context(), message)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.update(t.Context(), &channelReply{}); err != nil {
+	if err := stream.Update(t.Context(), (&channelReply{}).view()); err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.close(t.Context()); err != nil {
+	if err := stream.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.replyText(t.Context(), message, "命令确认"); err != nil {
 		t.Fatal(err)
 	}
 	attachFeishuStub(t, worker)
-	if _, err := worker.adapter.sendMedia(t.Context(), message, omaResource{Filename: "result.txt", MimeType: "text/plain"}, "file", []byte("result")); err != nil {
+	if _, err := worker.adapter.SendMedia(t.Context(), message, omaResource{Filename: "result.txt", MimeType: "text/plain"}, "file", []byte("result")); err != nil {
 		t.Fatal(err)
 	}
 	inputs := channel.sentInputs()

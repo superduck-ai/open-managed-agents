@@ -42,7 +42,7 @@ func TestChannelAgentVersionValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := &versionLocalStore{}
-			service := newLocalService(store, nil, nil, nil)
+			service := testLocalService(store, nil, nil, nil)
 			record := db.ChannelRecord{AgentExternalID: "agent-a", Mounts: `{"agent_version":2}`}
 			err := service.applyChannelMounts(t.Context(), auth.Principal{WorkspaceUUID: tc.workspace}, &record, input)
 			if (err == nil) != tc.valid {

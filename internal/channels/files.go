@@ -113,7 +113,7 @@ func (w *channelWorker) downloadMessageAttachments(ctx context.Context, msg *cha
 		}
 		attachment := channelDownloadedAttachment{kind: resource.Type, name: attachmentName(resource), file: file}
 		attachments = append(attachments, attachment)
-		mediaType, err := w.adapter.downloadAttachment(ctx, msg.MessageID, resource, file)
+		mediaType, err := w.adapter.DownloadAttachment(ctx, msg.MessageID, resource, file)
 		if err != nil {
 			return attachments, fmt.Errorf("下载附件 %s 失败: %w", attachment.name, err)
 		}

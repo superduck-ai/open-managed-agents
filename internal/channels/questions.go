@@ -6,19 +6,12 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 )
 
-type channelQuestionOption struct {
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
-}
-
-type channelQuestion struct {
-	ID          string                  `json:"id"`
-	Title       string                  `json:"question"`
-	Options     []channelQuestionOption `json:"options"`
-	MultiSelect bool                    `json:"multi_select"`
-}
+type channelQuestionOption = contracts.QuestionOption
+type channelQuestion = contracts.Question
 
 type channelQuestionAnswer struct {
 	ID       string   `json:"id"`
@@ -130,5 +123,5 @@ func (w *channelWorker) answerQuestion(ctx context.Context, apiKey string, value
 	if request.SessionThreadID != "" {
 		resultEvent["session_thread_id"] = request.SessionThreadID
 	}
-	return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, resultEvent, value.requestKey)
+	return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, resultEvent, value.RequestKey)
 }

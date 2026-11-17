@@ -46,7 +46,7 @@ func TestChannelResourceArrayValidation(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.body), &input); err != nil {
 				t.Fatal(err)
 			}
-			service := newLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
+			service := testLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
 			record := db.ChannelRecord{Mounts: `{}`}
 			err := service.applyChannelMounts(t.Context(), auth.Principal{WorkspaceUUID: tc.workspace}, &record, input)
 			if (err == nil) != tc.valid {
@@ -69,7 +69,7 @@ func TestChannelResourceArrayValidation(t *testing.T) {
 }
 
 func TestChannelResourceTokensAreNotPlaintext(t *testing.T) {
-	service := newLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
+	service := testLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
 	record := db.ChannelRecord{ExternalID: "channel-a", OrganizationUUID: "org-a", WorkspaceUUID: "workspace-a", Mounts: `{}`}
 	var input channelMutation
 	if err := json.Unmarshal([]byte(`{"resources":[{"type":"github_repository","url":"https://gitlab.example/a.git","authorization_token":"token-first"},{"type":"github_repository","url":"https://gitlab.example/b.git","authorization_token":"token-second"}]}`), &input); err != nil {
@@ -102,7 +102,7 @@ func applyResourceMutation(t *testing.T, service *localService, record *db.Chann
 
 func TestChannelResourceCredentialsFollowRepository(t *testing.T) {
 	cipher := testCipher(t)
-	service := newLocalService(&resourceLocalStore{}, cipher, nil, nil)
+	service := testLocalService(&resourceLocalStore{}, cipher, nil, nil)
 	record := db.ChannelRecord{ExternalID: "channel-a", OrganizationUUID: "org-a", WorkspaceUUID: "workspace-a", Mounts: `{}`}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"github_repository","url":"https://gitlab.example/a.git","authorization_token":"token-first"},{"type":"github_repository","url":"https://gitlab.example/b.git","authorization_token":"token-second"}]}`)
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"github_repository","url":"https://gitlab.example/b.git","mount_path":"/workspace/moved-b"},{"type":"github_repository","url":"https://gitlab.example/a.git"}]}`)
@@ -132,7 +132,7 @@ func TestChannelResourceCredentialsFollowRepository(t *testing.T) {
 
 func TestLegacyResourceMigrationPreservesSessionUntilCredentialsChange(t *testing.T) {
 	cipher := testCipher(t)
-	service := newLocalService(&resourceLocalStore{}, cipher, nil, nil)
+	service := testLocalService(&resourceLocalStore{}, cipher, nil, nil)
 	record := db.ChannelRecord{ExternalID: "channel-a", OrganizationUUID: "org-a", WorkspaceUUID: "workspace-a", Mounts: `{"git_repository":{"url":"https://gitlab.example/a.git"}}`}
 	envelope, err := sealChannelSecret(t.Context(), cipher, record, "old-token")
 	if err != nil {
@@ -158,7 +158,7 @@ func TestLegacyResourceMigrationPreservesSessionUntilCredentialsChange(t *testin
 }
 
 func TestConfiguredFilesRemainDistinctFromConversationAttachments(t *testing.T) {
-	service := newLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
+	service := testLocalService(&resourceLocalStore{}, testCipher(t), nil, nil)
 	record := db.ChannelRecord{Mounts: `{}`}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"file","file_id":"file_a"}]}`)
 	bundle, err := channelSessionResources(t.Context(), nil, record)
@@ -206,7 +206,7 @@ func TestChannelResourcesUseNativeBodyAndResourceLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := newLocalService(&resourceLocalStore{}, nil, nil, nil)
+	service := testLocalService(&resourceLocalStore{}, nil, nil, nil)
 	record := db.ChannelRecord{Mounts: `{}`}
 	if err := service.applyChannelMounts(t.Context(), auth.Principal{WorkspaceUUID: "workspace-a"}, &record, input); err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestChannelResourcesUseNativeBodyAndResourceLimits(t *testing.T) {
 
 func TestConfiguredResourceSecretsRejectOtherChannelBinding(t *testing.T) {
 	cipher := testCipher(t)
-	service := newLocalService(&resourceLocalStore{}, cipher, nil, nil)
+	service := testLocalService(&resourceLocalStore{}, cipher, nil, nil)
 	record := db.ChannelRecord{ExternalID: "channel-a", OrganizationUUID: "org-a", WorkspaceUUID: "workspace-a", Mounts: `{}`}
 	applyResourceMutation(t, service, &record, `{"resources":[{"type":"github_repository","url":"https://gitlab.example/a.git","authorization_token":"private-test-token"}]}`)
 	record.ExternalID = "channel-other"
@@ -256,7 +256,7 @@ func TestFileResourcePreflightChecksAllRuntimePermissions(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"id":%q}`, id)
 			}))
 			defer server.Close()
-			runtime := newRuntimeSupervisor(&fakeRuntimeStore{env: "env"}, nil, newOMAClient(server.URL), nil)
+			runtime := testRuntimeSupervisor(&fakeRuntimeStore{env: "env"}, nil, newOMAClient(server.URL), nil)
 			worker := &channelWorker{}
 			worker.online.Store(true)
 			runtime.workers["channel"] = worker

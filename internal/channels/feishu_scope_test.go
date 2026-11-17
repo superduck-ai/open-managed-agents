@@ -31,7 +31,7 @@ func TestMentionedGroupCommandDoesNotReachModel(t *testing.T) {
 	if err := worker.dispatchMessage(t.Context(), msg); err != nil {
 		t.Fatal(err)
 	}
-	worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	deadline := time.Now().Add(time.Second)
 	for len(channel.text()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)

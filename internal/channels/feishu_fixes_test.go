@@ -157,25 +157,3 @@ func TestCommandsRequirePairingAuthorization(t *testing.T) {
 		t.Fatalf("未授权用户不应能重置会话: deleted=%v bound=%v", deleted, bound)
 	}
 }
-
-func TestRegistrationAddonsSeparateCallbacks(t *testing.T) {
-	addons := channelAppAddons()
-	if contains(addons.Events.Items.Tenant, "card.action.trigger") {
-		t.Fatal("card.action.trigger 不应放在事件订阅里")
-	}
-	if !contains(addons.Callbacks.Items, "card.action.trigger") {
-		t.Fatal("card.action.trigger 应注册为回调")
-	}
-	if !contains(addons.Events.Items.Tenant, "im.message.receive_v1") {
-		t.Fatal("消息事件订阅缺失")
-	}
-}
-
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}

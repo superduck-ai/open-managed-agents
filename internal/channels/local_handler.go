@@ -216,7 +216,7 @@ func (h *localHandler) checkAppCredentials(w http.ResponseWriter, r *http.Reques
 		return invalidCredentialCheckBody(err)
 	}
 	appID := strings.TrimSpace(input.AppID)
-	if !feishuAppIDPattern.MatchString(appID) || input.AppSecret == "" {
+	if !h.service.validAppID(appID) || input.AppSecret == "" {
 		return invalidAppCredentials()
 	}
 	passed, err := h.service.credentialsMatch(r.Context(), appID, input.AppSecret)

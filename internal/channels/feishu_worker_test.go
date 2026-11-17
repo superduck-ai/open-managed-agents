@@ -15,6 +15,8 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -191,11 +193,10 @@ func (s fakeStream) UpdateCard(_ context.Context, card string) error {
 }
 func (fakeStream) Flush(context.Context) error { return nil }
 func (fakeStream) Close(context.Context) error { return nil }
-func (s fakeStream) update(ctx context.Context, reply *channelReply) error {
-	return s.UpdateCard(ctx, reply.render())
+func (s fakeStream) Update(ctx context.Context, reply contracts.Reply) error {
+	return s.UpdateCard(ctx, feishu.Render(reply))
 }
-func (fakeStream) receipt() string             { return "om_1" }
-func (fakeStream) close(context.Context) error { return nil }
+func (fakeStream) Receipt() string { return "om_1" }
 
 func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channelWorker, *fakeChannel) {
 	t.Helper()
@@ -218,7 +219,7 @@ func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channel
 	worker := &channelWorker{
 		checkedInputs: make(map[string]string),
 		deliveryOwner: uuid.NewV4().String(),
-		supervisor:    newRuntimeSupervisor(store, nil, newOMAClient(baseURL), nil),
+		supervisor:    testRuntimeSupervisor(store, nil, newOMAClient(baseURL), nil),
 		record:        store.record,
 		scopes:        make(map[string]*scopeQueue),
 		replies:       make(map[string][]*channelReplyTask),
@@ -247,8 +248,8 @@ func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channel
 		_, _ = w.Write([]byte(`{"code":0}`))
 	}))
 	t.Cleanup(cardServer.Close)
-	worker.adapter = &feishuChannel{worker: worker, client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(cardServer.URL)), channel: fake, incoming: newFeishuInputPipelines(channeltypes.DefaultBatchConfig())}
-	t.Cleanup(worker.adapter.(*feishuChannel).incoming.Dispose)
+	worker.adapter = &feishuChannel{Config: adapterConfig(worker, "secret"), Client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(cardServer.URL)), Channel: fake, Incoming: newFeishuInputPipelines(channeltypes.DefaultBatchConfig())}
+	t.Cleanup(worker.adapter.(*feishuChannel).Incoming.Dispose)
 	t.Cleanup(func() { worker.stopAllReplies() })
 	return worker, fake
 }
@@ -266,7 +267,7 @@ func TestDispatchMessageBatchesWithinThreadOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	for _, ticket := range tickets {
 		worker.releaseScope(ticket)
 	}
@@ -305,7 +306,7 @@ func TestDispatchMessageSeparatesActorsWithinThread(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	deadline := time.After(3 * time.Second)
 	for len(recorder.snapshot()) < 2 {
 		select {
@@ -326,10 +327,10 @@ func TestDispatchCommandFlushesSameActorPendingText(t *testing.T) {
 	server, _, recorder := omaTestServer(t, 0)
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
 	adapter := worker.adapter.(*feishuChannel)
-	adapter.incoming.Dispose()
+	adapter.Incoming.Dispose()
 	config := channeltypes.DefaultBatchConfig()
 	config.DelayMs = time.Minute
-	adapter.incoming = newFeishuInputPipelines(config)
+	adapter.Incoming = newFeishuInputPipelines(config)
 	for _, text := range []string{"命令前的文本", "/help"} {
 		if err := worker.dispatchMessage(t.Context(), &channeltypes.NormalizedMessage{
 			ChatID: "oc_1", ChatType: "p2p", UserID: "actor", MessageID: text, Content: text,
@@ -544,20 +545,13 @@ func TestBuildAnswersSupportsMultiSelectAndCustom(t *testing.T) {
 	}
 }
 
-func TestFeishuWSClientRegistersEventDispatcher(t *testing.T) {
-	client := newFeishuWSClient("cli_test", "secret")
-	if client.EventHandler() == nil {
-		t.Fatal("飞书长连接必须配置事件分发器，否则 OnMessage / OnCardAction 注册的处理器永远不会被调用")
-	}
-}
-
 func TestFailedStartReleasesWorkerForRetry(t *testing.T) {
 	store := &fakeRuntimeStore{}
-	supervisor := newRuntimeSupervisor(store, nil, nil, nil)
+	supervisor := testRuntimeSupervisor(store, nil, nil, nil)
 	worker := &channelWorker{
 		supervisor: supervisor,
 		record:     db.ChannelRecord{ExternalID: "chnl_1"},
-		adapter:    &feishuChannel{channel: &fakeChannel{startErr: errors.New("websocket dial failed")}},
+		adapter:    &feishuChannel{Channel: &fakeChannel{startErr: errors.New("websocket dial failed")}},
 		replies:    make(map[string][]*channelReplyTask),
 	}
 	supervisor.workers["chnl_1"] = worker

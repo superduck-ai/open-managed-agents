@@ -175,7 +175,7 @@ func (r *replyRunner) close(ctx context.Context) error {
 		return nil
 	}
 	r.closed = true
-	return r.stream.close(context.WithoutCancel(ctx))
+	return r.stream.Close(context.WithoutCancel(ctx))
 }
 
 func (r *replyRunner) consumeEvent(ctx context.Context, event omaEvent) (bool, error) {
@@ -243,7 +243,7 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 
 func (r *replyRunner) update(ctx context.Context) error {
 	for attempt := range channelAskAttempts {
-		err := r.stream.update(ctx, &r.reply)
+		err := r.stream.Update(ctx, r.reply.view())
 		if err == nil {
 			r.lastUpdate = time.Now()
 			r.previewDirty = false

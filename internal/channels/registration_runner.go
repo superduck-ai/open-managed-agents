@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -14,15 +14,7 @@ const (
 	registrationDefaultTTL   = 10 * time.Minute
 )
 
-type appRegistrar interface {
-	RegisterApp(ctx context.Context, opts *registration.Options) (*registration.RegisterAppResult, error)
-}
-
-type sdkRegistrar struct{}
-
-func (sdkRegistrar) RegisterApp(ctx context.Context, opts *registration.Options) (*registration.RegisterAppResult, error) {
-	return registration.RegisterApp(ctx, opts)
-}
+type appRegistrar = contracts.Registrar
 
 type registrationStart struct {
 	URL string
@@ -54,19 +46,17 @@ func (s *localService) startRun(record db.ChannelRegistrationRecord) *registrati
 func (s *localService) executeRegistration(ctx context.Context, record db.ChannelRegistrationRecord, run *registrationRun) {
 	defer s.finishRun(record.ExternalID, run)
 	record.Owner = s.instanceID
-	options := &registration.Options{
-		Source:    "open-managed-agents",
-		AppPreset: &registration.AppPreset{Name: record.Name},
-		Addons:    channelAppAddons(),
-		OnQRCode: func(info *registration.QRCodeInfo) {
-			record.URL = info.URL
-			record.ExpiresAt = time.Now().Add(time.Duration(info.ExpireIn) * time.Second)
+	options := &contracts.RegistrationOptions{
+		Name: record.Name,
+		OnQRCode: func(url string, expiresIn int) {
+			record.URL = url
+			record.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 			s.persistRegistration(ctx, record)
-			run.signal(registrationStart{URL: info.URL})
+			run.signal(registrationStart{URL: url})
 		},
-		OnStatusChange: func(info *registration.StatusChangeInfo) {
-			if info.Interval > 0 {
-				record.IntervalSeconds = info.Interval
+		OnInterval: func(interval int) {
+			if interval > 0 {
+				record.IntervalSeconds = interval
 			}
 			s.persistRegistration(ctx, record)
 		},
@@ -77,12 +67,10 @@ func (s *localService) executeRegistration(ctx context.Context, record db.Channe
 	}
 	run.signal(registrationStart{Err: err})
 	if err != nil {
-		var denied *registration.AccessDeniedError
-		var expired *registration.ExpiredError
 		switch {
-		case errors.As(err, &denied):
+		case errors.Is(err, contracts.ErrRegistrationDenied):
 			s.saveRegistrationPhase(context.Background(), record, "denied")
-		case errors.As(err, &expired):
+		case errors.Is(err, contracts.ErrRegistrationExpired):
 			s.saveRegistrationPhase(context.Background(), record, "expired")
 		default:
 			s.saveRegistrationPhase(context.Background(), record, "unknown")
@@ -133,17 +121,5 @@ func (s *localService) stopRegistrations() {
 func (s *localService) persistRegistration(ctx context.Context, record db.ChannelRegistrationRecord) {
 	if _, err := s.store.UpdateChannelRegistration(ctx, registrationUpdate(record, record.DeviceCodeEnvelope)); err != nil && !errors.Is(err, db.ErrNotFound) {
 		s.logger.WarnContext(ctx, "update channel registration", "registration_id", record.ExternalID, "error", err)
-	}
-}
-
-func channelAppAddons() *registration.AppAddons {
-	return &registration.AppAddons{
-		Scopes: registration.AppAddonsScopes{
-			Tenant: []string{"im:message", "im:message:send_as_bot", "im:chat:readonly"},
-		},
-		Events: registration.AppAddonsEvents{
-			Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1"}},
-		},
-		Callbacks: registration.AppAddonsCallbacks{Items: []string{"card.action.trigger"}},
 	}
 }

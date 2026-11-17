@@ -17,7 +17,7 @@ type artifactPolicyAdapter struct {
 	failSend bool
 }
 
-func (a *artifactPolicyAdapter) sendMedia(_ context.Context, _ *channelMessage, resource omaResource, _ string, _ []byte) (string, error) {
+func (a *artifactPolicyAdapter) SendMedia(_ context.Context, _ *channelMessage, resource omaResource, _ string, _ []byte) (string, error) {
 	a.sent = append(a.sent, resource.FileID)
 	if a.failSend {
 		return "", errors.New("上传被明确拒绝")

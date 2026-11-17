@@ -59,7 +59,7 @@ func TestRestartRestoresOriginalCardFromOMAHistory(t *testing.T) {
 	before, _ := testWorker(t, store, server.URL)
 	before.record.IncludeToolCalls = true
 	before.record.IncludeThinking = true
-	first := &independentAdapter{worker: before}
+	first := &independentAdapter{online: before.online.Store}
 	before.adapter = first
 	task := &channelReplyTask{inputEventID: "input_1", scopeKey: "chat:oc_1", sessionID: "sesn_1"}
 	msg := &channelMessage{MessageID: "message_1", ChatID: "oc_1", ChatType: "p2p", UserID: "actor"}
@@ -76,7 +76,7 @@ func TestRestartRestoresOriginalCardFromOMAHistory(t *testing.T) {
 	after.supervisor.subscribeEvents = testEventSubscriber(t, func() []omaEvent {
 		return []omaEvent{{ID: "input_1", Type: "user.message"}, {ID: "tool", Type: "agent.tool_use", Name: "bash", Input: []byte(`{"command":"printf restored_tool"}`)}, {ID: "result", Type: "agent.tool_result", ToolUseID: "tool", Content: []byte(`"restored_tool"`)}, {ID: "answer", Type: "agent.message", Content: []byte(`"重启后的原始答案"`)}, {ID: "end", Type: "session.status_idle", StopReason: []byte(`"end_turn"`)}}
 	})
-	second := &independentAdapter{worker: after}
+	second := &independentAdapter{online: after.online.Store}
 	after.adapter = second
 	after.online.Store(true)
 	after.restoreReplies(t.Context())
@@ -90,7 +90,7 @@ func TestRestartRestoresOriginalCardFromOMAHistory(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := originalStream.update(t.Context(), &channelReply{}); !errors.Is(err, db.ErrInvalidState) {
+	if err := originalStream.Update(t.Context(), (&channelReply{}).view()); !errors.Is(err, db.ErrInvalidState) {
 		t.Fatalf("失权旧实例不得再更新: %v", err)
 	}
 	second.mu.Lock()
@@ -111,7 +111,7 @@ func TestRestartRestoresOriginalCardFromOMAHistory(t *testing.T) {
 func TestUnknownCardReceiptIsNotSentAgain(t *testing.T) {
 	store := &fakeRuntimeStore{}
 	worker, _ := testWorker(t, store, "http://unused")
-	adapter := &independentAdapter{worker: worker}
+	adapter := &independentAdapter{online: worker.online.Store}
 	worker.adapter = adapter
 	store.deliveries = map[string]db.ChannelReplyDelivery{"chnl_1:input": {ChannelExternalID: "chnl_1", InputEventID: "input", State: "sending", LeaseUntil: time.Now().Add(-time.Hour)}}
 	_, err := worker.openReply(t.Context(), &channelReplyTask{inputEventID: "input", sessionID: "sesn_1"}, &channelMessage{ChatID: "oc_1", ChatType: "p2p", UserID: "actor"})
@@ -125,7 +125,7 @@ func TestReplyRecoveryDoesNotCrossChannelAccounts(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}
 			worker, _ := testWorker(t, store, "http://unused")
-			adapter := &independentAdapter{worker: worker}
+			adapter := &independentAdapter{online: worker.online.Store}
 			worker.adapter = adapter
 			worker.online.Store(true)
 			row := db.ChannelReplyDelivery{ChannelExternalID: "chnl_1", ChannelType: worker.record.ChannelType, AccountID: worker.record.AppID, InputEventID: "input", SessionExternalID: "sesn_1", ScopeKey: "chat:oc_1", State: "sent", ReplyMessageID: "old_card", LeaseUntil: time.Now().Add(-time.Hour)}
@@ -166,14 +166,14 @@ func TestShutdownReleasesOriginalCardLease(t *testing.T) {
 			} else {
 				task.cancel()
 			}
-			if err := stream.close(t.Context()); err != nil {
+			if err := stream.Close(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			row, claimed, err := store.ClaimChannelReplyDelivery(t.Context(), worker.deliveryScope(), task.inputEventID, "new_instance")
 			if err != nil || claimed != shutdown {
 				t.Fatalf("停机释放与任务停止必须区分: shutdown=%v claimed=%v err=%v", shutdown, claimed, err)
 			}
-			if shutdown && (row.State != "sent" || row.ReplyMessageID != stream.receipt()) {
+			if shutdown && (row.State != "sent" || row.ReplyMessageID != stream.Receipt()) {
 				t.Fatalf("接管必须保留原卡回执: %+v", row)
 			}
 		})
@@ -183,7 +183,7 @@ func TestShutdownReleasesOriginalCardLease(t *testing.T) {
 func TestRecoveryStartsAtLeaseExpiryWithoutReconcileDelay(t *testing.T) {
 	store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}
 	worker, _ := testWorker(t, store, "http://unused")
-	adapter := &independentAdapter{worker: worker, started: make(chan struct{}), stopped: make(chan struct{})}
+	adapter := &independentAdapter{online: worker.online.Store, started: make(chan struct{}), stopped: make(chan struct{})}
 	worker.adapter = adapter
 	store.deliveries = map[string]db.ChannelReplyDelivery{"chnl_1:input_expiry": {ChannelExternalID: "chnl_1", ChannelType: "feishu", AccountID: "app_1", InputEventID: "input_expiry", SessionExternalID: "sesn_1", ScopeKey: "chat:oc_1", MessageID: "original_message", ChatID: "oc_1", ChatType: "p2p", ActorID: "actor", ReplyMessageID: "original_card", State: "sent", LeaseOwner: "crashed_instance", LeaseUntil: time.Now().Add(1500 * time.Millisecond)}}
 	worker.supervisor.subscribeEvents = testEventSubscriber(t, func() []omaEvent {

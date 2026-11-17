@@ -16,7 +16,7 @@ type questionNoticeAdapter struct {
 	text    string
 }
 
-func (a *questionNoticeAdapter) replyText(_ context.Context, message *channelMessage, text string) error {
+func (a *questionNoticeAdapter) ReplyText(_ context.Context, message *channelMessage, text string) error {
 	a.message, a.text = message, text
 	return nil
 }

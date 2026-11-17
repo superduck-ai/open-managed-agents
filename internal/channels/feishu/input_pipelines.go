@@ -1,4 +1,4 @@
-package channels
+package feishu
 
 import (
 	"context"
@@ -10,17 +10,17 @@ import (
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
 
-type feishuInputPipelines struct {
+type InputPipelines struct {
 	mu     sync.Mutex
 	config channeltypes.BatchConfig
 	scopes map[string]*pipeline.ChatPipeline
 }
 
-func newFeishuInputPipelines(config channeltypes.BatchConfig) *feishuInputPipelines {
-	return &feishuInputPipelines{config: config, scopes: make(map[string]*pipeline.ChatPipeline)}
+func NewInputPipelines(config channeltypes.BatchConfig) *InputPipelines {
+	return &InputPipelines{config: config, scopes: make(map[string]*pipeline.ChatPipeline)}
 }
 
-func (p *feishuInputPipelines) scope(key string) *pipeline.ChatPipeline {
+func (p *InputPipelines) scope(key string) *pipeline.ChatPipeline {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	queue := p.scopes[key]
@@ -31,7 +31,7 @@ func (p *feishuInputPipelines) scope(key string) *pipeline.ChatPipeline {
 	return queue
 }
 
-func (p *feishuInputPipelines) FlushAll(ctx context.Context) {
+func (p *InputPipelines) FlushAll(ctx context.Context) {
 	p.mu.Lock()
 	queues := slices.Collect(maps.Values(p.scopes))
 	p.mu.Unlock()
@@ -40,7 +40,7 @@ func (p *feishuInputPipelines) FlushAll(ctx context.Context) {
 	}
 }
 
-func (p *feishuInputPipelines) Dispose() {
+func (p *InputPipelines) Dispose() {
 	p.FlushAll(context.Background())
 	p.mu.Lock()
 	defer p.mu.Unlock()

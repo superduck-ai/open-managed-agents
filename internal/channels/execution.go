@@ -15,7 +15,7 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channelMessage, 
 		return nil
 	}
 	text := msg.Content
-	if text == "" && len(msg.Resources) == 0 && (msg.input == nil || msg.input.State != "accepted") {
+	if text == "" && len(msg.Resources) == 0 && (msg.Input == nil || msg.Input.State != "accepted") {
 		if err := w.replyText(ctx, msg, "请发送文本、图片或文件。"); err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channelMessage, api
 	if !w.sessionBound(task.ctx, task) {
 		return
 	}
-	if msg.input != nil && msg.input.State == "accepted" {
+	if msg.Input != nil && msg.Input.State == "accepted" {
 		if err := w.resumeAcceptedInput(task, msg, apiKey); err != nil && task.ctx.Err() == nil {
 			w.supervisor.logger.WarnContext(task.ctx, "restore accepted channel input", "channel_id", w.record.ExternalID, "error", err)
 		}

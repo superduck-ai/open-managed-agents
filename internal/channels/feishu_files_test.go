@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +19,8 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 )
 
 type filesServer struct {
@@ -236,7 +236,7 @@ func TestReceivedRichTextImageReachesModel(t *testing.T) {
 			if err := worker.dispatchMessage(t.Context(), normalize.ParseMessage(event)); err != nil {
 				t.Fatal(err)
 			}
-			worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+			worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 			deadline := time.After(3 * time.Second)
 			for len(messages.snapshot()) == 0 {
 				select {
@@ -263,6 +263,7 @@ func TestInboundAttachmentRespectsNativeFileLimit(t *testing.T) {
 			worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
 			worker.supervisor.putAttachment = files.putAttachment
 			worker.supervisor.fileMaxBytes = 4
+			worker.adapter.(*feishuChannel).Config.FileMaxBytes = 4
 			stub := attachFeishuStub(t, worker)
 			stub.attachment = make([]byte, size)
 			msg := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1", Resources: []channeltypes.Resource{{Type: "file", FileKey: "data", FileName: "data.bin"}}}
@@ -293,7 +294,7 @@ func attachFeishuStub(t *testing.T, worker *channelWorker) *feishuStub {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			fake := worker.adapter.(*feishuChannel).channel.(*fakeChannel)
+			fake := worker.adapter.(*feishuChannel).Channel.(*fakeChannel)
 			if err := (fakeStream{channel: fake}).UpdateCard(r.Context(), body.Content); err != nil {
 				t.Error(err)
 			}
@@ -327,7 +328,7 @@ func attachFeishuStub(t *testing.T, worker *channelWorker) *feishuStub {
 		}
 	}))
 	t.Cleanup(server.Close)
-	worker.adapter.(*feishuChannel).client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
+	worker.adapter.(*feishuChannel).Client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
 	return stub
 }
 
@@ -358,7 +359,7 @@ func TestBurstAttachmentsKeepSourceMessage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	worker.adapter.(*feishuChannel).incoming.FlushAll(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	deadline := time.After(3 * time.Second)
 	for len(messages.snapshot()) < 2 {
 		select {

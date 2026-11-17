@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -15,15 +16,15 @@ type durableReplyStream struct {
 	stream channelReplyStream
 }
 
-func (s *durableReplyStream) receipt() string { return s.stream.receipt() }
-func (s *durableReplyStream) update(ctx context.Context, reply *channelReply) error {
+func (s *durableReplyStream) Receipt() string { return s.stream.Receipt() }
+func (s *durableReplyStream) Update(ctx context.Context, reply contracts.Reply) error {
 	if err := s.worker.renewReplyDelivery(ctx, s.task); err != nil {
 		return err
 	}
-	return s.stream.update(ctx, reply)
+	return s.stream.Update(ctx, reply)
 }
-func (s *durableReplyStream) close(ctx context.Context) error {
-	if err := s.stream.close(ctx); err != nil {
+func (s *durableReplyStream) Close(ctx context.Context) error {
+	if err := s.stream.Close(ctx); err != nil {
 		return err
 	}
 	if s.task.terminal {
@@ -58,7 +59,7 @@ func (w *channelWorker) renewReplyDelivery(ctx context.Context, task *channelRep
 
 func (w *channelWorker) openReply(ctx context.Context, task *channelReplyTask, msg *channelMessage) (channelReplyStream, error) {
 	if task.inputEventID == "" {
-		return w.adapter.openReply(ctx, msg)
+		return w.adapter.OpenReply(ctx, msg)
 	}
 	scope := w.deliveryScope()
 	record, err := w.prepareReplyDelivery(ctx, task, msg)
@@ -75,19 +76,19 @@ func (w *channelWorker) openReply(ctx context.Context, task *channelReplyTask, m
 	task.delivery = &claimed
 	var stream channelReplyStream
 	if claimed.State == "sent" {
-		stream = w.adapter.resumeReply(claimed.ReplyMessageID)
+		stream = w.adapter.ResumeReply(claimed.ReplyMessageID)
 	} else {
-		stream, err = w.adapter.openReply(ctx, msg)
+		stream, err = w.adapter.OpenReply(ctx, msg)
 		if err != nil {
 			return nil, errors.Join(errChannelDeliveryUnconfirmed, err, w.supervisor.store.RetireChannelReplyDelivery(ctx, scope, task.inputEventID, w.deliveryOwner))
 		}
-		if stream.receipt() == "" {
+		if stream.Receipt() == "" {
 			return nil, errors.Join(errChannelDeliveryUnconfirmed, w.supervisor.store.RetireChannelReplyDelivery(ctx, scope, task.inputEventID, w.deliveryOwner))
 		}
-		if err := w.supervisor.store.SaveChannelReplyReceipt(ctx, scope, task.inputEventID, w.deliveryOwner, stream.receipt()); err != nil {
+		if err := w.supervisor.store.SaveChannelReplyReceipt(ctx, scope, task.inputEventID, w.deliveryOwner, stream.Receipt()); err != nil {
 			return nil, err
 		}
-		task.delivery.ReplyMessageID = stream.receipt()
+		task.delivery.ReplyMessageID = stream.Receipt()
 	}
 	if err := w.completeInput(ctx, msg); err != nil {
 		return nil, err

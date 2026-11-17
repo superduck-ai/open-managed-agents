@@ -52,16 +52,18 @@ type localStore interface {
 }
 
 type localService struct {
-	store      localStore
-	cipher     *secrets.Service
-	runtime    *runtimeSupervisor
-	logger     *slog.Logger
-	client     *http.Client
-	tokenURL   string
-	instanceID string
-	registrar  appRegistrar
-	runMu      sync.Mutex
-	runs       map[string]*registrationRun
+	store            localStore
+	cipher           *secrets.Service
+	runtime          *runtimeSupervisor
+	logger           *slog.Logger
+	client           *http.Client
+	tokenURL         string
+	instanceID       string
+	registrar        appRegistrar
+	validAppID       func(string) bool
+	checkCredentials func(context.Context, *http.Client, string, string, string) (bool, error)
+	runMu            sync.Mutex
+	runs             map[string]*registrationRun
 }
 
 type channelMutation struct {
@@ -89,15 +91,15 @@ type localHandler struct {
 	logger  *slog.Logger
 }
 
-func newLocalService(store localStore, cipher *secrets.Service, runtime *runtimeSupervisor, logger *slog.Logger) *localService {
+func newLocalService(store localStore, cipher *secrets.Service, runtime *runtimeSupervisor, logger *slog.Logger, deps Dependencies) *localService {
 	return &localService{
-		store:      store,
-		cipher:     cipher,
-		runtime:    runtime,
-		logger:     logging.LoggerOrDefault(logger),
-		client:     &http.Client{Timeout: 10 * time.Second},
-		tokenURL:   feishuTokenURL,
-		registrar:  sdkRegistrar{},
+		store:     store,
+		cipher:    cipher,
+		runtime:   runtime,
+		logger:    logging.LoggerOrDefault(logger),
+		client:    &http.Client{Timeout: 10 * time.Second},
+		tokenURL:  deps.TokenURL,
+		registrar: deps.Registrar, validAppID: deps.ValidAppID, checkCredentials: deps.CheckCredentials,
 		runs:       make(map[string]*registrationRun),
 		instanceID: uuid.NewString(),
 	}
@@ -525,7 +527,7 @@ func (s *localService) bindCredentials(ctx context.Context, record *db.ChannelRe
 	if appID == "" || appSecret == "" {
 		return invalidAppCredentials()
 	}
-	if !feishuAppIDPattern.MatchString(appID) {
+	if !s.validAppID(appID) {
 		return invalidAppCredentials()
 	}
 	passed, err := s.credentialsMatch(ctx, appID, appSecret)
@@ -546,7 +548,7 @@ func (s *localService) bindCredentials(ctx context.Context, record *db.ChannelRe
 }
 
 func (s *localService) credentialsMatch(ctx context.Context, appID, appSecret string) (bool, error) {
-	return matchFeishuCredentials(ctx, s.client, s.tokenURL, appID, appSecret)
+	return s.checkCredentials(ctx, s.client, s.tokenURL, appID, appSecret)
 }
 
 func applyChannelFlags(record *db.ChannelRecord, input channelMutation) {

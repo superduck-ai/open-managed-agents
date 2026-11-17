@@ -94,7 +94,7 @@ func (w *channelWorker) start() {
 	}()
 	go func() {
 		defer w.online.Store(false)
-		if err := w.adapter.start(ctx); err != nil && ctx.Err() == nil {
+		if err := w.adapter.Start(ctx); err != nil && ctx.Err() == nil {
 			w.supervisor.logger.WarnContext(ctx, "channel disconnected", "channel_id", w.record.ExternalID, "error", err)
 		}
 		w.supervisor.forget(w.record.ExternalID, w)
@@ -115,7 +115,7 @@ func (w *channelWorker) close() {
 			return
 		}
 	}
-	if err := w.adapter.close(ctx); err != nil {
+	if err := w.adapter.Close(ctx); err != nil {
 		w.supervisor.logger.DebugContext(ctx, "stop channel", "channel_id", w.record.ExternalID, "error", err)
 	}
 }
@@ -332,7 +332,7 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 		return nil, unsupportedChannelType(record.ChannelType)
 	}
 	worker := &channelWorker{checkedInputs: make(map[string]string), deliveryOwner: uuid.NewV4().String(), supervisor: supervisor, record: record, scopes: make(map[string]*scopeQueue), replies: make(map[string][]*channelReplyTask)}
-	adapter, err := factory(worker, secret)
+	adapter, err := factory(adapterConfig(worker, secret))
 	if err != nil {
 		return nil, err
 	}
@@ -341,5 +341,5 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 }
 
 func (w *channelWorker) replyText(ctx context.Context, msg *channelMessage, text string) error {
-	return w.adapter.replyText(ctx, msg, text)
+	return w.adapter.ReplyText(ctx, msg, text)
 }

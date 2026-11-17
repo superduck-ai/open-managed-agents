@@ -19,19 +19,19 @@ type channelPreparedInput struct {
 }
 
 func (w *channelWorker) inputSession(ctx context.Context, msg *channelMessage, scopeKey string) (string, error) {
-	if msg.input == nil || msg.input.SessionExternalID == "" {
+	if msg.Input == nil || msg.Input.SessionExternalID == "" {
 		return w.sessionFor(ctx, msg, scopeKey)
 	}
-	if w.currentSession(ctx, scopeKey) != msg.input.SessionExternalID {
+	if w.currentSession(ctx, scopeKey) != msg.Input.SessionExternalID {
 		return "", errChannelSessionUnconfirmed
 	}
-	return msg.input.SessionExternalID, nil
+	return msg.Input.SessionExternalID, nil
 }
 
 func (w *channelWorker) inputContent(ctx context.Context, apiKey, sessionID string, msg *channelMessage) ([]map[string]any, map[string]struct{}, error) {
 	var prepared channelPreparedInput
-	if msg.input != nil && msg.input.PreparedContent != "" {
-		err := json.Unmarshal([]byte(msg.input.PreparedContent), &prepared)
+	if msg.Input != nil && msg.Input.PreparedContent != "" {
+		err := json.Unmarshal([]byte(msg.Input.PreparedContent), &prepared)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -45,7 +45,7 @@ func (w *channelWorker) inputContent(ctx context.Context, apiKey, sessionID stri
 		prepared.Preparing = true
 	}
 	content, mounted, err := w.messageContent(ctx, apiKey, sessionID, msg, msg.Content, &prepared)
-	if err != nil || msg.input == nil {
+	if err != nil || msg.Input == nil {
 		return content, mounted, err
 	}
 	err = w.savePreparedInput(ctx, msg, sessionID, channelPreparedInput{Content: content, Mounted: mounted, ArtifactBaseline: prepared.ArtifactBaseline})
@@ -53,7 +53,7 @@ func (w *channelWorker) inputContent(ctx context.Context, apiKey, sessionID stri
 }
 
 func (w *channelWorker) savePreparedInput(ctx context.Context, msg *channelMessage, sessionID string, prepared channelPreparedInput) error {
-	if msg.input == nil {
+	if msg.Input == nil {
 		return nil
 	}
 	payload, err := json.Marshal(prepared, json.FormatNilMapAsNull(true))
@@ -64,7 +64,7 @@ func (w *channelWorker) savePreparedInput(ctx context.Context, msg *channelMessa
 }
 
 func (w *channelWorker) resumeAcceptedInput(task *channelReplyTask, msg *channelMessage, apiKey string) error {
-	task.inputEventID = msg.input.InputEventID
+	task.inputEventID = msg.Input.InputEventID
 	row, err := w.prepareReplyDelivery(task.ctx, task, msg)
 	if err != nil {
 		return err

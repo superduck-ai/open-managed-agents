@@ -74,9 +74,10 @@ func TestFeishuImageFallbackRequiresConfirmedUploadRejection(t *testing.T) {
 			t.Cleanup(server.Close)
 			worker, _ := testWorker(t, &fakeRuntimeStore{}, "")
 			worker.record.ReplyInThread = true
+			worker.adapter.(*feishuChannel).Config.ReplyInThread = true
 			adapter := worker.adapter.(*feishuChannel)
-			adapter.client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
-			receipt, err := adapter.sendMedia(t.Context(), &channelMessage{ChatType: "group", ChatID: "chat", MessageID: "original"}, omaResource{Filename: "result.png", MimeType: "image/png"}, "image/png", image)
+			adapter.Client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
+			receipt, err := adapter.SendMedia(t.Context(), &channelMessage{ChatType: "group", ChatID: "chat", MessageID: "original"}, omaResource{Filename: "result.png", MimeType: "image/png"}, "image/png", image)
 			if (err != nil) != tc.wantError || !tc.wantError && receipt != "receipt" {
 				t.Fatalf("交付回执不符合预期: %s %v", receipt, err)
 			}
@@ -85,40 +86,6 @@ func TestFeishuImageFallbackRequiresConfirmedUploadRejection(t *testing.T) {
 			}
 			if images != 1 || files != tc.files || sends != tc.sends {
 				t.Fatalf("图片=%d 文件=%d 消息=%d", images, files, sends)
-			}
-		})
-	}
-}
-
-func TestFeishuFileUploadDistinguishesRejectionFromUnknown(t *testing.T) {
-	for _, tc := range []struct {
-		name, response string
-		status         int
-		rejected       bool
-	}{
-		{name: "业务明确拒绝", status: 200, response: `{"code":234001}`, rejected: true},
-		{name: "请求明确拒绝", status: 429, response: `{"code":234001}`, rejected: true},
-		{name: "服务端结果未知", status: 502, response: `{"code":234001}`},
-		{name: "超时结果未知", status: 408, response: `{"code":234001}`},
-		{name: "缺少文件回执", status: 200, response: `{"code":0,"data":{}}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/open-apis/im/v1/files" {
-					w.WriteHeader(tc.status)
-					_, _ = io.WriteString(w, tc.response)
-					return
-				}
-				_, _ = io.WriteString(w, `{"code":0,"tenant_access_token":"test-token","expire":7200}`)
-			}))
-			t.Cleanup(server.Close)
-			worker, _ := testWorker(t, &fakeRuntimeStore{}, "")
-			adapter := worker.adapter.(*feishuChannel)
-			adapter.client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
-			key, err := adapter.uploadFile(t.Context(), "result.txt", []byte("result"))
-			if err == nil || key != "" || errors.Is(err, errChannelMediaUploadRejected) != tc.rejected {
-				t.Fatalf("上传回执分类错误: key=%s err=%v", key, err)
 			}
 		})
 	}

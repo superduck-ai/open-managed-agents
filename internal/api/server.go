@@ -4,19 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/nats-io/nats.go"
-	"github.com/riverqueue/river"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
+	"github.com/riverqueue/river"
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/channels"
+	channelcontracts "github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -57,9 +61,6 @@ import (
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/redis/go-redis/v9"
 )
 
 type Server struct {
@@ -182,7 +183,13 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	channelLogger := componentLogger("channels")
-	channelService := channels.NewService(deps.Config, deps.DB, channelLogger, deps.VaultSecrets)
+	channelService := channels.NewService(deps.Config, deps.DB, channelLogger, deps.VaultSecrets, channels.Dependencies{
+		Adapters:         map[string]channelcontracts.AdapterFactory{"feishu": feishu.New},
+		Registrar:        feishu.Registrar{},
+		TokenURL:         feishu.TokenURL,
+		ValidAppID:       feishu.ValidAppID,
+		CheckCredentials: feishu.MatchCredentials,
+	})
 	agentChannels := channelService.AgentHandler()
 	workspaceChannels := channelService.WorkspaceHandler()
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease

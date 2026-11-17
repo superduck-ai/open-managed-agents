@@ -49,12 +49,12 @@ func (w *channelWorker) keepArtifactLease(ctx context.Context, task *channelRepl
 }
 
 func (w *channelWorker) captureArtifactBaseline(ctx context.Context, msg *channelMessage, sessionID string, current artifactBaseline) (artifactBaseline, error) {
-	if msg.input == nil {
+	if msg.Input == nil {
 		return current, nil
 	}
-	if msg.input.PreparedContent != "" {
+	if msg.Input.PreparedContent != "" {
 		var prepared channelPreparedInput
-		if err := json.Unmarshal([]byte(msg.input.PreparedContent), &prepared); err != nil {
+		if err := json.Unmarshal([]byte(msg.Input.PreparedContent), &prepared); err != nil {
 			return nil, err
 		}
 		return prepared.ArtifactBaseline, nil
@@ -143,7 +143,7 @@ func (w *channelWorker) deliverArtifactFile(ctx context.Context, task *channelRe
 	if err := w.saveArtifactDelivery(ctx, task, state); err != nil {
 		return err
 	}
-	receipt, err := w.adapter.sendMedia(ctx, msg, file.Resource, contentType, data)
+	receipt, err := w.adapter.SendMedia(ctx, msg, file.Resource, contentType, data)
 	if err != nil {
 		if errors.Is(err, errChannelMediaUploadRejected) {
 			return w.artifactFailure(ctx, task, msg, state, index, "pending", "平台上传被拒绝，等待重试")

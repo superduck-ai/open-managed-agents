@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	lark "github.com/larksuite/oapi-sdk-go/v3"
-	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -33,7 +32,7 @@ func testCipher(t *testing.T) *secrets.Service {
 }
 
 func TestBindCredentialsPreservesDecryptionFailure(t *testing.T) {
-	service := newLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
+	service := testLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
 	record := db.ChannelRecord{AppID: "cli_test", AppSecretEnvelope: new("{invalid-envelope")}
 	err := service.bindCredentials(t.Context(), &record, channelMutation{})
 	app, ok := errors.AsType[*apperr.Error](err)
@@ -120,7 +119,7 @@ func (f *fakeLocalStore) GetChannelAgentEnvironment(context.Context, string, str
 
 func TestServiceAlwaysUsesNativeRuntime(t *testing.T) {
 	cfg := config.Config{}
-	service := NewService(cfg, nil, nil, nil)
+	service := NewService(cfg, nil, nil, nil, testDependencies())
 	if service.local == nil || service.supervisor == nil {
 		t.Fatal("缺省配置必须创建原生运行时")
 	}
@@ -170,7 +169,7 @@ func TestDecodeChannelMutationMounts(t *testing.T) {
 }
 
 func TestServiceWithoutChannelConfig(t *testing.T) {
-	service := NewService(config.Config{}, nil, nil, nil)
+	service := NewService(config.Config{}, nil, nil, nil, testDependencies())
 	if service.AgentHandler() == nil || service.WorkspaceHandler() == nil {
 		t.Fatal("未配置渠道时也必须返回可用的处理器")
 	}
@@ -264,15 +263,15 @@ func (f *fakeRegistrationStore) DeleteChannelRegistration(_ context.Context, ext
 }
 
 type fakeRegistrar struct {
-	result *registration.RegisterAppResult
+	result *contracts.RegistrationResult
 	err    error
 	delay  time.Duration
-	opts   *registration.Options
+	opts   *contracts.RegistrationOptions
 }
 
-func (f *fakeRegistrar) RegisterApp(ctx context.Context, opts *registration.Options) (*registration.RegisterAppResult, error) {
+func (f *fakeRegistrar) RegisterApp(ctx context.Context, opts *contracts.RegistrationOptions) (*contracts.RegistrationResult, error) {
 	f.opts = opts
-	opts.OnQRCode(&registration.QRCodeInfo{URL: "https://accounts.feishu.cn/page/qr?tp=sdk", ExpireIn: 600})
+	opts.OnQRCode("https://accounts.feishu.cn/page/qr?tp=sdk", 600)
 	if f.delay > 0 {
 		select {
 		case <-time.After(f.delay):
@@ -297,7 +296,7 @@ func newAuthorizationService(t *testing.T, registrar appRegistrar) (*localServic
 	}))
 	t.Cleanup(tokenServer.Close)
 	store := &fakeRegistrationStore{records: map[string]db.ChannelRegistrationRecord{}}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	service.registrar = registrar
 	service.client = tokenServer.Client()
 	service.tokenURL = tokenServer.URL
@@ -305,7 +304,7 @@ func newAuthorizationService(t *testing.T, registrar appRegistrar) (*localServic
 }
 
 func TestAuthorizationUsesSDKRegistration(t *testing.T) {
-	registrar := &fakeRegistrar{result: &registration.RegisterAppResult{ClientID: "cli_new", ClientSecret: "secret"}, delay: 20 * time.Millisecond}
+	registrar := &fakeRegistrar{result: &contracts.RegistrationResult{ClientID: "cli_new", ClientSecret: "secret"}, delay: 20 * time.Millisecond}
 	service, store := newAuthorizationService(t, registrar)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	view, err := service.beginAuthorization(context.Background(), principal, "我的机器人")
@@ -315,15 +314,10 @@ func TestAuthorizationUsesSDKRegistration(t *testing.T) {
 	if view["status"] != "pending" || view["url"] == "" || view["id"] == "" {
 		t.Fatalf("授权视图 = %v", view)
 	}
-	if registrar.opts == nil || registrar.opts.AppPreset == nil || registrar.opts.AppPreset.Name != "我的机器人" {
+	if registrar.opts == nil || registrar.opts.Name != "我的机器人" {
 		t.Fatalf("SDK 选项 = %+v", registrar.opts)
 	}
-	if registrar.opts.Addons == nil || len(registrar.opts.Addons.Scopes.Tenant) == 0 || len(registrar.opts.Addons.Events.Items.Tenant) == 0 {
-		t.Fatalf("SDK 权限预置缺失: %+v", registrar.opts.Addons)
-	}
-	if registrar.opts.Source != "open-managed-agents" {
-		t.Fatalf("SDK Source = %q", registrar.opts.Source)
-	}
+
 	stored := store.records[view["id"].(string)]
 	if stored.URL == "" {
 		t.Fatal("二维码地址必须落库")
@@ -350,7 +344,7 @@ func TestAuthorizationUsesSDKRegistration(t *testing.T) {
 }
 
 func TestAuthorizationDeniedByUser(t *testing.T) {
-	registrar := &fakeRegistrar{err: &registration.AccessDeniedError{RegisterAppError: &registration.RegisterAppError{Code: "access_denied"}}, delay: 10 * time.Millisecond}
+	registrar := &fakeRegistrar{err: contracts.ErrRegistrationDenied, delay: 10 * time.Millisecond}
 	service, store := newAuthorizationService(t, registrar)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	view, err := service.beginAuthorization(context.Background(), principal, "机器人")
@@ -442,7 +436,7 @@ func TestChannelSecretRoundTrip(t *testing.T) {
 
 func TestLocalServiceCreateRequiresValidModeAndName(t *testing.T) {
 	store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_a", Name: "Agent"}}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	mode := "unsupported"
 	if _, err := service.create(context.Background(), principal, "agent_a", channelMutation{Name: stringPointer("渠道"), Mode: &mode}); err == nil {
@@ -467,7 +461,7 @@ func TestLocalServiceCreateRequiresValidModeAndName(t *testing.T) {
 func TestNativeChannelCreationBindsRuntimeUser(t *testing.T) {
 	for _, apiKey := range []bool{false, true} {
 		store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_a"}}
-		service := newLocalService(store, testCipher(t), nil, nil)
+		service := testLocalService(store, testCipher(t), nil, nil)
 		principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member", AccountUUID: "account"}
 		want := "member"
 		if apiKey {
@@ -485,7 +479,7 @@ func TestNativeChannelCreationBindsRuntimeUser(t *testing.T) {
 
 func TestNativeChannelCredentialFailureDoesNotCreateChannel(t *testing.T) {
 	store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_a"}, credentialErr: db.ErrChannelCredentialInactive}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	if _, err := service.create(t.Context(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}, "agent_a", channelMutation{Name: new("身份验收")}); err == nil || store.created.ExternalID != "" {
 		t.Fatalf("凭据不可用时不得创建并启动渠道: %v / %+v", err, store.created)
 	}
@@ -493,7 +487,7 @@ func TestNativeChannelCredentialFailureDoesNotCreateChannel(t *testing.T) {
 
 func TestNativeChannelSaveRepairsRuntimeUser(t *testing.T) {
 	store := &fakeLocalStore{records: []db.ChannelRecord{{ExternalID: "chnl_a", OrganizationUUID: "org", WorkspaceUUID: "ws", AgentExternalID: "agent_a", Mode: "open"}}}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}
 	if _, err := service.update(t.Context(), principal, "agent_a", "chnl_a", channelMutation{Name: new("重新保存")}); err != nil {
 		t.Fatal(err)
@@ -505,7 +499,7 @@ func TestNativeChannelSaveRepairsRuntimeUser(t *testing.T) {
 
 func TestAuthorizationStopsWhenCredentialCannotBePrepared(t *testing.T) {
 	store := &fakeLocalStore{credentialErr: db.ErrChannelCredentialInactive}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}
 	if _, err := service.beginAuthorization(t.Context(), principal, "身份验收"); err == nil || store.credentialInput.RuntimeUserUUID != "member" {
 		t.Fatalf("扫码前必须准备用户身份，失败时不得调用飞书注册: %v / %+v", err, store.credentialInput)
@@ -651,41 +645,9 @@ func TestChannelReplyHonorsDisplayOptions(t *testing.T) {
 	}
 }
 
-func TestReplyMessageRequestsThreadReply(t *testing.T) {
-	var replyBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/tenant_access_token/internal"):
-			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"token","expire":7200}`))
-		case strings.Contains(r.URL.Path, "/im/v1/messages/") && strings.HasSuffix(r.URL.Path, "/reply"):
-			body, _ := io.ReadAll(r.Body)
-			if err := json.Unmarshal(body, &replyBody); err != nil {
-				t.Errorf("解析回复请求: %v", err)
-			}
-			_, _ = w.Write([]byte(`{"code":0,"data":{"message_id":"om_2"}}`))
-		default:
-			t.Errorf("未预期的请求 %s", r.URL.Path)
-			_, _ = w.Write([]byte(`{"code":0}`))
-		}
-	}))
-	defer server.Close()
-	adapter := &feishuChannel{client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(server.URL)), worker: &channelWorker{record: db.ChannelRecord{ReplyInThread: true}}}
-	messageID, err := adapter.replyMessage(context.Background(), "om_1", "text", `{"text":"好的"}`)
-	if err != nil {
-		t.Fatalf("replyMessage: %v", err)
-	}
-	if messageID != "om_2" {
-		t.Fatalf("回复消息 ID = %q", messageID)
-	}
-	if replyBody["reply_in_thread"] != true {
-		t.Fatalf("回复请求必须带 reply_in_thread=true，实际 %v", replyBody)
-	}
-}
-
 func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
 	store := &fakeLocalStore{}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
 	git := json.RawMessage(`{"url":"https://example.com/repo.git","mount_path":"/workspace/repo","checkout":{"type":"branch","name":"main"},"authorization_token":"ghp_secret"}`)
 	input := channelMutation{MemoryStoreID: json.RawMessage(`"mem_1"`), VaultID: json.RawMessage(`"vlt_1"`), GitRepository: git}
@@ -716,7 +678,7 @@ func TestApplyChannelMountsRejectsInvalidFieldTypes(t *testing.T) {
 				if err := json.Unmarshal([]byte(`{"`+field+`":`+value+`}`), &input); err != nil {
 					t.Fatal(err)
 				}
-				service := newLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
+				service := testLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
 				record := db.ChannelRecord{Mounts: `{}`}
 				if err := service.applyChannelMounts(t.Context(), auth.Principal{}, &record, input); err == nil {
 					t.Fatal("错误的挂载字段类型必须被拒绝")
@@ -731,7 +693,7 @@ func TestApplyChannelMountsRejectsInvalidFieldTypes(t *testing.T) {
 
 func TestCreateSavesGitMountFromWizard(t *testing.T) {
 	store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_1", Name: "agent"}}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	body := `{"name":"渠道","mode":"open","memory_store_id":null,"vault_id":null,` +
 		`"git_repository":{"type":"github_repository","url":"https://github.com/octocat/Hello-World.git","mount_path":"/workspace/demo","checkout":{"type":"branch","name":"master"},"authorization_token":"ghp_secret"},` +
 		`"include_thinking":false,"include_tool_calls":false,"reply_in_thread":false}`
@@ -765,7 +727,7 @@ func TestCreateSavesGitMountFromWizard(t *testing.T) {
 
 func TestApplyChannelMountsRejectsInvalidGit(t *testing.T) {
 	store := &fakeLocalStore{}
-	service := newLocalService(store, testCipher(t), nil, nil)
+	service := testLocalService(store, testCipher(t), nil, nil)
 	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
 	input := channelMutation{GitRepository: json.RawMessage(`{"url":"file:///tmp/repo"}`)}
 	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err == nil {
@@ -780,7 +742,7 @@ func TestApplyChannelMountsRejectsInvalidGit(t *testing.T) {
 func TestChannelFileLimitComesFromNativeStorage(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Storage.MaxFileBytes = 123
-	service := NewService(cfg, nil, nil, nil)
+	service := NewService(cfg, nil, nil, nil, testDependencies())
 	if service.supervisor.fileMaxBytes != cfg.Storage.MaxFileBytes {
 		t.Fatal("渠道必须复用OMA已有文件大小配置")
 	}

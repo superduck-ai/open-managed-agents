@@ -6,6 +6,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"log/slog"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -38,6 +39,8 @@ type Handler struct {
 	eventBus        sessionfanout.EventBus
 	previews        *workerPreviewConverter
 	eventObserver   SessionEventObserver
+	admitExecution  func(context.Context, string, string, string, bool) error
+	bindIdentity    func(context.Context, auth.Principal, db.Session, string) error
 	ports           *sessionports.Settings
 }
 
@@ -111,6 +114,7 @@ type sendEventsResponse struct {
 type sessionCreateRequest struct {
 	sessionMutationRequest
 	InitialEvents json.RawMessage `json:"initial_events"`
+	IdentityID    json.RawMessage `json:"identity_id"`
 }
 
 type sessionMutationRequest struct {

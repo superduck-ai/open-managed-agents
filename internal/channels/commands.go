@@ -133,7 +133,7 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		}
 	}
 	session, err := w.supervisor.oma.getSession(ctx, apiKey, args[0])
-	if err != nil || !w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
+	if err != nil || !w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) || !w.identitySessionOK(ctx, msg, scopeKey, session) {
 		_ = w.replyText(ctx, msg, "该会话不属于当前渠道/话题，或配置不兼容、当前不可恢复。")
 		return
 	}
@@ -167,7 +167,7 @@ func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *c
 			return
 		}
 		for _, session := range page.Data {
-			if w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
+			if w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) && w.identitySessionOK(ctx, msg, scopeKey, session) {
 				lines = append(lines, fmt.Sprintf("/resume %s（版本 %d）", session.ID, session.Agent.Version))
 				if len(lines) == 20 {
 					break

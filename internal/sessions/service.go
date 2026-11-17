@@ -51,6 +51,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body sessionCreateRequest) (db.Session, error) {
+	identityID, err := requestedIdentityID(body.IdentityID)
+	if err != nil {
+		return db.Session{}, err
+	}
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
 		return db.Session{}, invalidRequest(err)
@@ -206,7 +210,20 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
 	}
+	if err := h.bindCreatedIdentity(r.Context(), principal, created, identityID); err != nil {
+		return db.Session{}, err
+	}
 	return created, nil
+}
+
+func (h *Handler) bindCreatedIdentity(ctx context.Context, principal auth.Principal, created db.Session, identityID string) error {
+	if identityID == "" {
+		return nil
+	}
+	if h.bindIdentity == nil {
+		return internalError("Could not bind identity", errIdentityUnavailable)
+	}
+	return h.bindIdentity(ctx, principal, created, identityID)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
@@ -675,6 +692,11 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		if found {
 			return h.deliverSessionInputChanges(w, r, session, changes, request)
+		}
+	}
+	if h.admitExecution != nil && eventBatchStartsRound(inputs) {
+		if err := h.admitExecution(r.Context(), session.OrganizationUUID, session.WorkspaceUUID, session.ExternalID, true); err != nil {
+			return err
 		}
 	}
 	if session.BudgetReachedAt != nil {

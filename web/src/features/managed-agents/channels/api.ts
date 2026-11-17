@@ -26,6 +26,10 @@ export interface Channel {
   reply_in_thread: boolean;
   pending_pairings: number;
   created_at?: string;
+  identity_id?: string;
+  identity_resolution?: { mode?: 'fixed' | 'pairing' };
+  connection_status?: string;
+  entry_closed?: boolean;
 }
 export interface ChannelInput {
   resources?: ChannelResource[];

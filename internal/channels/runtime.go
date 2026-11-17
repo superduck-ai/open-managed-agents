@@ -67,6 +67,7 @@ type runtimeSupervisor struct {
 	mu              sync.Mutex
 	workers         map[string]*channelWorker
 	shutdown        chan struct{}
+	ingress         identityIngress
 }
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {

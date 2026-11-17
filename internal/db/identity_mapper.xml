@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="IdentityMapper">
+    <sql id="identityColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, namespace, external_subject_id,
+        display_name, enabled, auto_memory_store, created_at, updated_at, deleted_at
+    </sql>
+    <sql id="configColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, identity_uuid, agent_external_id,
+        revision, status, CAST(env AS text) AS env, CAST(vault_mounts AS text) AS vault_mounts,
+        CAST(disabled_vaults AS text) AS disabled_vaults, created_at, updated_at
+    </sql>
+    <sql id="executionColumns">
+        uuid, organization_uuid, workspace_uuid, channel_uuid, channel_external_id, mode,
+        identity_uuid, agent_version, revision, connection_status, entry_closed, updated_at
+    </sql>
+    <sql id="pairingColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, channel_uuid, channel_external_id,
+        scope_kind, platform_account, remote_id, display_name, status, identity_uuid,
+        agent_external_id, agent_version, revision, pairing_code_expires_at, created_at, updated_at
+    </sql>
+
+    <insert id="InsertIdentity" result="returning" resultType="IdentityRecord">
+        INSERT INTO identities (
+            uuid, external_id, organization_uuid, workspace_uuid, namespace, external_subject_id,
+            display_name, enabled, auto_memory_store
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.Namespace}, #{params.ExternalSubjectID}, #{params.DisplayName}, #{params.Enabled},
+            #{params.AutoMemoryStore}
+        )
+        RETURNING <include refid="identityColumns"/>
+    </insert>
+
+    <select id="FindIdentity" result="optional" resultType="IdentityRecord">
+        SELECT <include refid="identityColumns"/>
+        FROM identities
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+    </select>
+
+    <select id="FindIdentityByUUID" result="optional" resultType="IdentityRecord">
+        SELECT <include refid="identityColumns"/>
+        FROM identities
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{identityUUID} AND deleted_at IS NULL
+    </select>
+
+    <select id="ListIdentities" resultType="IdentityRecord">
+        SELECT <include refid="identityColumns"/>
+        FROM identities
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND deleted_at IS NULL
+        <if test="params.Cursor != ''">AND external_id &lt; #{params.Cursor}</if>
+        <if test="params.Status == 'enabled'">AND enabled = true</if>
+        <if test="params.Status == 'disabled'">AND enabled = false</if>
+        <if test="params.Subject != ''">AND external_subject_id = #{params.Subject}</if>
+        <if test="params.Namespace != ''">AND namespace = #{params.Namespace}</if>
+        <if test="params.Search != ''">AND (strpos(lower(display_name), lower(#{params.Search})) &gt; 0 OR strpos(lower(external_subject_id), lower(#{params.Search})) &gt; 0 OR strpos(lower(external_id), lower(#{params.Search})) &gt; 0)</if>
+        ORDER BY external_id DESC
+        LIMIT #{params.Limit}
+    </select>
+
+    <update id="UpdateIdentity" result="rows">
+        UPDATE identities SET namespace = #{params.Namespace}, external_subject_id = #{params.ExternalSubjectID},
+            display_name = #{params.DisplayName}, auto_memory_store = #{params.AutoMemoryStore}, updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID} AND deleted_at IS NULL
+    </update>
+
+    <update id="SetIdentityEnabled" result="rows">
+        UPDATE identities SET enabled = #{enabled}, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+    </update>
+
+    <update id="SoftDeleteIdentity" result="rows">
+        UPDATE identities SET deleted_at = now(), updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+    </update>
+
+    <insert id="InsertIdentityConfig" result="returning" resultType="IdentityConfigRecord">
+        INSERT INTO identity_configs (
+            uuid, external_id, organization_uuid, workspace_uuid, identity_uuid, agent_external_id,
+            env, vault_mounts, disabled_vaults
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.IdentityUUID}, #{params.AgentExternalID},
+            CAST(#{params.Env} AS jsonb), CAST(#{params.VaultMounts} AS jsonb), CAST(#{params.DisabledVaults} AS jsonb)
+        )
+        RETURNING <include refid="configColumns"/>
+    </insert>
+
+    <select id="FindActiveIdentityConfig" result="optional" resultType="IdentityConfigRecord">
+        SELECT <include refid="configColumns"/>
+        FROM identity_configs
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID}
+        AND agent_external_id = #{agentExternalID} AND status = 'active'
+    </select>
+
+    <select id="ListIdentityConfigs" resultType="IdentityConfigRecord">
+        SELECT <include refid="configColumns"/>
+        FROM identity_configs
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
+        <if test="agentExternalID != ''">AND agent_external_id = #{agentExternalID}</if>
+        <if test="cursor != ''">AND external_id &lt; #{cursor}</if>
+        ORDER BY external_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="UpdateIdentityConfig" result="rows">
+        UPDATE identity_configs SET revision = revision + 1, env = CAST(#{params.Env} AS jsonb),
+            vault_mounts = CAST(#{params.VaultMounts} AS jsonb), disabled_vaults = CAST(#{params.DisabledVaults} AS jsonb),
+            updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
+        AND status = 'active' AND revision = #{params.ExpectedRevision}
+    </update>
+
+    <update id="ArchiveIdentityConfigs" result="rows">
+        UPDATE identity_configs SET status = 'archived', updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
+    </update>
+
+    <insert id="InsertExecutionContext" result="returning" resultType="ExecutionContextRecord">
+        INSERT INTO channel_execution_contexts (
+            uuid, organization_uuid, workspace_uuid, channel_uuid, channel_external_id, mode, identity_uuid, agent_version
+        ) VALUES (
+            #{params.UUID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.ChannelUUID},
+            #{params.ChannelExternalID}, #{params.Mode}, #{params.IdentityUUID}, #{params.AgentVersion}
+        )
+        RETURNING <include refid="executionColumns"/>
+    </insert>
+
+    <select id="FindExecutionContext" result="optional" resultType="ExecutionContextRecord">
+        SELECT <include refid="executionColumns"/>
+        FROM channel_execution_contexts
+        WHERE workspace_uuid = #{workspaceUUID} AND channel_external_id = #{channelExternalID}
+    </select>
+
+    <update id="UpdateExecutionTarget" result="rows">
+        UPDATE channel_execution_contexts SET identity_uuid = #{params.IdentityUUID}, agent_version = #{params.AgentVersion},
+            revision = revision + 1, updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND channel_uuid = #{params.ChannelUUID}
+        AND mode = #{params.Mode} AND revision = #{params.Revision} AND entry_closed = false
+    </update>
+
+    <update id="SetConnectionStatus" result="rows">
+        UPDATE channel_execution_contexts SET connection_status = #{status}, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND channel_external_id = #{channelExternalID}
+        AND connection_status IS DISTINCT FROM #{status}
+    </update>
+
+    <update id="CloseFixedEntries" result="rows">
+        UPDATE channel_execution_contexts SET entry_closed = true, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID}
+        AND mode = 'fixed' AND entry_closed = false
+    </update>
+
+    <insert id="InsertScopePairing" result="returning" resultType="ScopePairingRecord">
+        INSERT INTO channel_scope_pairings (
+            uuid, external_id, organization_uuid, workspace_uuid, channel_uuid, channel_external_id,
+            scope_kind, platform_account, remote_id, display_name, pairing_code_hash, pairing_code_expires_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.ChannelUUID}, #{params.ChannelExternalID}, #{params.ScopeKind}, #{params.PlatformAccount},
+            #{params.RemoteID}, #{params.DisplayName}, #{params.CodeHash,sensitive=true}, #{params.CodeExpiresAt}
+        )
+        RETURNING <include refid="pairingColumns"/>
+    </insert>
+
+    <select id="FindScopePairing" result="optional" resultType="ScopePairingRecord">
+        SELECT <include refid="pairingColumns"/>
+        FROM channel_scope_pairings
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+    </select>
+
+    <select id="FindOpenScopePairing" result="optional" resultType="ScopePairingRecord">
+        SELECT <include refid="pairingColumns"/>
+        FROM channel_scope_pairings
+        WHERE channel_uuid = #{channelUUID} AND scope_kind = #{scopeKind}
+        AND platform_account = #{platformAccount} AND remote_id = #{remoteID}
+        AND status IN ('pending', 'active')
+    </select>
+
+    <select id="ListScopePairings" resultType="ScopePairingRecord">
+        SELECT <include refid="pairingColumns"/>
+        FROM channel_scope_pairings
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        <if test="params.ChannelExternalID != ''">AND channel_external_id = #{params.ChannelExternalID}</if>
+        <if test="params.Status != ''">AND status = #{params.Status}</if>
+        <if test="params.Cursor != ''">AND external_id &lt; #{params.Cursor}</if>
+        ORDER BY external_id DESC
+        LIMIT #{params.Limit}
+    </select>
+
+    <update id="ActivateScopePairingByCode" result="rows">
+        UPDATE channel_scope_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
+            agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
+            revision = 1, pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
+        AND status = 'pending' AND pairing_code_hash = #{params.CodeHash,sensitive=true}
+        AND pairing_code_expires_at &gt; #{params.Now}
+    </update>
+
+    <update id="ActivateScopePairingByID" result="rows">
+        UPDATE channel_scope_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
+            agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
+            revision = 1, pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID} AND status = 'pending'
+    </update>
+
+    <update id="RebindScopePairing" result="rows">
+        UPDATE channel_scope_pairings SET identity_uuid = #{params.IdentityUUID},
+            agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
+            revision = revision + 1, updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
+        AND status = 'active' AND revision = #{params.ExpectedRevision}
+    </update>
+
+    <update id="UnbindScopePairing" result="rows">
+        UPDATE channel_scope_pairings SET status = 'unbound', revision = revision + 1,
+            pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+        AND status = 'active' AND revision = #{expectedRevision}
+    </update>
+
+    <update id="UnbindIdentityPairings" result="rows">
+        UPDATE channel_scope_pairings SET status = 'unbound', revision = revision + 1,
+            pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
+    </update>
+
+    <insert id="UpsertActorLink" result="exec">
+        INSERT INTO identity_actor_links (
+            organization_uuid, workspace_uuid, channel_type, app_id, actor_id, identity_uuid
+        ) VALUES (
+            #{organizationUUID}, #{workspaceUUID}, #{channelType}, #{appID}, #{actorID}, #{identityUUID}
+        )
+        ON CONFLICT (organization_uuid, workspace_uuid, channel_type, app_id, actor_id)
+        DO UPDATE SET identity_uuid = EXCLUDED.identity_uuid, updated_at = now()
+    </insert>
+
+    <update id="SetSessionIdentity" result="rows">
+        UPDATE sessions SET identity_uuid = #{identityUUID}
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID} AND deleted_at IS NULL
+    </update>
+
+    <insert id="InsertSessionIdentity" result="exec">
+        INSERT INTO session_identity_bindings (
+            uuid, organization_uuid, workspace_uuid, session_uuid, session_external_id, identity_uuid,
+            agent_external_id, binding_revision, config_revision, personal_vault_external_id,
+            scope_kind, scope_key, channel_external_id
+        ) VALUES (
+            #{params.UUID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.SessionUUID},
+            #{params.SessionExternalID}, #{params.IdentityUUID}, #{params.AgentExternalID},
+            #{params.BindingRevision}, #{params.ConfigRevision}, #{params.PersonalVaultID},
+            #{params.ScopeKind}, #{params.ScopeKey}, #{params.ChannelExternalID}
+        )
+    </insert>
+
+    <select id="FindSessionIdentity" result="optional" resultType="SessionIdentityRecord">
+        SELECT b.session_uuid, b.session_external_id, b.identity_uuid, b.agent_external_id,
+            b.binding_revision, b.config_revision, b.personal_vault_external_id, b.scope_kind,
+            b.scope_key, b.channel_external_id, s.status AS session_status, b.created_at
+        FROM session_identity_bindings b
+        JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+        WHERE b.workspace_uuid = #{workspaceUUID} AND b.session_external_id = #{sessionExternalID}
+        AND s.deleted_at IS NULL
+    </select>
+
+    <select id="ListIdentitySessions" resultType="SessionIdentityRecord">
+        SELECT b.session_uuid, b.session_external_id, b.identity_uuid, b.agent_external_id,
+            b.binding_revision, b.config_revision, b.personal_vault_external_id, b.scope_kind,
+            b.scope_key, b.channel_external_id, s.status AS session_status, b.created_at
+        FROM session_identity_bindings b
+        JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+        WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID} AND s.deleted_at IS NULL
+        ORDER BY b.created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="IdentityStats" resultType="IdentityStatsRecord">
+        SELECT COUNT(DISTINCT b.session_uuid) AS sessions,
+            COUNT(DISTINCT b.agent_external_id) AS agents,
+            MAX(s.updated_at) AS last_used_at
+        FROM session_identity_bindings b
+        JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+        WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID} AND s.deleted_at IS NULL
+        <if test="since != nil">AND s.updated_at &gt;= #{since}</if>
+    </select>
+
+    <select id="ListIdentityAgents" resultType="IdentityAgentUsageRecord">
+        SELECT b.agent_external_id AS agent_external_id, COUNT(*) AS sessions, MAX(s.updated_at) AS last_used_at
+        FROM session_identity_bindings b
+        JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+        WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID} AND s.deleted_at IS NULL
+        <if test="since != nil">AND s.updated_at &gt;= #{since}</if>
+        GROUP BY b.agent_external_id
+        ORDER BY MAX(s.updated_at) DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="ListRunningIdentitySessions" resultType="string">
+        SELECT s.external_id
+        FROM session_identity_bindings b
+        JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+        WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID}
+        AND s.deleted_at IS NULL AND s.archived_at IS NULL
+        AND (
+            s.status IN ('running', 'rescheduling')
+            OR EXISTS (
+                SELECT 1 FROM sandbox_tool_calls t
+                JOIN code_sessions c ON c.uuid = t.code_session_uuid
+                WHERE c.session_uuid = s.uuid AND c.workspace_uuid = s.workspace_uuid
+                AND t.oauth_wait_started_at IS NOT NULL AND t.finished_at IS NULL
+                AND t.state NOT IN ('succeeded', 'failed', 'cancelled', 'expired', 'lost')
+            )
+        )
+    </select>
+
+    <select id="ListAgentBindings" resultType="AgentBindingRecord">
+        SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
+            p.channel_external_id AS channel_external_id, p.scope_kind AS scope_kind,
+            p.remote_id AS remote_id, p.external_id AS pairing_external_id, p.status AS status
+        FROM channel_scope_pairings p
+        JOIN identities i ON i.uuid = p.identity_uuid AND i.workspace_uuid = p.workspace_uuid AND i.deleted_at IS NULL
+        WHERE p.workspace_uuid = #{workspaceUUID} AND p.agent_external_id = #{agentExternalID} AND p.status = 'active'
+        UNION ALL
+        SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
+            c.external_id AS channel_external_id, 'fixed' AS scope_kind,
+            '' AS remote_id, '' AS pairing_external_id, 'active' AS status
+        FROM channel_execution_contexts x
+        JOIN channels c ON c.uuid = x.channel_uuid AND c.workspace_uuid = x.workspace_uuid AND c.deleted_at IS NULL
+        JOIN identities i ON i.uuid = x.identity_uuid AND i.workspace_uuid = x.workspace_uuid AND i.deleted_at IS NULL
+        WHERE x.workspace_uuid = #{workspaceUUID} AND c.agent_external_id = #{agentExternalID}
+        AND x.mode = 'fixed' AND x.entry_closed = false
+    </select>
+
+    <select id="PersonalVault" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM channel_user_vaults p
+            JOIN vaults v ON v.uuid = p.vault_uuid AND v.workspace_uuid = p.workspace_uuid
+            WHERE v.workspace_uuid = #{workspaceUUID} AND v.external_id = #{vaultExternalID} AND v.deleted_at IS NULL
+        )
+    </select>
+
+    <insert id="InsertCleanupRun" result="returning" resultType="CleanupRunRecord">
+        INSERT INTO identity_cleanup_runs (
+            uuid, external_id, organization_uuid, workspace_uuid, identity_uuid, state, result
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.IdentityUUID}, #{params.State}, CAST(#{params.Result} AS jsonb)
+        )
+        RETURNING external_id, state, CAST(result AS text) AS result, updated_at
+    </insert>
+
+    <update id="SaveCleanupRun" result="rows">
+        UPDATE identity_cleanup_runs SET state = #{state}, result = CAST(#{result} AS jsonb), updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+    </update>
+
+    <select id="FindCleanupRun" result="optional" resultType="CleanupRunRecord">
+        SELECT external_id, state, CAST(result AS text) AS result, updated_at
+        FROM identity_cleanup_runs
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+    </select>
+</mapper>

@@ -129,6 +129,19 @@ func (w *channelWorker) active(ctx context.Context) bool {
 }
 
 func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, scopeKey string) (string, error) {
+	decision, err := w.executionDecision(ctx, msg, scopeKey, true)
+	if err != nil {
+		return "", err
+	}
+	if decision.Mode == "hold" {
+		if err := w.replyText(ctx, msg, decision.Notice); err != nil {
+			return "", err
+		}
+		return "", errChannelExecutionHeld
+	}
+	if decision.Mode == "execute" {
+		return w.sessionForDecision(ctx, msg, scopeKey, decision)
+	}
 	environmentID, err := w.supervisor.store.GetChannelAgentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, w.record.AgentExternalID)
 	if err != nil {
 		return "", err

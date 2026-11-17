@@ -41,7 +41,18 @@ func (s *Service) ensurePersonalVault(ctx context.Context, record db.ChannelReco
 		return "", err
 	}
 	if current.ArchivedAt != nil || current.DeletedAt != nil {
-		return "", errors.New("个人连接保险库已停用")
+		id, err = ids.New("vlt_")
+		if err != nil {
+			return "", err
+		}
+		metadata, encodeErr := jsonv2.Marshal(map[string]string{"source": "channel-oauth", "channel_type": record.ChannelType, "app_id": record.AppID, "actor_id": actorID})
+		if encodeErr != nil {
+			return "", encodeErr
+		}
+		return s.store.ReplaceChannelUserVault(ctx, identity, db.Vault{
+			UUID: uuid.NewV4().String(), ExternalID: id, OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID,
+			DisplayName: "渠道个人连接 · " + actorID, Metadata: json.RawMessage(metadata), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		})
 	}
 	return current.ExternalID, nil
 }

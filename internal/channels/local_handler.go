@@ -48,6 +48,8 @@ func (h *localHandler) workspaceRouter() http.Handler {
 	router.Get("/", wrap(h.listWorkspace))
 	router.Get("/{channel_id}/qr", wrap(h.qr))
 	router.Post("/{channel_id}/qr", wrap(h.qr))
+	router.Post("/{channel_id}/qr_sessions", wrap(h.qr))
+	router.Get("/{channel_id}/qr_sessions/{qr_id}", wrap(h.qrSession))
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
 	router.Post("/authorizations", wrap(h.beginAuthorization))
 	router.Get("/authorizations/{authorization_id}", wrap(h.authorizationStatus))
@@ -202,7 +204,7 @@ func (h *localHandler) listWorkspace(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, workspaceChannelPage{Data: rows})
+	httpapi.WriteJSON(w, http.StatusOK, workspaceChannelPage{Data: filterChannelViews(rows, r.URL.Query())})
 	return nil
 }
 
@@ -228,6 +230,20 @@ func (h *localHandler) checkAppCredentials(w http.ResponseWriter, r *http.Reques
 		return invalidAppCredentials()
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	return nil
+}
+
+func (h *localHandler) qrSession(w http.ResponseWriter, r *http.Request) error {
+	principal, err := h.principal(r, false)
+	if err != nil {
+		return err
+	}
+	view, err := h.service.authorizationStatus(r.Context(), principal, chi.URLParam(r, "qr_id"))
+	if err != nil {
+		return err
+	}
+	delete(view, "url")
+	httpapi.WriteJSON(w, http.StatusOK, view)
 	return nil
 }
 

@@ -63,6 +63,9 @@ func (w *channelWorker) runScoped(ctx context.Context, ticket *scopeTicket, msg 
 		return
 	}
 	sessionID, err := w.inputSession(ctx, msg, ticket.scopeKey)
+	if errors.Is(err, errChannelExecutionHeld) {
+		return
+	}
 	if err != nil {
 		w.supervisor.logger.WarnContext(ctx, "open channel session", "channel_id", w.record.ExternalID, "error", err)
 		if errors.Is(err, errChannelSessionUnconfirmed) {

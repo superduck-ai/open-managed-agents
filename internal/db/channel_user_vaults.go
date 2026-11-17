@@ -25,6 +25,25 @@ func (d *DB) GetChannelUserVaultID(ctx context.Context, identity ChannelUserVaul
 	return id, nil
 }
 
+func (d *DB) ReplaceChannelUserVault(ctx context.Context, identity ChannelUserVaultIdentity, vault Vault) (string, error) {
+	var id string
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if _, err := NewChannelCredentialMapper(executor).LockWorkspace(ctx, identity.OrganizationUUID, identity.WorkspaceUUID); err != nil {
+			return mapNoRows(err)
+		}
+		created, err := NewVaultMapper(executor).Insert(ctx, vaultInsertParams(vault))
+		if err != nil {
+			return err
+		}
+		if err := NewChannelUserVaultMapper(executor).Insert(ctx, identity, created.UUID); err != nil {
+			return err
+		}
+		id = created.ExternalID
+		return nil
+	})
+	return id, err
+}
+
 func (d *DB) EnsureChannelUserVault(ctx context.Context, identity ChannelUserVaultIdentity, vault Vault) (string, error) {
 	var id string
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {

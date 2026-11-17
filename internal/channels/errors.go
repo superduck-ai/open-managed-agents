@@ -15,6 +15,7 @@ var (
 	errChannelSubscriptionUnavailable = errors.New("内部会话订阅尚未配置")
 	errChannelDeliveryUnconfirmed     = errors.New("渠道卡片交付未确认")
 	errChannelSessionUnconfirmed      = errors.New("渠道会话状态未确认")
+	errChannelExecutionHeld           = errors.New("渠道执行已拦截")
 	errOMAPaginationCycle             = errors.New("OMA 分页游标重复")
 	errChannelInputUnconfirmed        = errors.New("渠道输入提交结果未确认")
 	errOMARequestRejected             = errors.New("OMA 明确拒绝请求")

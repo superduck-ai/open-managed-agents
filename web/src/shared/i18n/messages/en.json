@@ -3694,7 +3694,7 @@
   "managedAgents.channels.connectionCheckFail": "Connection check failed: bridge reports disconnected",
   "managedAgents.channels.latestVersion": "Default latest version",
   "managedAgents.channels.latestVersionShort": "Default latest",
-  "managedAgents.channels.listEmpty": "No channels yet. Click Add channel to connect Feishu.",
+  "managedAgents.channels.listEmpty": "Click Add channel to get started.",
   "managedAgents.channels.emptyTitle": "No channels yet",
   "managedAgents.channels.noMatches": "No matching channels",
   "managedAgents.channels.noMatchesHelp": "Try another name or adjust your filters.",

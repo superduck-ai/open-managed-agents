@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { ArrowUpRight, Plug, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import type { ApiError } from '../../../shared/api/client';
 import { productIcons } from '../../../shared/icons/product-icons';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
@@ -74,6 +75,11 @@ export function ChannelsPageContent({
   const query = useQuery({
     queryKey: ['workspace-channels', workspaceId],
     queryFn: () => listWorkspaceChannels(workspaceId),
+    retry: (failureCount, error) => {
+      const status = (error as Partial<ApiError>).status;
+      if (status === 503 || (status && status >= 400 && status < 500)) return false;
+      return failureCount < 1;
+    },
     refetchInterval: 15000,
   });
   const environments = useQuery({
@@ -94,6 +100,7 @@ export function ChannelsPageContent({
     ...statusFilters.map((status) => ({ value: status, label: channelConnectionStatusLabel(status, msg) })),
   ];
   const filtered = Boolean(search.trim()) || statusFilter !== 'all';
+  const unavailable = !query.data && query.isError && (query.error as Partial<ApiError>).status === 503;
 
   return (
     <section className="min-w-0 text-foreground" aria-label={msg('managedAgents.channels.title', '渠道')}>
@@ -139,7 +146,7 @@ export function ChannelsPageContent({
           </AlertDescription>
         </Alert>
       ) : null}
-      {query.isError ? (
+      {query.isError && !unavailable ? (
         <Alert variant="destructive" className="mb-4">
           <AlertDescription>
             {errorMessage(query.error)}{' '}
@@ -150,8 +157,14 @@ export function ChannelsPageContent({
         </Alert>
       ) : null}
       {query.isPending && !query.data ? (
-        <Skeleton className="h-40 w-full" />
-      ) : query.data ? (
+        <ChannelListTable
+          rows={[]}
+          loading
+          workspaceId={workspaceId}
+          environmentLabel={environmentLabel}
+          onNavigate={onNavigate}
+        />
+      ) : query.data || unavailable ? (
         <>
           <ChannelListTable
             rows={visibleRows}
@@ -199,7 +212,7 @@ function ChannelListEmpty({ filtered }: { filtered: boolean }) {
       body={
         filtered
           ? msg('managedAgents.channels.noMatchesHelp', '试试其他名称，或调整筛选。')
-          : msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入飞书。')
+          : msg('managedAgents.channels.listEmpty', '点击「新增渠道」开始使用。')
       }
     />
   );
@@ -207,11 +220,13 @@ function ChannelListEmpty({ filtered }: { filtered: boolean }) {
 
 function ChannelListTable({
   rows,
+  loading = false,
   workspaceId,
   environmentLabel,
   onNavigate,
 }: {
   rows: WorkspaceChannel[];
+  loading?: boolean;
   workspaceId: string;
   environmentLabel: (environmentId: string | null) => string;
   onNavigate: (href: string) => void;
@@ -226,7 +241,7 @@ function ChannelListTable({
     msg('managedAgents.channels.createdAt', '创建时间'),
   ];
   return (
-    <Table className={`${dataTableClassName} min-w-[960px]`}>
+    <Table className={`${dataTableClassName} min-w-[960px]`} aria-busy={loading}>
       <colgroup>
         <col className="w-44" />
         <col className="w-44" />
@@ -249,6 +264,17 @@ function ChannelListTable({
         </TableRow>
       </TableHeader>
       <TableBody>
+        {loading
+          ? Array.from({ length: 3 }, (_, rowIndex) => (
+              <TableRow key={rowIndex} aria-hidden="true" className="[&>td]:h-11">
+                {Array.from({ length: columns.length + 1 }, (_, columnIndex) => (
+                  <DataTableCell key={columnIndex}>
+                    <Skeleton className="h-4 w-3/4" />
+                  </DataTableCell>
+                ))}
+              </TableRow>
+            ))
+          : null}
         {rows.map((row) => (
           <ChannelListRow
             key={`${row.agentId}:${row.id}`}

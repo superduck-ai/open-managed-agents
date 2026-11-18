@@ -130,3 +130,16 @@ test('recovers the generated title after one failed metadata read', async () => 
   await waitFor(() => expect(hook.result.current.session?.title).toBe('Recovered'));
   expect(requests).toBe(2);
 });
+
+test('skips title retries after the API client reports an authorization failure', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return Response.json({ error: { message: 'Forbidden' } }, { status: 403 });
+  };
+  renderSync(session(), [{ id: 'sevt_title', type: 'session.updated', title: 'Update' }]);
+  await waitFor(() => expect(requests).toBe(1));
+  await act(async () => Bun.sleep(350));
+  expect(requests).toBe(1);
+});

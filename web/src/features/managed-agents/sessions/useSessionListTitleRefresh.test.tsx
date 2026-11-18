@@ -28,7 +28,7 @@ function session(id = 'sesn_title', title: string | null = null): SessionApiResp
   };
 }
 
-function renderRefresh(entities: ManagedEntityApiResponse[]) {
+function renderRefresh(entities: ManagedEntityApiResponse[], pageRevision = { current: 0 }) {
   const filters: ManagedEntityListFilters = { agentId: 'agent_title', statuses: ['running'] };
   return renderHook(
     ({ workspaceId }) => {
@@ -42,6 +42,7 @@ function renderRefresh(entities: ManagedEntityApiResponse[]) {
         workspaceId,
         cursor: 'page_two',
         filters,
+        pageRevision,
         onPage,
       });
       return rows;
@@ -126,4 +127,21 @@ test('pauses background requests while the page is hidden', async () => {
     if (descriptor) Object.defineProperty(document, 'visibilityState', descriptor);
     else Reflect.deleteProperty(document, 'visibilityState');
   }
+});
+
+test('discards a pending title response after a foreground write changes the list', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let finish: ((response: Response) => void) | undefined;
+  globalThis.fetch = async () =>
+    new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  const pageRevision = { current: 0 };
+  const initial = session();
+  const hook = renderRefresh([initial], pageRevision);
+  await showPage();
+  await waitFor(() => expect(finish).toBeDefined());
+  pageRevision.current += 1;
+  await act(async () => finish?.(Response.json({ data: [session('sesn_title', 'Stale page')] })));
+  expect(hook.result.current).toEqual([initial]);
 });

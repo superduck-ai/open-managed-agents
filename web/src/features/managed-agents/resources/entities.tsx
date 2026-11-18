@@ -27,7 +27,7 @@ import {
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
   archiveManagedEntity,
@@ -177,7 +177,12 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const [previewSession, setPreviewSession] = useState<{ workspaceId: string; session: SessionApiResponse } | null>(
     null,
   );
-  const [entities, setEntities] = useState<ManagedEntityApiResponse[]>([]);
+  const [entities, setEntityRows] = useState<ManagedEntityApiResponse[]>([]);
+  const pageRevision = useRef(0);
+  const setEntities = useCallback((next: SetStateAction<ManagedEntityApiResponse[]>) => {
+    pageRevision.current += 1;
+    setEntityRows(next);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -435,7 +440,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         ),
       );
     },
-    [activeWorkspaceId, config.section, entityPageCursor],
+    [activeWorkspaceId, config.section, entityPageCursor, setEntities],
   );
 
   useEffect(() => {
@@ -471,7 +476,16 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     return () => {
       active = false;
     };
-  }, [activeWorkspaceId, applyEntityPage, config.section, entityPageCursor, managedEntityListFilters, msg, refreshKey]);
+  }, [
+    activeWorkspaceId,
+    applyEntityPage,
+    config.section,
+    entityPageCursor,
+    managedEntityListFilters,
+    msg,
+    refreshKey,
+    setEntities,
+  ]);
 
   useEffect(() => {
     setSelectedEntityIds(new Set());
@@ -515,6 +529,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     workspaceId: activeWorkspaceId,
     cursor: entityPageCursor,
     filters: managedEntityListFilters,
+    pageRevision,
     onPage: applyEntityPage,
   });
   const sessionListEntities = sessionIdSearch.handled

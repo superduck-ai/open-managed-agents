@@ -37,7 +37,9 @@ export function useSessionTitleSync(
               : current,
           );
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (error && typeof error === 'object' && 'status' in error && (error.status === 401 || error.status === 403))
+            return;
           const delay = TITLE_READ_RETRY_MS[attempt];
           if (active && delay !== undefined) retry = window.setTimeout(() => refresh(attempt + 1), delay);
         });

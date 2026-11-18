@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type RefObject } from 'react';
 import { listManagedEntities } from '../api';
 import type {
   ManagedEntityApiResponse,
@@ -27,6 +27,7 @@ export function useSessionListTitleRefresh({
   workspaceId,
   cursor,
   filters,
+  pageRevision,
   onPage,
 }: {
   section: ManagedEntitySection;
@@ -36,6 +37,7 @@ export function useSessionListTitleRefresh({
   workspaceId: string;
   cursor: PageCursor;
   filters: ManagedEntityListFilters | undefined;
+  pageRevision: RefObject<number>;
   onPage: (page: PageResponse<ManagedEntityApiResponse>) => void;
 }) {
   useEffect(() => {
@@ -45,9 +47,10 @@ export function useSessionListTitleRefresh({
     const refresh = async () => {
       if (document.visibilityState !== 'visible' || pending) return;
       pending = true;
+      const revision = pageRevision.current;
       try {
         const page = await listManagedEntities('sessions', workspaceId, cursor, filters);
-        if (active) onPage(page);
+        if (active && revision === pageRevision.current) onPage(page);
       } catch {
         return;
       } finally {
@@ -69,5 +72,5 @@ export function useSessionListTitleRefresh({
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [section, loading, searching, entities, workspaceId, cursor, filters, onPage]);
+  }, [section, loading, searching, entities, workspaceId, cursor, filters, pageRevision, onPage]);
 }

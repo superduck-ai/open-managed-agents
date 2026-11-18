@@ -136,6 +136,11 @@ func generateSessionTitle(ctx context.Context, client *http.Client, upstream llm
 
 func usesTitleCompletionTokens(modelID string) bool {
 	modelID, _ = strings.CutPrefix(modelID, "openai/")
+	if version, ok := strings.CutPrefix(modelID, "gpt-"); ok {
+		major, _, _ := strings.Cut(version, "-")
+		major, _, _ = strings.Cut(major, ".")
+		return major == "5" || major == "6"
+	}
 	family, _, _ := strings.Cut(modelID, "-")
 	switch family {
 	case "o1", "o3", "o4":

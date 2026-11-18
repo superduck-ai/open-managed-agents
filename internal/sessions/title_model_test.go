@@ -73,7 +73,7 @@ func TestGenerateTitleUsingChatCompletions(t *testing.T) {
 	}
 }
 
-func TestGenerateTitleUsingOpenAIReasoningModel(t *testing.T) {
+func TestGenerateTitleUsingOpenAICompletionTokens(t *testing.T) {
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var limits struct {
 			MaxTokens           *int `json:"max_tokens"`
@@ -87,11 +87,15 @@ func TestGenerateTitleUsingOpenAIReasoningModel(t *testing.T) {
 		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"Diagnose session delay"}}]}`)
 	}))
 	t.Cleanup(model.Close)
-	got, err := generateSessionTitle(t.Context(), model.Client(), llmproviders.Upstream{
-		APIBackend: llmproviders.ChatCompletions, BaseURL: model.URL, ModelID: "o3-mini",
-	}, "", "Help diagnose the delay")
-	if err != nil || got != "Diagnose session delay" {
-		t.Fatalf("got %q, %v", got, err)
+	for _, modelID := range []string{"o3-mini", "gpt-5", "gpt-5-mini", "openai/gpt-5.1", "gpt-6-astra"} {
+		t.Run(modelID, func(t *testing.T) {
+			got, err := generateSessionTitle(t.Context(), model.Client(), llmproviders.Upstream{
+				APIBackend: llmproviders.ChatCompletions, BaseURL: model.URL, ModelID: modelID,
+			}, "", "Help diagnose the delay")
+			if err != nil || got != "Diagnose session delay" {
+				t.Fatalf("got %q, %v", got, err)
+			}
+		})
 	}
 }
 

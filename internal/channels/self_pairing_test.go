@@ -9,6 +9,23 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 )
 
+func TestSelfPairingAllowsPendingAccessRecord(t *testing.T) {
+	server, _, _ := omaTestServer(t, 0)
+	store := &fakeRuntimeStore{}
+	worker, feishu := testWorker(t, store, server.URL)
+	worker.record.Mode = "pairing"
+	store.record.Mode = "pairing"
+	store.pairings = []db.ChannelPairingRecord{{Kind: "user", Target: "ou_1", Status: "pending"}}
+	worker.supervisor.ingress = autoPairingIngress{}
+	msg := &channelMessage{MessageID: "om_pending", ChatID: "oc_1", ChatType: "p2p", UserID: "ou_1", Content: "待审批仍应自动配对"}
+	if err := worker.receiveChannelMessage(t.Context(), msg); err != nil || len(store.inputs) == 0 {
+		t.Fatalf("待审批私聊没有进入收件箱：%v inputs=%d", err, len(store.inputs))
+	}
+	if strings.Contains(strings.Join(feishu.text(), "\n"), "等待管理员批准") {
+		t.Fatal("待审批私聊被准入队列拦住")
+	}
+}
+
 func TestSelfPairingDispatchesOriginalMessageWithoutCard(t *testing.T) {
 	server, creates, requests := omaTestServer(t, 0)
 	store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}

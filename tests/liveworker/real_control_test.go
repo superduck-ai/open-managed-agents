@@ -438,7 +438,7 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 
 func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textOnly bool, resume <-chan struct{}, toolPath string) string {
 	t.Helper()
-	return serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return serveRealWorkerFixture(t, withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			w.WriteHeader(200)
 			return

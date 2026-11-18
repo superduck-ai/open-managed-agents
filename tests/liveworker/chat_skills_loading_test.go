@@ -179,7 +179,7 @@ func skillLoadingModel(t *testing.T, decision, location string) *brainSkillModel
 
 func fileCatalogModel(t *testing.T, model *brainSkillModel, id, decision, location, marker string, expected []string) *brainSkillModel {
 	t.Helper()
-	model.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	model.Server = httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		requireOK(t, err)
 		call := model.calls.Add(1)

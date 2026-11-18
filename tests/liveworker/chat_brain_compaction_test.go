@@ -179,7 +179,7 @@ func verifyBrainCompaction(t *testing.T, started time.Time, name string, child b
 	cfg, err := config.Load()
 	requireOK(t, err)
 	model := &compactionModel{t: t, child: child}
-	upstream := httptest.NewServer(model)
+	upstream := httptest.NewServer(withTitleCompletion(model.ServeHTTP))
 	defer upstream.Close()
 	providers := isolatedWorkerProviders(t, e)
 	if len(providers) != 1 {

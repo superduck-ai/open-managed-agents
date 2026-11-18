@@ -10,6 +10,7 @@ CLI 实现在 `cmd/verify-be`，Skill 中的 shell 入口只负责构建和执�
 报告判定及其测试全部使用 Go，不依赖 Python；临时 Ed25519 密钥由 Go 标准库生成。
 验证使用实际编译的后端、真实 PostgreSQL / Redis / 三节点 NATS / MinIO、真实 Claude Worker，
 以及测试侧固定模型响应。Worker 的模型请求经过生产 `/v1/messages` 代理。
+脚本化模型夹具为服务端的非流式标题生成请求返回独立 JSON 响应。Agent 的流式请求才会推进聊天脚本的轮次、工具调用和重试计数。
 不修改生产 API、数据库 schema 或状态机。
 
 除 `chat.public` 和 `chat.upstream-errors` 外，Session/CodeSession 通过现有 liveworker 夹具准备并 activation。

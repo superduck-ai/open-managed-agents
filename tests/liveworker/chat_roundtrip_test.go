@@ -22,10 +22,6 @@ import (
 
 const chatAnswer = "你好，聊天验证完成。"
 
-type chatModelFixtureRequest struct {
-	Stream bool `json:"stream"`
-}
-
 type chatEvent struct {
 	PrimaryEventID      string          `json:"primary_event_id"`
 	OriginalEventID     string          `json:"original_event_id"`
@@ -317,19 +313,15 @@ func verifyChatHistoryScope(t *testing.T, f *liveSession, scope, inputID string,
 
 func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.Int32, thinking bool) *httptest.Server {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(chatStreamFixture(t, previewSeen, calls, thinking)))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func chatStreamFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.Int32, thinking bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
-			return
-		}
-		var request chatModelFixtureRequest
-		if err := jsonv2.UnmarshalRead(io.LimitReader(r.Body, 1<<20), &request); err != nil {
-			http.Error(w, "invalid model request", http.StatusBadRequest)
-			return
-		}
-		if !request.Stream {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"msg_chat_title","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"聊天验证"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":4}}`)
 			return
 		}
 		call := calls.Add(1)
@@ -362,7 +354,5 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 		write("content_block_stop", map[string]any{"index": index})
 		write("message_delta", map[string]any{"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]int{"output_tokens": 12}})
 		write("message_stop", map[string]any{})
-	}))
-	t.Cleanup(server.Close)
-	return server
+	}
 }

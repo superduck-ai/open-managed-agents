@@ -81,7 +81,7 @@ func verifyParallelConfiguredSubagents(t *testing.T, e *liveEnv, childID, childN
 func parallelSubagentModelFixture(t *testing.T, childID, childName string, ready chan<- struct{}, release <-chan struct{}) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 		if err != nil {
 			http.Error(w, "read failed", 400)

@@ -356,7 +356,7 @@ const brainObservabilityChild = "OMA_OBSERVABILITY_CHILD_V1"
 func brainSubagentModel(t *testing.T, rootWrite bool) *httptest.Server {
 	t.Helper()
 	var calls, rootFailures atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 		if err != nil || r.URL.Path != "/v1/messages" {
 			http.Error(w, "unexpected model request", http.StatusBadRequest)

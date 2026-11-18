@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -37,12 +36,11 @@ func chatProof(t *testing.T, started time.Time, stage string) {
 
 func sequentialChatModel(t *testing.T, resume <-chan struct{}, calls *atomic.Int32, cadence time.Duration) *httptest.Server {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, data map[string]any) {

@@ -357,7 +357,7 @@ func subagentModelFixture(t *testing.T, childID, childName string, ready chan<- 
 	t.Helper()
 	var childCalls atomic.Int32
 	runtimeID := regexp.MustCompile(`agentId: ([a-zA-Z0-9_-]+)`)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
 			return

@@ -24,7 +24,7 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 	var failing atomic.Bool
 	failing.Store(true)
 	normal := sequentialChatModel(t, nil, &replies, 0)
-	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	model := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			http.NotFound(w, r)
 			return
@@ -34,7 +34,6 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 			normal.Config.Handler.ServeHTTP(w, r)
 			return
 		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"api_error","message":"Injected transient failure"}}`)

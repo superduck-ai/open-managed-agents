@@ -214,7 +214,7 @@ type brainSkillModel struct {
 func brainSkillsModel(t *testing.T, read bool, marker string) *brainSkillModel {
 	t.Helper()
 	model := &brainSkillModel{preview: make(chan struct{}, 4)}
-	model.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	model.Server = httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			System   json.RawMessage `json:"system"`
 			Messages []struct {

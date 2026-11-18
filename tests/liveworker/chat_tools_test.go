@@ -3,7 +3,11 @@
 package liveworker
 
 import (
+	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +18,55 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
+
+func TestToolFixturesKeepAgentFirstTurnAfterTitle(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		start  func(*testing.T) string
+		toolID string
+	}{
+		{name: "malformed", start: func(t *testing.T) string {
+			return malformedToolFixture(t, new(atomic.Int32))
+		}, toolID: "toolu_malformed_e2e"},
+		{name: "confirmation", start: func(t *testing.T) string {
+			resume := make(chan struct{})
+			close(resume)
+			return realWorkerModelFixture(t, new(atomic.Int32), new(atomic.Int32), false, resume, "/tmp/oma-control-e2e.txt")
+		}, toolID: "toolu_control_e2e"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			modelURL := strings.Replace(fixture.start(t), "host.docker.internal", "127.0.0.1", 1)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			requestModel := func(body, contentType string) []byte {
+				t.Helper()
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, modelURL+"/v1/messages", strings.NewReader(body))
+				requireOK(t, err)
+				response, err := http.DefaultClient.Do(request)
+				requireOK(t, err)
+				defer response.Body.Close()
+				if got := response.Header.Get("Content-Type"); response.StatusCode != http.StatusOK || got != contentType {
+					t.Fatalf("status=%d content type=%q, want 200 %q", response.StatusCode, got, contentType)
+				}
+				payload, err := io.ReadAll(response.Body)
+				requireOK(t, err)
+				return payload
+			}
+
+			var title struct {
+				StopReason string `json:"stop_reason"`
+			}
+			requireOK(t, jsonv2.Unmarshal(requestModel(`{"max_tokens":128}`, "application/json"), &title))
+			if title.StopReason != "end_turn" {
+				t.Fatalf("title stop reason=%q, want end_turn", title.StopReason)
+			}
+			turn := string(requestModel(`{"stream":true}`, "text/event-stream"))
+			if !strings.Contains(turn, fixture.toolID) || !strings.Contains(turn, `"stop_reason":"tool_use"`) {
+				t.Fatalf("first Agent turn did not request %s: %s", fixture.toolID, turn)
+			}
+		})
+	}
+}
 
 func chatSDK(e *liveEnv) anthropic.Client {
 	return anthropic.NewClient(option.WithBaseURL(e.url), option.WithAPIKey(e.apiKey), option.WithMaxRetries(0), option.WithRequestTimeout(10*time.Second))

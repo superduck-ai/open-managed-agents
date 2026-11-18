@@ -135,7 +135,7 @@ type workerUnparsedInput struct {
 
 func malformedToolFixture(t *testing.T, calls *atomic.Int32) string {
 	t.Helper()
-	return serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return serveRealWorkerFixture(t, withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			w.WriteHeader(http.StatusOK)
 			return

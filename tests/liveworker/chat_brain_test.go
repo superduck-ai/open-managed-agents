@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -270,7 +269,7 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 	t.Helper()
 	toolModelCalls.Store(0)
 	messagePrefix := "msg_brain_" + uuid.NewString()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Anthropic-Version") != "2023-06-01" {
 			t.Error("Brain model request lost Anthropic-Version")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -339,8 +338,8 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 
 func brainHistoryModel(t *testing.T, previewSeen <-chan struct{}, calls *atomic.Int32) *httptest.Server {
 	t.Helper()
-	fixture := chatModelFixture(t, previewSeen, calls, true)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fixture := chatStreamFixture(t, previewSeen, calls, true)
+	server := httptest.NewServer(withTitleCompletion(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Anthropic-Version") != "2023-06-01" {
 			t.Error("Brain model request lost Anthropic-Version")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -348,8 +347,7 @@ func brainHistoryModel(t *testing.T, previewSeen <-chan struct{}, calls *atomic.
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 		requireOK(t, err)
-		var request chatModelFixtureRequest
-		if calls.Load() == 1 && jsonv2.Unmarshal(body, &request) == nil && request.Stream {
+		if calls.Load() == 1 {
 			for _, expected := range []string{"请回复固定的聊天验证文本", "tool_result", "oma-brain-proof.txt"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("restored model context missing %q", expected)
@@ -357,7 +355,7 @@ func brainHistoryModel(t *testing.T, previewSeen <-chan struct{}, calls *atomic.
 			}
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		fixture.Config.Handler.ServeHTTP(w, r)
+		fixture(w, r)
 	}))
 	t.Cleanup(server.Close)
 	return server

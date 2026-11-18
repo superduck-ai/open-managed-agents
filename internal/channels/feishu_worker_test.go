@@ -23,23 +23,27 @@ import (
 )
 
 type fakeRuntimeStore struct {
-	identityBinding db.SessionIdentityRecord
-	mu              sync.Mutex
-	record          db.ChannelRecord
-	bindings        map[string]string
-	deleted         []string
-	pairings        []db.ChannelPairingRecord
-	deliveries      map[string]db.ChannelReplyDelivery
-	inputs          map[string]db.ChannelInput
-	inputKeys       map[string]string
-	receiveInputErr error
-	inputOrder      []string
-	credential      string
-	credentialErr   error
-	env             string
+	identityBinding   db.SessionIdentityRecord
+	identityLookupErr error
+	mu                sync.Mutex
+	record            db.ChannelRecord
+	bindings          map[string]string
+	deleted           []string
+	pairings          []db.ChannelPairingRecord
+	deliveries        map[string]db.ChannelReplyDelivery
+	inputs            map[string]db.ChannelInput
+	inputKeys         map[string]string
+	receiveInputErr   error
+	inputOrder        []string
+	credential        string
+	credentialErr     error
+	env               string
 }
 
 func (f *fakeRuntimeStore) FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error) {
+	if f.identityLookupErr != nil {
+		return db.SessionIdentityRecord{}, f.identityLookupErr
+	}
 	if f.identityBinding.IdentityUUID == "" {
 		return db.SessionIdentityRecord{}, db.ErrNotFound
 	}

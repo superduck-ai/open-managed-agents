@@ -400,6 +400,30 @@ func FinishCleanup(outcome CleanupOutcome) CleanupOutcome {
 	return outcome
 }
 
+func MergeCleanupOutcome(prior, next CleanupOutcome) CleanupOutcome {
+	seen := map[string]struct{}{}
+	retained := make([]string, 0, len(prior.RetainedSharedVaults)+len(next.RetainedSharedVaults))
+	for _, id := range append(append([]string{}, prior.RetainedSharedVaults...), next.RetainedSharedVaults...) {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		retained = append(retained, id)
+	}
+	next.RetainedSharedVaults = retained
+	next.ArchivedConfigs = max(next.ArchivedConfigs, prior.ArchivedConfigs)
+	next.UnboundPairings = max(next.UnboundPairings, prior.UnboundPairings)
+	next.ClosedEntries = max(next.ClosedEntries, prior.ClosedEntries)
+	next.RetainedPersonalVaults = max(next.RetainedPersonalVaults, prior.RetainedPersonalVaults)
+	if len(next.RunningSessions) == 0 {
+		next.RunningSessions = prior.RunningSessions
+	}
+	return FinishCleanup(next)
+}
+
 func ScopeKind(chatType string) string {
 	if chatType == "p2p" {
 		return "direct"

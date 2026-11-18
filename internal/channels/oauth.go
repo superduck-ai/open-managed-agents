@@ -164,22 +164,13 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 		}
 		return s.startMCPOAuth(ctx, target)
 	}
-	credentials, _, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{WorkspaceUUID: flow.WorkspaceUUID, VaultExternalID: target.Vault.ExternalID, Limit: 50})
+	selected, err := s.matchingEnvCredential(ctx, flow.WorkspaceUUID, target.Vault.ExternalID, target.Request.SecretName, target.Request.Provider)
 	if err != nil {
 		return "", err
 	}
 	credentialID := ""
-	var selected *db.VaultCredential
-	for _, credential := range credentials {
-		if credential.AuthType != "env_oauth" || credential.CredentialKey != target.Request.SecretName {
-			continue
-		}
-		key, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
-		if err != nil || key != target.Request.Provider {
-			return "", errors.New("目标变量已有其他服务的连接")
-		}
-		credentialID = credential.ExternalID
-		selected = new(credential)
+	if selected != nil {
+		credentialID = selected.ExternalID
 	}
 	var provider vaults.EnvOAuthProviderSnapshot
 	if selected != nil {
@@ -201,6 +192,35 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 		CreatedByAPIKeyUUID: target.Scope.Session.CreatedByAPIKeyUUID,
 	})
 	return link, err
+}
+
+func (s *Service) matchingEnvCredential(ctx context.Context, workspaceUUID, vaultID, secretName, providerKey string) (*db.VaultCredential, error) {
+	var cursor *db.VaultCredentialPageCursor
+	for page := 0; page < 20; page++ {
+		credentials, hasMore, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
+			WorkspaceUUID: workspaceUUID, VaultExternalID: vaultID, Limit: 50, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for i := range credentials {
+			credential := credentials[i]
+			if credential.AuthType != "env_oauth" || credential.CredentialKey != secretName {
+				continue
+			}
+			key, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
+			if err != nil || key != providerKey {
+				return nil, errors.New("目标变量已有其他服务的连接")
+			}
+			return &credentials[i], nil
+		}
+		if !hasMore || len(credentials) == 0 {
+			return nil, nil
+		}
+		last := credentials[len(credentials)-1]
+		cursor = &db.VaultCredentialPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}
+	}
+	return nil, errors.New("个人 OAuth 凭据过多，无法定位目标变量")
 }
 
 func (s *Service) OAuthCompletion(ctx context.Context, workspaceUUID string, continuation *db.OAuthContinuation, credentialID string) (OAuthTarget, json.RawMessage, error) {

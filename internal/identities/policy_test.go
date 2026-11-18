@@ -153,6 +153,10 @@ func TestCleanupConflictPartialAndSharedRetention(t *testing.T) {
 	if !done.Completed || done.PersonalVaultsDeleted {
 		t.Fatalf("cleanup reported the wrong completion: %#v", done)
 	}
+	retried := MergeCleanupOutcome(CleanupOutcome{ArchivedConfigs: 1, UnboundPairings: 2, ClosedEntries: 1, RetainedSharedVaults: []string{"vlt_shared"}}, FinishCleanup(CleanupOutcome{Failures: []string{"list shared vaults failed"}}))
+	if retried.Completed || retried.ArchivedConfigs != 1 || retried.UnboundPairings != 2 || len(retried.RetainedSharedVaults) != 1 || retried.RetainedSharedVaults[0] != "vlt_shared" {
+		t.Fatalf("retry dropped retained cleanup progress: %#v", retried)
+	}
 }
 
 func TestDisabledIdentityBlocksOnlyNewRounds(t *testing.T) {

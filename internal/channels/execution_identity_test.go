@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -28,7 +29,7 @@ func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
 	decision := identities.Decision{Mode: "execute", AgentExternalID: "agent_paired", AgentVersion: 4, IdentityUUID: "identity-uuid",
 		IdentityExternalID: "idn_a", BindingRevision: 2, ConfigRevision: 3, PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}}
 	store := &fakeRuntimeStore{identityBinding: db.SessionIdentityRecord{IdentityUUID: decision.IdentityUUID, ChannelExternalID: "chn_1",
-		ScopeKey: "chat:user", BindingRevision: decision.BindingRevision}}
+		ScopeKey: "chat:user", BindingRevision: decision.BindingRevision, ConfigRevision: decision.ConfigRevision}}
 	lookups := 0
 	worker := &channelWorker{record: db.ChannelRecord{ExternalID: "chn_1", AgentExternalID: "agent_default", ChannelType: "feishu", AppID: "app"},
 		supervisor: &runtimeSupervisor{
@@ -58,22 +59,31 @@ func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
 		Metadata: map[string]string{"source": "feishu", "app_id": "app", "channel_id": "chn_1", "credential_binding_mode": "first_vault",
 			"agent_version": "4", "identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
 	}
-	if !worker.recoverableSession(t.Context(), session, "chat:user", "", target) || lookups != 1 {
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || !ok || lookups != 1 {
 		t.Fatal("当前配对会话不可恢复，或重复读取 Vault")
 	}
 	session.EnvironmentID = "env_old"
-	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
 		t.Fatal("旧执行环境可恢复")
 	}
 	session.EnvironmentID = "env_current"
 	worker.record.Mounts = `{"memory_store_id":"mem_new"}`
-	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
 		t.Fatal("资源配置变化后复用了旧会话")
 	}
 	worker.record.Mounts = ""
+	store.identityBinding.ConfigRevision = decision.ConfigRevision - 1
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
+		t.Fatal("旧配置修订可恢复")
+	}
+	store.identityBinding.ConfigRevision = decision.ConfigRevision
 	store.identityBinding = db.SessionIdentityRecord{}
-	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
 		t.Fatal("无正式身份绑定的会话可恢复")
+	}
+	store.identityLookupErr = errors.New("identity lookup failed")
+	if _, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err == nil {
+		t.Fatal("身份读取失败被当成不兼容")
 	}
 	worker.supervisor.ingress = holdIngress{}
 	held, err := worker.resolveRecoveryTarget(t.Context(), msg, "chat:user")

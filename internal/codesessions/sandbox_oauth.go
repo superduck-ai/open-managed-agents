@@ -55,15 +55,20 @@ func (h *Handler) handleSandboxOAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var provider vaults.EnvOAuthProviderSnapshot
-	if selectedCredential == nil || selectedCredential.AuthType != "environment_variable" {
+	if selectedCredential != nil && selectedCredential.AuthType == "environment_variable" {
+		if input.Provider != "" {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "invalid_request_error", "OAuth provider does not match the selected credential"))
+			return
+		}
+	} else {
 		provider, err = h.resolveSandboxOAuthProvider(r.Context(), *input, selectedCredential)
+		if err != nil {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+			return
+		}
+		input.Provider = provider.ProviderKey
+		input.ProviderName = provider.Name
 	}
-	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
-	}
-	input.Provider = provider.ProviderKey
-	input.ProviderName = provider.Name
 	code, found, err := h.db.GetScopedCodeSession(r.Context(), claims.OrganizationUUID, claims.WorkspaceUUID, claims.SessionID)
 	if err != nil || !found {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Session unavailable"))

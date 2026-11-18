@@ -131,7 +131,12 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		}
 	}
 	session, err := w.supervisor.oma.getSession(ctx, apiKey, args[0])
-	if err != nil || !w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target) {
+	compatible, boundErr := w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target)
+	if boundErr != nil {
+		_ = w.replyText(ctx, msg, "读取会话身份失败，请稍后重试。")
+		return
+	}
+	if err != nil || !compatible {
 		_ = w.replyText(ctx, msg, "该会话不属于当前渠道/话题，或配置不兼容、当前不可恢复。")
 		return
 	}
@@ -172,16 +177,15 @@ func (w *channelWorker) resolveRecoveryTarget(ctx context.Context, msg *channelM
 	return recoveryTarget{decision: decision, environmentID: environmentID}, err
 }
 
-func (w *channelWorker) recoverableSession(ctx context.Context, session omaSession, scopeKey, legacyScope string, target recoveryTarget) bool {
+func (w *channelWorker) recoverableSession(ctx context.Context, session omaSession, scopeKey, legacyScope string, target recoveryTarget) (bool, error) {
 	if target.decision.Mode == "legacy" {
-		return session.Metadata["identity_id"] == "" && w.compatibleSession(session, scopeKey, legacyScope, target.environmentID, target.decision.PersonalVaultID)
+		return session.Metadata["identity_id"] == "" && w.compatibleSession(session, scopeKey, legacyScope, target.environmentID, target.decision.PersonalVaultID), nil
 	}
 	if target.decision.Mode != "execute" || !w.sessionMatchesChannel(session, scopeKey, legacyScope) ||
 		!w.decisionCompatible(session, target.decision, target.environmentID, scopeKey) {
-		return false
+		return false, nil
 	}
-	bound, err := w.sessionIdentityBound(ctx, session.ID, target.decision, scopeKey)
-	return err == nil && bound
+	return w.sessionIdentityBound(ctx, session.ID, target.decision, scopeKey)
 }
 
 func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *channelMessage, apiKey string, target recoveryTarget) {
@@ -198,7 +202,12 @@ func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *c
 			return
 		}
 		for _, session := range page.Data {
-			if w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target) {
+			compatible, boundErr := w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target)
+			if boundErr != nil {
+				_ = w.replyText(ctx, msg, "读取会话身份失败，请稍后重试。")
+				return
+			}
+			if compatible {
 				lines = append(lines, fmt.Sprintf("/resume %s（版本 %d）", session.ID, session.Agent.Version))
 				if len(lines) == 20 {
 					break

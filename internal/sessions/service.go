@@ -70,7 +70,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 	if err != nil {
 		return db.Session{}, err
 	}
-	if identityUUID != "" {
+	if identityUUID != "" && body.identityBinding == nil {
 		body.identityBinding = &db.InsertSessionIdentityParams{IdentityUUID: identityUUID, ScopeKind: "console", ScopeKey: "console"}
 	}
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)

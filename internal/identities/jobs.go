@@ -3,9 +3,12 @@ package identities
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/riverqueue/river"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 const cleanupJobKind = "identity_cleanup"
@@ -32,7 +35,17 @@ func RegisterWorkers(workers *river.Workers, store Store, logger *slog.Logger) {
 }
 
 func (w *cleanupWorker) Work(ctx context.Context, job *river.Job[cleanupArgs]) error {
-	outcome := w.service.ApplyCleanup(ctx, job.Args.WorkspaceUUID, job.Args.IdentityUUID, nil)
+	var prior CleanupOutcome
+	row, err := w.service.store.FindIdentityCleanupRun(ctx, job.Args.WorkspaceUUID, job.Args.CleanupID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return err
+	}
+	if err == nil && row.Result != "" {
+		if err := json.Unmarshal([]byte(row.Result), &prior); err != nil {
+			return err
+		}
+	}
+	outcome := MergeCleanupOutcome(prior, w.service.ApplyCleanup(ctx, job.Args.WorkspaceUUID, job.Args.IdentityUUID, nil))
 	state := "completed"
 	if !outcome.Completed {
 		state = "partial"

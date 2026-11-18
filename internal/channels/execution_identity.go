@@ -176,7 +176,7 @@ func (w *channelWorker) sessionIdentityBound(ctx context.Context, sessionID stri
 		return false, nil
 	}
 	return err == nil && binding.IdentityUUID == decision.IdentityUUID && binding.ChannelExternalID == w.record.ExternalID &&
-		binding.ScopeKey == scopeKey && binding.BindingRevision == decision.BindingRevision, err
+		binding.ScopeKey == scopeKey && binding.BindingRevision == decision.BindingRevision && binding.ConfigRevision == decision.ConfigRevision, err
 }
 
 func (w *channelWorker) decisionCompatible(session omaSession, decision identities.Decision, environmentID, scopeKey string) bool {

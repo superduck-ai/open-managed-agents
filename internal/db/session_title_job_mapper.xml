@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SessionTitleJobMapper">
+    <update id="BeginEnqueue" result="exec">SAVEPOINT session_title_enqueue</update>
+    <update id="RollbackEnqueue" result="exec">ROLLBACK TO SAVEPOINT session_title_enqueue</update>
+    <update id="ReleaseEnqueue" result="exec">RELEASE SAVEPOINT session_title_enqueue</update>
     <insert id="Enqueue" result="exec">
         INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
         SELECT 'job_session_title_' || s.uuid, s.workspace_uuid, 'session_title',
             CASE WHEN NULLIF(s.title, '') IS NULL THEN 'pending' ELSE 'completed' END,
-            jsonb_strip_nulls(jsonb_build_object('session_uuid', s.uuid, 'session_id', s.external_id,
-                'input', CASE WHEN NULLIF(s.title, '') IS NULL THEN CAST(#{input,sensitive=true} AS text) END))
+            jsonb_build_object('session_uuid', s.uuid)
         FROM sessions s
         WHERE s.organization_uuid = #{organizationUUID} AND s.workspace_uuid = #{workspaceUUID}
             AND s.uuid = #{sessionUUID}
@@ -25,8 +27,7 @@
         UPDATE jobs j SET status = 'running', locked_by = #{workerID},
             locked_until = now() + interval '1 minute', updated_at = now()
         FROM ready WHERE j.uuid = ready.uuid
-        RETURNING j.uuid, j.workspace_uuid, j.payload-&gt;&gt;'session_uuid' AS session_uuid,
-            j.payload-&gt;&gt;'session_id' AS session_id, j.payload-&gt;&gt;'input' AS input
+        RETURNING j.uuid, j.workspace_uuid, j.payload-&gt;&gt;'session_uuid' AS session_uuid
     </update>
     <update id="Complete" result="exec">
         WITH completed AS (

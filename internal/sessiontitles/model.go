@@ -95,6 +95,7 @@ func (m *model) complete(ctx context.Context, upstream llmproviders.Upstream, in
 		return "", errCompletion
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "OMA-Session-Title")
 	upstream.ApplyHeaders(request.Header)
 	response, err := m.client.Do(request)
 	if err != nil {

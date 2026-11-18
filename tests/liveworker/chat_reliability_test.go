@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,6 +42,7 @@ func sequentialChatModel(t *testing.T, resume <-chan struct{}, calls *atomic.Int
 			http.NotFound(w, r)
 			return
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, data map[string]any) {

@@ -131,6 +131,7 @@ func upstream401Fixture(t *testing.T, body string, calls *atomic.Int32) *httptes
 			http.NotFound(w, r)
 			return
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)

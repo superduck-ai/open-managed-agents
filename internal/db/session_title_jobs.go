@@ -1,13 +1,34 @@
 package db
 
-import "context"
+import (
+	"context"
+	"errors"
+
+	"github.com/superduck-ai/yourbatis"
+)
 
 type SessionTitleJob struct {
 	UUID          string
 	WorkspaceUUID string
 	SessionUUID   string
-	SessionID     string
-	Input         string
+}
+
+func enqueueSessionTitleTx(ctx context.Context, executor yourbatis.Executor, session Session) error {
+	jobs := NewSessionTitleJobMapper(executor)
+	if err := jobs.BeginEnqueue(ctx); err != nil {
+		return err
+	}
+	if err := jobs.Enqueue(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+		if rollbackErr := jobs.RollbackEnqueue(ctx); rollbackErr != nil {
+			return errors.Join(err, rollbackErr)
+		}
+	}
+	return jobs.ReleaseEnqueue(ctx)
+}
+
+func (d *DB) ListSessionTitleInputs(ctx context.Context, workspaceUUID, sessionUUID, afterUUID string) ([]SessionEvent, error) {
+	rows, err := NewSessionEventMapper(d.mapperDB).ListTitleInputs(ctx, workspaceUUID, sessionUUID, afterUUID)
+	return sessionEventsFromRows(rows), err
 }
 
 func (d *DB) LeaseSessionTitleJobs(ctx context.Context, workerID string, limit int) ([]SessionTitleJob, error) {
@@ -17,8 +38,7 @@ func (d *DB) LeaseSessionTitleJobs(ctx context.Context, workerID string, limit i
 	}
 	jobs := make([]SessionTitleJob, 0, len(rows))
 	for _, row := range rows {
-		jobs = append(jobs, SessionTitleJob{UUID: row.UUID, WorkspaceUUID: row.WorkspaceUUID,
-			SessionUUID: row.SessionUUID, SessionID: row.SessionID, Input: row.Input})
+		jobs = append(jobs, SessionTitleJob{UUID: row.UUID, WorkspaceUUID: row.WorkspaceUUID, SessionUUID: row.SessionUUID})
 	}
 	return jobs, nil
 }

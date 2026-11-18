@@ -160,7 +160,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
-	stopSessionTitles := sessiontitles.NewWorker(database, vaultSecrets, logger.With("component", "session_titles")).Start(ctx)
+	stopSessionTitles := sessiontitles.NewWorker(database, objectStore, vaultSecrets, logger.With("component", "session_titles")).Start(ctx)
 	defer stopSessionTitles()
 	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)

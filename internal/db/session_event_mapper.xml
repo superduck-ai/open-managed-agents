@@ -104,6 +104,24 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
+    <select id="ListTitleInputs" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+          AND event_type = 'user.message' AND deleted_at IS NULL
+          AND thread_uuid = (
+            SELECT uuid FROM session_threads
+            WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+              AND parent_thread_uuid IS NULL AND deleted_at IS NULL
+            ORDER BY created_at ASC, uuid ASC LIMIT 1
+          )
+        <if test="afterUUID != ''">
+          AND id &gt; (SELECT id FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID} AND uuid = #{afterUUID})
+        </if>
+        ORDER BY id ASC LIMIT 16
+    </select>
+
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events

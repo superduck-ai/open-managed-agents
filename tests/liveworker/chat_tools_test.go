@@ -38,10 +38,11 @@ func TestToolFixturesKeepAgentFirstTurnAfterTitle(t *testing.T) {
 			modelURL := strings.Replace(fixture.start(t), "host.docker.internal", "127.0.0.1", 1)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			requestModel := func(body, contentType string) []byte {
+			requestModel := func(body, contentType, userAgent string) []byte {
 				t.Helper()
 				request, err := http.NewRequestWithContext(ctx, http.MethodPost, modelURL+"/v1/messages", strings.NewReader(body))
 				requireOK(t, err)
+				request.Header.Set("User-Agent", userAgent)
 				response, err := http.DefaultClient.Do(request)
 				requireOK(t, err)
 				defer response.Body.Close()
@@ -56,11 +57,11 @@ func TestToolFixturesKeepAgentFirstTurnAfterTitle(t *testing.T) {
 			var title struct {
 				StopReason string `json:"stop_reason"`
 			}
-			requireOK(t, jsonv2.Unmarshal(requestModel(`{"max_tokens":128}`, "application/json"), &title))
+			requireOK(t, jsonv2.Unmarshal(requestModel(`{"max_tokens":128}`, "application/json", titleFixtureUserAgent), &title))
 			if title.StopReason != "end_turn" {
 				t.Fatalf("title stop reason=%q, want end_turn", title.StopReason)
 			}
-			turn := string(requestModel(`{"stream":true}`, "text/event-stream"))
+			turn := string(requestModel(`{"max_tokens":128}`, "text/event-stream", ""))
 			if !strings.Contains(turn, fixture.toolID) || !strings.Contains(turn, `"stop_reason":"tool_use"`) {
 				t.Fatalf("first Agent turn did not request %s: %s", fixture.toolID, turn)
 			}

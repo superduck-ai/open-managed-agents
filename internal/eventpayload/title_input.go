@@ -1,12 +1,33 @@
 package eventpayload
 
 import (
+	"context"
 	"encoding/json/v2"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/titletext"
 )
+
+func (s *Store) FirstSessionTitleInput(ctx context.Context, session db.Session) (string, error) {
+	var afterUUID string
+	for {
+		events, err := s.database.ListSessionTitleInputs(ctx, session.WorkspaceUUID, session.UUID, afterUUID)
+		if err != nil || len(events) == 0 {
+			return "", err
+		}
+		for _, event := range events {
+			event.Payload, err = s.restore(ctx, event.WorkspaceUUID, event.Payload, event.PayloadBlobUUID)
+			if err != nil {
+				return "", err
+			}
+			if text := sessionTitleInput(event); text != "" {
+				return text, nil
+			}
+		}
+		afterUUID = events[len(events)-1].UUID
+	}
+}
 
 func sessionTitleInput(event db.SessionEvent) string {
 	const maxTitleInputBytes = 4096

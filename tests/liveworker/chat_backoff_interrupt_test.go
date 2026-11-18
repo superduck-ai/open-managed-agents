@@ -34,6 +34,7 @@ func verifyBackoffInterrupt(t *testing.T, e *liveEnv) {
 			normal.Config.Handler.ServeHTTP(w, r)
 			return
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"api_error","message":"Injected transient failure"}}`)

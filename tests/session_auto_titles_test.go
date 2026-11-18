@@ -23,10 +23,12 @@ import (
 
 func TestSessionAutoTitles(t *testing.T) {
 	var calls atomic.Int32
+	var lastRequest atomic.Pointer[string]
 	entered, release := make(chan struct{}, 4), make(chan struct{}, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		payload, _ := io.ReadAll(r.Body)
+		lastRequest.Store(new(string(payload)))
 		if strings.Contains(string(payload), "race input") {
 			entered <- struct{}{}
 			select {
@@ -44,7 +46,8 @@ func TestSessionAutoTitles(t *testing.T) {
 	}))
 	defer upstream.Close()
 	defer close(release)
-	app := newPayloadIntegrationAppWithConfig(t, newFakeStore("session-auto-titles"), func(cfg *config.Config) {
+	objects := newFakeStore("session-auto-titles")
+	app := newPayloadIntegrationAppWithConfig(t, objects, func(cfg *config.Config) {
 		cfg.Bootstrap = config.BootstrapConfig{
 			WorkspaceName: "default", OrganizationName: "default", WorkspaceExternalID: "workspace_default",
 			UserExternalID: "user_default", UserEmail: "admin@example.local", UserName: "Local Admin",
@@ -59,7 +62,7 @@ func TestSessionAutoTitles(t *testing.T) {
 	message := func(text string) string {
 		return `{"type":"user.message","content":[{"type":"text","text":` + quoteJSON(text) + `}]}`
 	}
-	worker := sessiontitles.NewWorker(app.db, app.vaultSecrets, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	worker := sessiontitles.NewWorker(app.db, objects, app.vaultSecrets, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	run := func() {
 		t.Helper()
 		if err := worker.RunOnce(t.Context()); err != nil {
@@ -81,6 +84,34 @@ func TestSessionAutoTitles(t *testing.T) {
 		}
 		return mustSessionRecord(t, app, id)
 	}
+	t.Run("enqueue failure preserves input and later job uses it", func(t *testing.T) {
+		s := createSession(t, app, prefix+"}")
+		const unblock = "ALTER TABLE jobs DROP CONSTRAINT IF EXISTS reject_title_job"
+		if _, err := app.pool.Exec(t.Context(), "ALTER TABLE jobs ADD CONSTRAINT reject_title_job CHECK (type <> 'session_title') NOT VALID"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := app.pool.Exec(context.Background(), unblock); err != nil {
+				t.Errorf("restore title job inserts: %v", err)
+			}
+		})
+		const first = "input retained after title enqueue error"
+		sendSessionEvents(t, app, s.ID, `{"events":[`+message(first)+`]}`, defaultTestKey)
+		events := listSessionEvents(t, app, s.ID, "types=user.message", defaultTestKey)
+		if len(events.Data) != 1 || !strings.Contains(string(events.Data[0]), first) {
+			t.Fatalf("first user message was not persisted: %v", events.Data)
+		}
+		if _, err := app.pool.Exec(t.Context(), unblock); err != nil {
+			t.Fatal(err)
+		}
+		idle(s.ID)
+		sendSessionEvents(t, app, s.ID, `{"events":[`+message("later input must not replace first")+`]}`, defaultTestKey)
+		run()
+		if request := lastRequest.Load(); request == nil || !strings.Contains(*request, first) {
+			t.Fatal("title model did not receive the first committed user message")
+		}
+		assertTitle(s.ID, new("会话标题修复"))
+	})
 	t.Run("existing titles skip first-turn generation", func(t *testing.T) {
 		before := calls.Load()
 		s := createSession(t, app, prefix+`}`)
@@ -103,14 +134,12 @@ func TestSessionAutoTitles(t *testing.T) {
 		}
 	})
 	t.Run("first initial input once with no public events", func(t *testing.T) {
-		s := createSession(t, app, prefix+`,"initial_events":[`+message("first input")+`,`+message("later input")+`]}`)
+		invisible := strings.Repeat(message("\u200b")+",", 16)
+		s := createSession(t, app, prefix+`,"initial_events":[`+invisible+message("first input")+","+message("later input")+`]}`)
 		record := mustSessionRecord(t, app, s.ID)
-		var input string
-		if err := app.pool.QueryRow(t.Context(), `SELECT payload->>'input' FROM jobs WHERE workspace_uuid=$1 AND payload->>'session_id'=$2 AND type='session_title'`, record.WorkspaceUUID, s.ID).Scan(&input); err != nil {
+		var ledgerBefore int
+		if err := app.pool.QueryRow(t.Context(), "SELECT count(*) FROM usage_records WHERE workspace_uuid=$1", record.WorkspaceUUID).Scan(&ledgerBefore); err != nil {
 			t.Fatal(err)
-		}
-		if input != "first input" {
-			t.Fatal(input)
 		}
 		before := listSessionEvents(t, app, s.ID, "", defaultTestKey)
 		filtered := listSessionEvents(t, app, s.ID, "types=user.message&limit=1", defaultTestKey)
@@ -155,6 +184,9 @@ func TestSessionAutoTitles(t *testing.T) {
 		}
 		stop()
 		assertTitle(s.ID, new("会话标题修复"))
+		if request := lastRequest.Load(); request == nil || !strings.Contains(*request, "first input") {
+			t.Fatal("title model did not receive the first valid input")
+		}
 		if after := listSessionEvents(t, app, s.ID, "", defaultTestKey); !reflect.DeepEqual(before, after) {
 			t.Fatal("auto title changed public events")
 		}
@@ -183,8 +215,8 @@ func TestSessionAutoTitles(t *testing.T) {
 		if err := app.pool.QueryRow(t.Context(), `SELECT count(*), count(session_uuid) FROM usage_records WHERE workspace_uuid=$1`, record.WorkspaceUUID).Scan(&ledgerCount, &sessionLedgerCount); err != nil {
 			t.Fatal(err)
 		}
-		if ledgerCount != 1 || sessionLedgerCount != 0 {
-			t.Fatalf("auxiliary ledger counts=%d,%d", ledgerCount, sessionLedgerCount)
+		if ledgerCount != ledgerBefore+1 || sessionLedgerCount != 0 {
+			t.Fatalf("auxiliary ledger counts before=%d after=%d session=%d", ledgerBefore, ledgerCount, sessionLedgerCount)
 		}
 	})
 	t.Run("in-flight result only fills an empty title", func(t *testing.T) {

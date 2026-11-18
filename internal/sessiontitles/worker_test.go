@@ -20,8 +20,8 @@ type fakeStore struct {
 func (s *fakeStore) LeaseSessionTitleJobs(context.Context, string, int) ([]db.SessionTitleJob, error) {
 	return nil, nil
 }
-func (s *fakeStore) GetSession(context.Context, string, string) (db.Session, bool, error) {
-	return s.session, true, nil
+func (s *fakeStore) GetSessionByUUID(context.Context, string, string) (db.Session, bool, error) {
+	return s.session, s.session.UUID != "", nil
 }
 func (s *fakeStore) CompleteSessionTitleJob(_ context.Context, _ db.SessionTitleJob, _, title string) error {
 	s.completed, s.title = true, title
@@ -53,9 +53,8 @@ func TestWorkerTitlePolicy(t *testing.T) {
 	}{
 		{"existing title", func(s *db.Session) { s.Title = new("User title") }, nil, "", 0},
 		{"archived", func(s *db.Session) { s.ArchivedAt = new(time.Now()) }, nil, "", 0},
-		{"deleted", func(s *db.Session) { s.DeletedAt = new(time.Now()) }, nil, "", 0},
+		{"missing", func(s *db.Session) { s.UUID = "" }, nil, "", 0},
 		{"terminated", func(s *db.Session) { s.Status = "terminated" }, nil, "", 0},
-		{"wrong session", func(s *db.Session) { s.UUID = "other" }, nil, "", 0},
 		{"model failure fallback", func(*db.Session) {}, errors.New("failure"), "Fix the session title", 1},
 		{"budget reached fallback", func(s *db.Session) { s.BudgetReachedAt = new(time.Now()) }, nil, "Fix the session title", 0},
 		{"success", func(*db.Session) {}, nil, "Generated title", 1},
@@ -64,8 +63,8 @@ func TestWorkerTitlePolicy(t *testing.T) {
 			s := &fakeStore{session: db.Session{UUID: "session", Status: "running"}}
 			tc.mutate(&s.session)
 			m := &fakeGenerator{err: tc.modelErr}
-			w := &Worker{store: s, model: m, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-			if err := w.process(t.Context(), db.SessionTitleJob{SessionUUID: "session", Input: "Fix the session title"}, "worker"); err != nil {
+			w := &Worker{store: s, loadInput: fixedTitleInput, model: m, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			if err := w.process(t.Context(), db.SessionTitleJob{SessionUUID: "session"}, "worker"); err != nil {
 				t.Fatal(err)
 			}
 			if !s.completed || s.title != tc.wantTitle || m.calls != tc.wantCalls {
@@ -79,11 +78,15 @@ func TestWorkerCancellationLeavesJobRecoverable(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	s := &fakeStore{session: db.Session{UUID: "session", Status: "running"}}
-	w := &Worker{store: s, model: &fakeGenerator{cancel: true}}
-	if err := w.process(ctx, db.SessionTitleJob{SessionUUID: "session", Input: "first input"}, "worker"); !errors.Is(err, context.Canceled) {
+	w := &Worker{store: s, loadInput: fixedTitleInput, model: &fakeGenerator{cancel: true}}
+	if err := w.process(ctx, db.SessionTitleJob{SessionUUID: "session"}, "worker"); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if s.completed {
 		t.Fatal("cancelled attempt completed job")
 	}
+}
+
+func fixedTitleInput(context.Context, db.Session) (string, error) {
+	return "Fix the session title", nil
 }

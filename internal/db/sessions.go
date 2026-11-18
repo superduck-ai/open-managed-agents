@@ -132,7 +132,7 @@ type SessionResourceMemoryStore struct {
 
 type SessionEvent struct {
 	threadStatusMirror bool
-	TitleInput         string
+	HasTitleInput      bool
 	StatusThreadID     string
 	UsageIncrement     *SessionUsageIncrement
 	PayloadBlobUUID    *string

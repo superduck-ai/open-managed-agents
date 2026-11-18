@@ -66,22 +66,23 @@ func TestChatModelFixtureSeparatesTitleFromStream(t *testing.T) {
 	model := brainHistoryModel(t, previewSeen, &calls)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	requestModel := func(body string) *http.Response {
+	requestModel := func(body, userAgent string) *http.Response {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, model.URL+"/v1/messages", strings.NewReader(body))
 		requireOK(t, err)
 		request.Header.Set("Anthropic-Version", "2023-06-01")
+		request.Header.Set("User-Agent", userAgent)
 		response, err := model.Client().Do(request)
 		requireOK(t, err)
 		return response
 	}
 
-	stream := requestModel(`{"stream":true}`)
+	stream := requestModel(`{"stream":true}`, "")
 	defer stream.Body.Close()
 	if got := stream.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("chat Content-Type = %q, want event stream", got)
 	}
-	title := requestModel(`{"max_tokens":128}`)
+	title := requestModel(`{"max_tokens":128}`, titleFixtureUserAgent)
 	defer title.Body.Close()
 	if got := title.Header.Get("Content-Type"); title.StatusCode != http.StatusOK || got != "application/json" {
 		t.Fatalf("title response = %d, %q, want 200 application/json", title.StatusCode, got)
@@ -324,6 +325,7 @@ func chatStreamFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.
 			http.NotFound(w, r)
 			return
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, fields map[string]any) {

@@ -54,6 +54,9 @@ outcome evaluations 随 Session 一起保存。事件写入失败会回滚整个
 初始事件不在创建响应中回显，调用方通过事件历史读取。Scheduled Deployment 的 initial_events
 独立保留其允许 system.message 的契约。
 
+自动标题任务通过保存点入队。入队语句失败时回滚该保存点，已接受的消息仍然提交并投递。
+标题 Worker 在后台按主线程消息入库顺序查找首条有效文本。若后续消息补登记任务，标题仍取自首条有效消息。
+
 ## Activation 事务
 
 activation 先用短 Yourbatis 事务锁定 Session 与 `initializing` Code Session，读取完整

@@ -43,6 +43,9 @@ func TestIndependentTitleRequest(t *testing.T) {
 				if r.Header.Get("Authorization") != "Bearer test-key" {
 					t.Fatal("missing provider credentials")
 				}
+				if r.UserAgent() != "OMA-Session-Title" {
+					t.Fatalf("unexpected title request user agent %q", r.UserAgent())
+				}
 				if backend == llmproviders.ChatCompletions {
 					if r.URL.Path != "/v1/chat/completions" || request.Messages[0].Role != "system" {
 						t.Fatal("bad chat request")

@@ -81,6 +81,7 @@ type titleCompletionRequest struct {
 	Model               string         `json:"model"`
 	MaxTokens           int            `json:"max_tokens,omitzero"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitzero"`
+	ReasoningEffort     string         `json:"reasoning_effort,omitempty"`
 	System              string         `json:"system,omitempty"`
 	Messages            []titleMessage `json:"messages"`
 	InferenceGeo        string         `json:"inference_geo,omitempty"`
@@ -102,9 +103,7 @@ func generateSessionTitle(ctx context.Context, client *http.Client, upstream llm
 		path = "/v1/chat/completions"
 		input.Messages = append([]titleMessage{{Role: "system", Content: input.System}}, input.Messages...)
 		input.System, input.InferenceGeo, input.Thinking = "", "", nil
-		if usesTitleCompletionTokens(upstream.ModelID) {
-			input.MaxTokens, input.MaxCompletionTokens = 0, titleReasoningTokens
-		}
+		input.setOpenAITokenLimit()
 		if strings.HasPrefix(upstream.ModelID, "deepseek-") {
 			input.Thinking = &titleThinking{Type: "disabled"}
 		}
@@ -134,20 +133,24 @@ func generateSessionTitle(ctx context.Context, client *http.Client, upstream llm
 	return readSessionTitle(io.LimitReader(response.Body, 1<<20), upstream.APIBackend)
 }
 
-func usesTitleCompletionTokens(modelID string) bool {
-	modelID, _ = strings.CutPrefix(modelID, "openai/")
-	if version, ok := strings.CutPrefix(modelID, "gpt-"); ok {
-		major, _, _ := strings.Cut(version, "-")
-		major, _, _ = strings.Cut(major, ".")
-		return major == "5" || major == "6"
-	}
-	family, _, _ := strings.Cut(modelID, "-")
+func (r *titleCompletionRequest) setOpenAITokenLimit() {
+	modelID, _ := strings.CutPrefix(r.Model, "openai/")
+	family, version, _ := strings.Cut(modelID, "-")
 	switch family {
 	case "o1", "o3", "o4":
-		return true
+	case "gpt":
+		generation, _, _ := strings.Cut(version, "-")
+		major, _, _ := strings.Cut(generation, ".")
+		if major != "5" && major != "6" {
+			return
+		}
+		if !strings.Contains(modelID, "-chat-") && !strings.Contains(modelID, "-pro") {
+			r.ReasoningEffort = "low"
+		}
 	default:
-		return false
+		return
 	}
+	r.MaxTokens, r.MaxCompletionTokens = 0, titleReasoningTokens
 }
 
 func titleModelRequestError(err error) error {

@@ -74,23 +74,35 @@ func TestGenerateTitleUsingChatCompletions(t *testing.T) {
 }
 
 func TestGenerateTitleUsingOpenAICompletionTokens(t *testing.T) {
-	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var limits struct {
-			MaxTokens           *int `json:"max_tokens"`
-			MaxCompletionTokens int  `json:"max_completion_tokens"`
-		}
-		if err := json.UnmarshalRead(req.Body, &limits); err != nil || limits.MaxTokens != nil || limits.MaxCompletionTokens != titleReasoningTokens {
-			t.Errorf("unexpected token limits: %+v, %v", limits, err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"Diagnose session delay"}}]}`)
-	}))
-	t.Cleanup(model.Close)
-	for _, modelID := range []string{"o3-mini", "gpt-5", "gpt-5-mini", "openai/gpt-5.1", "gpt-6-astra"} {
-		t.Run(modelID, func(t *testing.T) {
+	for _, test := range []struct {
+		modelID string
+		effort  string
+	}{
+		{"o3-mini", ""},
+		{"gpt-5", "low"},
+		{"gpt-5-mini", "low"},
+		{"openai/gpt-5.1", "low"},
+		{"gpt-6-astra", "low"},
+		{"gpt-5-chat-latest", ""},
+	} {
+		t.Run(test.modelID, func(t *testing.T) {
+			model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				var limits struct {
+					MaxTokens           *int   `json:"max_tokens"`
+					MaxCompletionTokens int    `json:"max_completion_tokens"`
+					ReasoningEffort     string `json:"reasoning_effort"`
+				}
+				if err := json.UnmarshalRead(req.Body, &limits); err != nil || limits.MaxTokens != nil ||
+					limits.MaxCompletionTokens != titleReasoningTokens || limits.ReasoningEffort != test.effort {
+					t.Errorf("unexpected title request limits: %+v, %v", limits, err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"Diagnose session delay"}}]}`)
+			}))
+			t.Cleanup(model.Close)
 			got, err := generateSessionTitle(t.Context(), model.Client(), llmproviders.Upstream{
-				APIBackend: llmproviders.ChatCompletions, BaseURL: model.URL, ModelID: modelID,
+				APIBackend: llmproviders.ChatCompletions, BaseURL: model.URL, ModelID: test.modelID,
 			}, "", "Help diagnose the delay")
 			if err != nil || got != "Diagnose session delay" {
 				t.Fatalf("got %q, %v", got, err)

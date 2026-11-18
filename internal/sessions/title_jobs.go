@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
@@ -25,7 +27,7 @@ func (h *Handler) RegisterTitleWorker(workers *river.Workers, client *river.Clie
 	h.enqueueTitle = func(ctx context.Context, tx *sql.Tx, source db.SessionTitleSource) error {
 		_, err := client.InsertTx(ctx, tx, sessionTitleArgs{source}, &river.InsertOpts{Queue: TitleQueue, MaxAttempts: 3})
 		if err != nil {
-			h.logger.WarnContext(ctx, "enqueue session title", "session_uuid", source.SessionUUID, "error", fmt.Sprintf("%T", err))
+			h.warnTitleEnqueueFailure(ctx, source.SessionUUID, err)
 		}
 		return err
 	}
@@ -38,6 +40,20 @@ func (h *Handler) RegisterTitleWorker(workers *river.Workers, client *river.Clie
 			},
 		},
 	})
+}
+
+func (h *Handler) warnTitleEnqueueFailure(ctx context.Context, sessionUUID string, err error) {
+	attrs := []slog.Attr{
+		slog.String("session_uuid", sessionUUID),
+		slog.String("error", fmt.Sprintf("%T", err)),
+	}
+	if postgres, ok := errors.AsType[*pgconn.PgError](err); ok {
+		attrs = append(attrs, slog.String("sql_state", postgres.Code))
+		if postgres.ConstraintName != "" {
+			attrs = append(attrs, slog.String("constraint", postgres.ConstraintName))
+		}
+	}
+	h.logger.LogAttrs(ctx, slog.LevelWarn, "enqueue session title", attrs...)
 }
 
 type sessionTitleWorker struct {

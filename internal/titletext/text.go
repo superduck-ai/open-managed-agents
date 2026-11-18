@@ -9,7 +9,7 @@ import (
 
 var terminalControl = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]`)
 
-func Normalize(text string, maxBytes int) string {
+func Normalize(text string) string {
 	text = terminalControl.ReplaceAllString(text, "")
 	text = strings.Map(func(r rune) rune {
 		if (unicode.IsControl(r) && !unicode.IsSpace(r)) || unicode.Is(unicode.Cf, r) {
@@ -17,7 +17,7 @@ func Normalize(text string, maxBytes int) string {
 		}
 		return r
 	}, text)
-	return Clip(strings.Join(strings.Fields(text), " "), maxBytes)
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func Clip(text string, maxBytes int) string {
@@ -45,7 +45,7 @@ func Generated(text string) string {
 				}
 			}
 		}
-		if title := Normalize(line, 120); title != "" {
+		if title := Clip(Normalize(line), 120); title != "" {
 			return title
 		}
 	}
@@ -57,5 +57,5 @@ func Fallback(text string) string {
 	if len(words) > 8 {
 		words = words[:8]
 	}
-	return Normalize(strings.Join(words, " "), 96)
+	return Clip(Normalize(strings.Join(words, " ")), 96)
 }

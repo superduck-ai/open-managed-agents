@@ -27,3 +27,17 @@ func TestPreparePublicTitleInput(t *testing.T) {
 		}
 	}
 }
+
+func TestPreparePublicTitleInputSkipsLongInvisibleBlock(t *testing.T) {
+	payload := `{"content":[{"type":"text","text":"` + strings.Repeat("​", 1400) +
+		`"},{"type":"text","text":"fix session naming"}]}`
+	events, err := New(nil, nil).PreparePublic(t.Context(), "org", "workspace", []db.SessionEvent{
+		{EventType: "user.message", Payload: []byte(payload)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := events[0].TitleInput; got != "fix session naming" {
+		t.Fatalf("title input = %q, want visible text from the same message", got)
+	}
+}

@@ -14,24 +14,25 @@ export function useSessionResourceRefresh(
 ) {
   const fileRefreshInterval = useSessionFileRefreshInterval(session, workspaceId);
   const sessionId = session?.id;
-  const { data, error, refetch } = useQuery({
+  const { data, error, isFetchedAfterMount, isSuccess, refetch } = useQuery({
     queryKey: ['session-resources', workspaceId, sessionId],
     queryFn: () => retrieveSessionDetailSession(sessionId!, workspaceId),
-    select: (response) => ({ resources: response.resources, title: response.title, updatedAt: response.updated_at }),
+    select: (response) => ({ resources: response.resources, title: response.title }),
     enabled: Boolean(sessionId),
     refetchInterval: fileRefreshInterval || (resourcesVisible ? 10000 : false),
     refetchOnWindowFocus: true,
     retry: false,
   });
+  const syncTitle = isSuccess && isFetchedAfterMount;
   useEffect(() => {
     if (data)
       setSession((current) => {
         if (!current || current.id !== sessionId) return current;
         const resources = replaceEqualDeep(current.resources, data.resources);
-        const title = !current.title && data.title && data.updatedAt >= current.updated_at ? data.title : current.title;
+        const title = syncTitle ? data.title : current.title;
         return resources === current.resources && title === current.title ? current : { ...current, resources, title };
       });
-  }, [data, sessionId, setSession, workspaceId]);
+  }, [data, sessionId, setSession, syncTitle, workspaceId]);
   useEffect(() => {
     if (sessionId) void refetch();
   }, [refetch, resourcesVisible, session?.status, sessionId]);

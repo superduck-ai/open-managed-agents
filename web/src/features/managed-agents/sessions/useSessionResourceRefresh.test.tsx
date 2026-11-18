@@ -17,8 +17,11 @@ function makeSession(id = 'sesn_refresh', status = 'running') {
   return { id, status, resources: [], type: 'session' } as unknown as SessionApiResponse;
 }
 
-function renderRefresh(initial: SessionApiResponse, resourcesVisible = true) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+function renderRefresh(
+  initial: SessionApiResponse,
+  resourcesVisible = true,
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } }),
+) {
   let latest: SessionApiResponse | null = initial;
   const setSession: Dispatch<SetStateAction<SessionApiResponse | null>> = (update) => {
     latest = typeof update === 'function' ? update(latest) : update;
@@ -127,31 +130,36 @@ test('discovers late resources after idle with the resources inspector closed', 
   await waitFor(() => expect(hook.latest()?.resources[0]?.file_id).toBe('file_late'), { timeout: 2500 });
 });
 
-test('discovers a generated title without replacing a manual title or other session fields', async () => {
-  resetTestDom('https://oma.duck.ai/');
-  const initial = { ...makeSession(), title: null, updated_at: '2026-11-17T00:00:00Z' };
-  globalThis.fetch = async () =>
-    Response.json({ ...initial, title: '修复会话标题', updated_at: '2026-11-17T00:00:01Z', status: 'idle' });
-  const hook = renderRefresh(initial, false);
-  await waitFor(() => expect(hook.latest()?.title).toBe('修复会话标题'));
-  expect(hook.latest()?.status).toBe('running');
-  expect(hook.latest()?.updated_at).toBe(initial.updated_at);
-  globalThis.fetch = async () => Response.json({ ...initial, title: 'Old title', updated_at: '2026-11-17T00:00:02Z' });
-  await act(async () => {
-    await hook.result.current.refresh();
-  });
-  expect(hook.latest()?.title).toBe('修复会话标题');
-});
-
-test('ignores title responses older than a manual clear', async () => {
+test('ignores a cached title from before a clear in the same second', async () => {
   resetTestDom('https://oma.duck.ai/');
   const initial = { ...makeSession(), title: null, updated_at: '2026-11-17T00:00:02Z' };
-  globalThis.fetch = async () =>
-    Response.json({ ...initial, title: 'Old generated title', updated_at: '2026-11-17T00:00:01Z' });
-  const hook = renderRefresh(initial, false);
-  await waitFor(() => expect(hook.result.current.error).toBeNull());
-  await act(async () => {
-    await hook.result.current.refresh();
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  queryClient.setQueryData(['session-resources', 'workspace_first', initial.id], {
+    ...initial,
+    title: 'Old generated title',
   });
+  globalThis.fetch = async () => Response.json({ ...initial, resources: [{ type: 'file', file_id: 'file_latest' }] });
+  const hook = renderRefresh(initial, false, queryClient);
   expect(hook.latest()?.title).toBeNull();
+  await waitFor(() => expect(hook.latest()?.resources[0]?.file_id).toBe('file_latest'));
+  expect(hook.latest()?.title).toBeNull();
+});
+
+test('reads generated, renamed and cleared titles without changing other session fields', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const initial = { ...makeSession(), title: null, updated_at: '2026-11-17T00:00:00Z' };
+  let title: string | null = '修复会话标题';
+  globalThis.fetch = async () =>
+    Response.json({ ...initial, title, updated_at: '2026-11-17T00:00:01Z', status: 'idle' });
+  const hook = renderRefresh(initial, false);
+  await waitFor(() => expect(hook.latest()?.title).toBe('修复会话标题'));
+  for (const nextTitle of ['Manual title', null]) {
+    title = nextTitle;
+    await act(async () => {
+      await hook.result.current.refresh();
+    });
+    await waitFor(() => expect(hook.latest()?.title).toBe(nextTitle));
+  }
+  expect(hook.latest()?.status).toBe('running');
+  expect(hook.latest()?.updated_at).toBe(initial.updated_at);
 });

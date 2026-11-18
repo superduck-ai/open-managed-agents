@@ -9,6 +9,7 @@ import (
 )
 
 func sessionTitleInput(event db.SessionEvent) string {
+	const maxTitleInputBytes = 4096
 	if event.EventType != "user.message" {
 		return ""
 	}
@@ -23,13 +24,20 @@ func sessionTitleInput(event db.SessionEvent) string {
 	}
 	var text strings.Builder
 	for _, block := range message.Content {
-		if block.Type == "text" {
-			text.WriteString(block.Text)
-			text.WriteByte('\n')
+		if block.Type != "text" {
+			continue
 		}
-		if text.Len() >= 4096 {
+		content := titletext.Normalize(block.Text)
+		if content == "" {
+			continue
+		}
+		if text.Len() > 0 {
+			text.WriteByte(' ')
+		}
+		text.WriteString(content)
+		if text.Len() >= maxTitleInputBytes {
 			break
 		}
 	}
-	return titletext.Normalize(text.String(), 4096)
+	return titletext.Clip(text.String(), maxTitleInputBytes)
 }

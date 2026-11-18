@@ -270,6 +270,8 @@ type IdentityMapper interface {
 	RebindScopePairing(ctx context.Context, params RebindScopePairingParams) (int64, error)
 	UnbindScopePairing(ctx context.Context, workspaceUUID, externalID string, expectedRevision int64) (int64, error)
 	UnbindIdentityPairings(ctx context.Context, workspaceUUID, identityUUID string) (int64, error)
+	FindActorIdentity(ctx context.Context, organizationUUID, workspaceUUID, channelType, appID, actorID string) (IdentityRecord, bool, error)
+	IsPersonalIdentity(ctx context.Context, workspaceUUID, identityUUID string) (bool, error)
 	UpsertActorLink(ctx context.Context, organizationUUID, workspaceUUID, channelType, appID, actorID, identityUUID string) error
 	SetSessionIdentity(ctx context.Context, workspaceUUID, sessionExternalID, identityUUID string) (int64, error)
 	InsertSessionIdentity(ctx context.Context, params InsertSessionIdentityParams) error

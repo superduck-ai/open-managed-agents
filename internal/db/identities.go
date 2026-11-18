@@ -230,7 +230,19 @@ func (d *DB) UnbindIdentityPairings(ctx context.Context, workspaceUUID, identity
 	return NewIdentityMapper(d.mapperDB).UnbindIdentityPairings(ctx, workspaceUUID, identityUUID)
 }
 
-func (d *DB) UpsertIdentityActorLink(ctx context.Context, organizationUUID, workspaceUUID, channelType, appID, actorID, identityUUID string) error {
+func (d *DB) FindPersonalIdentityByActor(ctx context.Context, organizationUUID, workspaceUUID, channelType, appID, actorID string) (IdentityRecord, error) {
+	row, found, err := NewIdentityMapper(d.mapperDB).FindActorIdentity(ctx, organizationUUID, workspaceUUID, channelType, appID, actorID)
+	if err == nil && !found {
+		err = ErrNotFound
+	}
+	return row, err
+}
+
+func (d *DB) IsPersonalIdentity(ctx context.Context, workspaceUUID, identityUUID string) (bool, error) {
+	return NewIdentityMapper(d.mapperDB).IsPersonalIdentity(ctx, workspaceUUID, identityUUID)
+}
+
+func (d *DB) ClaimPersonalIdentityByActor(ctx context.Context, organizationUUID, workspaceUUID, channelType, appID, actorID, identityUUID string) error {
 	return NewIdentityMapper(d.mapperDB).UpsertActorLink(ctx, organizationUUID, workspaceUUID, channelType, appID, actorID, identityUUID)
 }
 

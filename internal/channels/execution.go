@@ -64,6 +64,9 @@ func (w *channelWorker) runScoped(ctx context.Context, ticket *scopeTicket, msg 
 	}
 	sessionID, err := w.inputSession(ctx, msg, ticket.scopeKey)
 	if errors.Is(err, errChannelExecutionHeld) {
+		if err := w.completeInput(ctx, msg); err != nil {
+			w.supervisor.logger.WarnContext(ctx, "complete rejected channel input", "channel_id", w.record.ExternalID, "error", err)
+		}
 		return
 	}
 	if err != nil {

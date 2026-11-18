@@ -14,6 +14,10 @@ import (
 )
 
 type identityIngress interface {
+	PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error)
+	AllowsSelfPairing(context.Context, identities.Ingress) (bool, error)
+	PrepareSelfPairing(context.Context, identities.Ingress) (string, error)
+	ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error
 	Resolve(context.Context, identities.Ingress) (identities.Decision, error)
 	Preview(context.Context, identities.Ingress) (identities.Decision, error)
 	BindSession(context.Context, identities.SessionBind) error
@@ -64,17 +68,23 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 			return identities.Decision{}, err
 		}
 	}
-	ingress := identities.Ingress{
-		OrganizationUUID: w.record.OrganizationUUID, WorkspaceUUID: w.record.WorkspaceUUID,
-		ChannelUUID: w.record.UUID, ChannelExternalID: w.record.ExternalID, ChannelType: w.record.ChannelType,
-		AppID: w.record.AppID, AgentExternalID: w.record.AgentExternalID, ChatType: msg.ChatType,
-		RemoteID: msg.ChatID, ActorID: msg.UserID, ScopeKey: scopeKey, DisplayName: msg.UserID,
-		PersonalVaultID: personalID, PersonalActive: personalActive,
-	}
+	ingress := channelIngress(w.record, msg, scopeKey)
+	ingress.PersonalVaultID = personalID
+	ingress.PersonalActive = personalActive
+	ingress.SharedVaultIDs = parseChannelMounts(w.record.Mounts).VaultIDs
 	if create {
 		return w.supervisor.ingress.Resolve(ctx, ingress)
 	}
 	return w.supervisor.ingress.Preview(ctx, ingress)
+}
+
+func channelIngress(record db.ChannelRecord, msg *channelMessage, scopeKey string) identities.Ingress {
+	return identities.Ingress{
+		OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID,
+		ChannelUUID: record.UUID, ChannelExternalID: record.ExternalID, ChannelType: record.ChannelType, ChannelMode: record.Mode,
+		AppID: record.AppID, AgentExternalID: record.AgentExternalID, ChatType: msg.ChatType,
+		RemoteID: msg.ChatID, ActorID: msg.UserID, ScopeKey: scopeKey, DisplayName: msg.UserID,
+	}
 }
 
 func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMessage, scopeKey string, decision identities.Decision) (string, error) {

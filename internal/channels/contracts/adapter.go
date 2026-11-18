@@ -44,7 +44,9 @@ type ActionValue struct {
 	ChannelID  string `json:"channel_id"`
 	ScopeKey   string `json:"scope_key"`
 	SessionID  string `json:"session_id"`
-	ToolUseID  string `json:"tool_use_id"`
+	ToolUseID  string `json:"tool_use_id,omitempty"`
+	PairingID  string `json:"pairing_id,omitempty"`
+	SourceID   string `json:"source_message_id,omitempty"`
 	Result     string `json:"result,omitempty"`
 	OpenID     string `json:"open_id"`
 	ChatType   string `json:"chat_type,omitempty"`
@@ -74,7 +76,7 @@ type Adapter interface {
 	Start(context.Context) error
 	Close(context.Context) error
 	ReplyText(context.Context, *Message, string) error
-	OpenReply(context.Context, *Message) (ReplyStream, error)
+	OpenReply(context.Context, *Message, ...Reply) (ReplyStream, error)
 	ResumeReply(string) ReplyStream
 	DownloadAttachment(context.Context, string, Attachment, io.Writer) (string, error)
 	SendMedia(context.Context, *Message, Resource, string, []byte) (string, error)
@@ -104,6 +106,7 @@ type Reply struct {
 	Status, Text                 string
 	Blocks                       []ReplyBlock
 	StopValue                    *ActionValue
+	PairingValue                 *ActionValue
 	Interactions                 []Interaction
 }
 

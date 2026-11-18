@@ -216,15 +216,34 @@
         WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
     </update>
 
+    <select id="FindActorIdentity" result="optional" resultType="IdentityRecord">
+        SELECT <include refid="identityColumns"/>
+        FROM identities
+        WHERE workspace_uuid = #{workspaceUUID} AND organization_uuid = #{organizationUUID}
+        AND deleted_at IS NULL AND uuid = (
+            SELECT identity_uuid FROM identity_actor_links
+            WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
+            AND channel_type = #{channelType} AND app_id = #{appID} AND actor_id = #{actorID} AND personal
+        )
+    </select>
+
     <insert id="UpsertActorLink" result="exec">
         INSERT INTO identity_actor_links (
-            organization_uuid, workspace_uuid, channel_type, app_id, actor_id, identity_uuid
+            organization_uuid, workspace_uuid, channel_type, app_id, actor_id, identity_uuid, personal
         ) VALUES (
-            #{organizationUUID}, #{workspaceUUID}, #{channelType}, #{appID}, #{actorID}, #{identityUUID}
+            #{organizationUUID}, #{workspaceUUID}, #{channelType}, #{appID}, #{actorID}, #{identityUUID}, true
         )
         ON CONFLICT (organization_uuid, workspace_uuid, channel_type, app_id, actor_id)
-        DO UPDATE SET identity_uuid = EXCLUDED.identity_uuid, updated_at = now()
+        DO UPDATE SET identity_uuid = EXCLUDED.identity_uuid, personal = true, updated_at = now()
+        WHERE NOT identity_actor_links.personal
     </insert>
+
+    <select id="IsPersonalIdentity" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM identity_actor_links
+            WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND personal
+        ) AS owned
+    </select>
 
     <update id="SetSessionIdentity" result="rows">
         UPDATE sessions SET identity_uuid = #{identityUUID}

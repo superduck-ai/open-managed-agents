@@ -62,6 +62,9 @@ func (s *Service) CompletePairing(ctx context.Context, principal auth.Principal,
 	if !identity.Enabled {
 		return nil, conflict("业务身份已停用，不能完成配对", nil)
 	}
+	if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
+		return nil, err
+	}
 	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, input.AgentID, versionValue(input.AgentVersion)); err != nil {
 		return nil, err
 	}
@@ -86,7 +89,6 @@ func (s *Service) completeByCode(ctx context.Context, principal auth.Principal, 
 	}); err != nil {
 		return nil, mapStore(err, "配对不存在")
 	}
-	s.linkDirectActor(ctx, principal, row, identity.UUID)
 	return s.GetPairing(ctx, principal, row.ExternalID)
 }
 
@@ -95,20 +97,26 @@ func (s *Service) completeByID(ctx context.Context, principal auth.Principal, id
 	if err != nil {
 		return nil, mapStore(err, "配对不存在")
 	}
+	if err := s.activatePairing(ctx, principal, row, identity, input); err != nil {
+		return nil, err
+	}
+	return s.GetPairing(ctx, principal, row.ExternalID)
+}
+
+func (s *Service) activatePairing(ctx context.Context, principal auth.Principal, row db.ScopePairingRecord, identity db.IdentityRecord, input PairingWrite) error {
 	_, changed, activateErr := ActivateWithID(pairingFromRecord(row), identity.UUID, input.AgentID, input.AgentVersion)
 	if activateErr != nil {
-		return nil, conflict("过期或已解除的配对不能被重新激活", activateErr)
+		return conflict("过期或已解除的配对不能被重新激活", activateErr)
 	}
 	if changed {
 		if err := s.store.ActivateScopePairingByID(ctx, db.ActivateScopePairingParams{
 			WorkspaceUUID: principal.WorkspaceUUID, ExternalID: row.ExternalID, IdentityUUID: identity.UUID,
 			AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion,
 		}); err != nil {
-			return nil, mapStore(err, "配对不存在")
+			return mapStore(err, "配对不存在")
 		}
-		s.linkDirectActor(ctx, principal, row, identity.UUID)
 	}
-	return s.GetPairing(ctx, principal, row.ExternalID)
+	return nil
 }
 
 func (s *Service) UpdatePairing(ctx context.Context, principal auth.Principal, pairingID string, input PairingWrite) (map[string]any, error) {
@@ -131,6 +139,20 @@ func (s *Service) UpdatePairing(ctx context.Context, principal auth.Principal, p
 		}
 		if !identity.Enabled {
 			return nil, conflict("业务身份已停用，不能改绑", nil)
+		}
+		if identityUUID != identity.UUID {
+			if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
+				return nil, err
+			}
+		}
+		if identityUUID != "" && identityUUID != identity.UUID {
+			personal, err := s.store.IsPersonalIdentity(ctx, principal.WorkspaceUUID, identityUUID)
+			if err != nil {
+				return nil, unavailable(err)
+			}
+			if personal {
+				return nil, conflict("个人配对只能修改智能体和版本", nil)
+			}
 		}
 		identityUUID = identity.UUID
 	}
@@ -175,15 +197,6 @@ func (s *Service) UnbindPairing(ctx context.Context, principal auth.Principal, p
 		}
 	}
 	return s.GetPairing(ctx, principal, pairingID)
-}
-
-func (s *Service) linkDirectActor(ctx context.Context, principal auth.Principal, row db.ScopePairingRecord, identityUUID string) {
-	if row.ScopeKind != "direct" {
-		return
-	}
-	if err := s.store.UpsertIdentityActorLink(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, "feishu", row.PlatformAccount, row.RemoteID, identityUUID); err != nil {
-		s.logger.WarnContext(ctx, "link channel actor", "pairing_id", row.ExternalID, "error", err)
-	}
 }
 
 func (s *Service) pairingView(ctx context.Context, workspaceUUID string, row db.ScopePairingRecord) map[string]any {

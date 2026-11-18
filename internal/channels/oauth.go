@@ -56,7 +56,11 @@ func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.
 			return OAuthTarget{}, errors.New("目标 MCP 未挂载到原会话")
 		}
 	}
-	id, err := s.store.GetChannelUserVaultID(ctx, personalVaultIdentity(scope.Channel, scope.ActorID))
+	identity, err := s.personalVaultIdentity(ctx, scope.Channel, scope.ActorID, true)
+	if err != nil {
+		return OAuthTarget{}, err
+	}
+	id, err := s.store.GetChannelUserVaultID(ctx, identity)
 	if err != nil {
 		return OAuthTarget{}, err
 	}

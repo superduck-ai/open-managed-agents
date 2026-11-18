@@ -57,8 +57,14 @@ func (w *channelWorker) handleAction(ctx context.Context, event *contracts.Actio
 		return nil
 	}
 	value, err := decodeActionValue(event.Value)
-	if err != nil || value.SessionID == "" || value.ToolUseID == "" {
+	if err != nil {
 		return err
+	}
+	if value.Kind == selfPairingAction {
+		return w.confirmSelfPairing(ctx, event, value)
+	}
+	if value.SessionID == "" || value.ToolUseID == "" {
+		return nil
 	}
 	if value.ChannelID != w.record.ExternalID {
 		return fmt.Errorf("渠道卡片不属于当前渠道")

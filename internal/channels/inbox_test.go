@@ -176,3 +176,29 @@ func TestRestartPreservesPreparedBatchWithoutPlatformSDK(t *testing.T) {
 		t.Fatalf("恢复不能拆散原批次或依赖飞书SDK: %v creates=%d", requests.snapshot(), creates.Load())
 	}
 }
+
+func TestRejectedIdentityInputDoesNotRecoverAfterEnable(t *testing.T) {
+	server, creates, requests := omaTestServer(t, 0)
+	store := &fakeRuntimeStore{}
+	worker, _ := testWorker(t, store, server.URL)
+	worker.supervisor.ingress = holdIngress{}
+	if err := worker.receiveChannelMessage(t.Context(), &channelMessage{MessageID: "rejected", ChatID: "oc_1", ChatType: "p2p", UserID: "actor", Content: "停用期间的请求"}); err != nil {
+		t.Fatal(err)
+	}
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
+	waitForScope(t, worker, "chat:oc_1")
+	store.mu.Lock()
+	for _, row := range store.inputs {
+		if row.State != "handed_off" {
+			t.Errorf("已拒绝消息仍可恢复：%s", row.State)
+		}
+	}
+	store.mu.Unlock()
+	worker.supervisor.ingress = nil
+	worker.restoreInputs(t.Context())
+	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
+	waitForScope(t, worker, "chat:oc_1")
+	if creates.Load() != 0 || len(requests.snapshot()) != 0 {
+		t.Fatal("重新启用后补跑了已拒绝的消息")
+	}
+}

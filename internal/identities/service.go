@@ -41,6 +41,13 @@ type IdentityInput struct {
 }
 
 func (s *Service) CreateIdentity(ctx context.Context, principal auth.Principal, input IdentityInput) (db.IdentityRecord, error) {
+	if strings.HasPrefix(strings.TrimSpace(input.Namespace), "feishu:") {
+		return db.IdentityRecord{}, invalid("飞书个人身份由渠道创建", nil)
+	}
+	return s.createIdentity(ctx, principal, input)
+}
+
+func (s *Service) createIdentity(ctx context.Context, principal auth.Principal, input IdentityInput) (db.IdentityRecord, error) {
 	name := strings.TrimSpace(input.DisplayName)
 	subject := strings.TrimSpace(input.SubjectID)
 	namespace := strings.TrimSpace(input.Namespace)
@@ -94,14 +101,24 @@ func (s *Service) UpdateIdentity(ctx context.Context, principal auth.Principal, 
 	if err != nil {
 		return db.IdentityRecord{}, err
 	}
+	subject := strings.TrimSpace(input.SubjectID)
+	namespace := strings.TrimSpace(input.Namespace)
+	if input.NamespaceProvided && namespace != current.Namespace && strings.HasPrefix(namespace, "feishu:") {
+		return db.IdentityRecord{}, invalid("飞书个人身份由渠道创建", nil)
+	}
+	if (subject != "" && subject != current.ExternalSubjectID) || (input.NamespaceProvided && namespace != current.Namespace) {
+		if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, current.UUID); err != nil {
+			return db.IdentityRecord{}, err
+		}
+	}
 	if input.DisplayName != "" {
 		current.DisplayName = strings.TrimSpace(input.DisplayName)
 	}
 	if input.SubjectID != "" {
-		current.ExternalSubjectID = strings.TrimSpace(input.SubjectID)
+		current.ExternalSubjectID = subject
 	}
 	if input.NamespaceProvided {
-		current.Namespace = strings.TrimSpace(input.Namespace)
+		current.Namespace = namespace
 	}
 	if input.AutoMemoryStore != nil {
 		current.AutoMemoryStore = *input.AutoMemoryStore
@@ -160,7 +177,25 @@ func (s *Service) setEnabled(ctx context.Context, principal auth.Principal, exte
 }
 
 func (s *Service) DeleteIdentity(ctx context.Context, principal auth.Principal, externalID string) error {
+	identity, err := s.GetIdentity(ctx, principal, externalID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
+		return err
+	}
 	return mapStore(s.store.DeleteBusinessIdentity(ctx, principal.WorkspaceUUID, externalID), "执行身份不存在")
+}
+
+func (s *Service) requireSharedIdentity(ctx context.Context, workspaceUUID, identityUUID string) error {
+	personal, err := s.store.IsPersonalIdentity(ctx, workspaceUUID, identityUUID)
+	if err != nil {
+		return unavailable(err)
+	}
+	if personal {
+		return conflict("个人执行身份固定归属原操作者，请通过身份迁移变更归属", nil)
+	}
+	return nil
 }
 
 func (s *Service) AdmitExecution(ctx context.Context, _, workspaceUUID, sessionExternalID string, newRound bool) error {

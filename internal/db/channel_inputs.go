@@ -28,6 +28,13 @@ type ChannelInput struct {
 	LeaseUntil        time.Time `db:"lease_until"`
 }
 
+type ChannelPairingResume struct {
+	MessageID string
+	ScopeKey  string
+	ActorID   string
+	PairingID string
+}
+
 type ChannelInputBatch struct {
 	MessageIDs []string
 	ScopeKey   string
@@ -51,6 +58,18 @@ func (d *DB) ClaimChannelInput(ctx context.Context, scope ChannelInputScope, inp
 
 func (d *DB) ListRecoverableChannelInputs(ctx context.Context, scope ChannelInputScope) ([]ChannelInput, error) {
 	return NewChannelInputMapper(d.mapperDB).ListRecoverable(ctx, scope)
+}
+
+func (d *DB) HoldChannelInputForPairing(ctx context.Context, scope ChannelInputScope, inputUUID, owner, pairingID string) error {
+	count, err := NewChannelInputMapper(d.mapperDB).HoldForPairing(ctx, scope, inputUUID, owner, pairingID)
+	if err == nil && count == 0 {
+		return ErrInvalidState
+	}
+	return err
+}
+
+func (d *DB) ResumeChannelInputAfterPairing(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (string, bool, error) {
+	return NewChannelInputMapper(d.mapperDB).ResumeAfterPairing(ctx, scope, input)
 }
 
 func (d *DB) PrepareChannelInputBatch(ctx context.Context, scope ChannelInputScope, owner string, batch ChannelInputBatch) (ChannelInput, error) {

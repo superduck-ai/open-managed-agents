@@ -15,6 +15,7 @@ type Ingress struct {
 	ChannelUUID       string
 	ChannelExternalID string
 	ChannelType       string
+	ChannelMode       string
 	AppID             string
 	AgentExternalID   string
 	ChatType          string
@@ -25,6 +26,7 @@ type Ingress struct {
 	DisplayName       string
 	PersonalVaultID   string
 	PersonalActive    bool
+	SharedVaultIDs    []string
 }
 
 type Decision struct {
@@ -69,6 +71,9 @@ func (s *Service) Preview(ctx context.Context, ingress Ingress) (Decision, error
 func (s *Service) resolve(ctx context.Context, ingress Ingress, create bool) (Decision, error) {
 	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
 	if errors.Is(err, db.ErrNotFound) {
+		if ingress.ChannelMode == "pairing" && ingress.ChatType == "p2p" {
+			return s.resolvePaired(ctx, ingress, create)
+		}
 		return Decision{Mode: "legacy"}, nil
 	}
 	if err != nil {
@@ -150,7 +155,7 @@ func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity 
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return Decision{}, err
 	}
-	mounts := EnabledMounts(state.Vaults, state.Disabled)
+	mounts := EnabledMounts(append(append([]string{}, ingress.SharedVaultIDs...), state.Vaults...), state.Disabled)
 	availability := map[string]VaultState{}
 	for _, id := range mounts {
 		availability[id] = s.vaultState(ctx, ingress.WorkspaceUUID, id)
@@ -184,6 +189,9 @@ func (s *Service) vaultState(ctx context.Context, workspaceUUID, vaultID string)
 func (s *Service) ResolveChannelIdentity(ctx context.Context, principal auth.Principal, identityID string) (string, error) {
 	identity, err := s.GetIdentity(ctx, principal, identityID)
 	if err != nil {
+		return "", err
+	}
+	if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
 		return "", err
 	}
 	return identity.UUID, nil

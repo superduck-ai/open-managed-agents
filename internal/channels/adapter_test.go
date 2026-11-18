@@ -54,7 +54,7 @@ func (a *independentAdapter) ResumeReply(receipt string) channelReplyStream {
 	a.resumed = append(a.resumed, receipt)
 	return a
 }
-func (a *independentAdapter) OpenReply(context.Context, *channelMessage) (channelReplyStream, error) {
+func (a *independentAdapter) OpenReply(context.Context, *channelMessage, ...contracts.Reply) (channelReplyStream, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.opens++

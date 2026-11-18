@@ -107,7 +107,23 @@ func TestExecutionModeMapsFixedContextWithoutInventingIdentity(t *testing.T) {
 	}
 }
 
-type holdIngress struct{}
+type inactiveSelfPairing struct{}
+
+func (inactiveSelfPairing) PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error) {
+	return db.IdentityRecord{}, db.ErrNotFound
+}
+
+func (inactiveSelfPairing) AllowsSelfPairing(context.Context, identities.Ingress) (bool, error) {
+	return false, nil
+}
+func (inactiveSelfPairing) PrepareSelfPairing(context.Context, identities.Ingress) (string, error) {
+	return "", nil
+}
+func (inactiveSelfPairing) ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error {
+	return db.ErrInvalidState
+}
+
+type holdIngress struct{ inactiveSelfPairing }
 
 func (holdIngress) Resolve(context.Context, identities.Ingress) (identities.Decision, error) {
 	return identities.Decision{Mode: "hold", Notice: "held"}, nil
@@ -126,7 +142,10 @@ func (holdIngress) ResolveChannelIdentity(context.Context, auth.Principal, strin
 	return "", nil
 }
 
-type fixedIngress struct{ decision identities.Decision }
+type fixedIngress struct {
+	inactiveSelfPairing
+	decision identities.Decision
+}
 
 func (f fixedIngress) Resolve(context.Context, identities.Ingress) (identities.Decision, error) {
 	return f.decision, nil

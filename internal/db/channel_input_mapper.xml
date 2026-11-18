@@ -31,6 +31,20 @@
       AND i.state IN ('received','buffering','prepared','accepted') AND i.lease_until&lt;=now()
     ORDER BY i.created_at,i.uuid LIMIT 100
   </select>
+  <update id="HoldForPairing" result="rows">
+    UPDATE channel_inputs i SET state='pairing_wait',lease_owner='',
+      payload=jsonb_set(payload,'{pairing_id}',to_jsonb(CAST(#{pairingID} AS text))),updated_at=now()
+    WHERE <include refid="owned"/> AND i.state='buffering'
+  </update>
+  <select id="ResumeAfterPairing" result="optional">
+    WITH resumed AS (
+      UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
+      WHERE <include refid="scope"/> AND i.state='pairing_wait' AND i.message_id=#{input.MessageID}
+        AND i.scope_key=#{input.ScopeKey} AND i.payload->>'user_id'=#{input.ActorID}
+        AND i.payload->>'pairing_id'=#{input.PairingID}
+      RETURNING i.uuid::text AS uuid
+    ) SELECT uuid FROM resumed
+  </select>
   <select id="LockSources">
     SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/>
       AND i.scope_key=#{batch.ScopeKey} AND i.state='buffering' AND i.lease_owner=#{owner} AND i.lease_until&gt;now()

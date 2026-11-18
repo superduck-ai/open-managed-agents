@@ -333,7 +333,13 @@ func (s *acceptanceStore) RebindScopePairing(context.Context, db.RebindScopePair
 func (s *acceptanceStore) UnbindScopePairing(context.Context, string, string, int64) error {
 	return nil
 }
-func (s *acceptanceStore) UpsertIdentityActorLink(context.Context, string, string, string, string, string, string) error {
+func (s *acceptanceStore) FindPersonalIdentityByActor(context.Context, string, string, string, string, string) (db.IdentityRecord, error) {
+	return db.IdentityRecord{}, db.ErrNotFound
+}
+func (s *acceptanceStore) IsPersonalIdentity(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (s *acceptanceStore) ClaimPersonalIdentityByActor(context.Context, string, string, string, string, string, string) error {
 	return nil
 }
 func (s *acceptanceStore) BindSessionIdentity(context.Context, db.InsertSessionIdentityParams) error {
@@ -377,3 +383,21 @@ func TestCompleteByCodeLooksUpHash(t *testing.T) {
 }
 
 var _ Store = (*acceptanceStore)(nil)
+
+func TestChannelSharedVaultsEnterIdentityCredentialScope(t *testing.T) {
+	store := newAcceptanceStore()
+	service := NewService(store, nil)
+	ingress := Ingress{
+		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelExternalID: "chn_direct", ChatType: "p2p", ActorID: "ou_alice",
+		SharedVaultIDs: []string{"vlt_left", "vlt_right", "vlt_left"}, PersonalVaultID: "vlt_alice", PersonalActive: true,
+	}
+	decision, err := service.Resolve(t.Context(), ingress)
+	if err != nil || strings.Join(decision.VaultIDs, ",") != "vlt_left,vlt_right,vlt_alice" {
+		t.Fatalf("渠道共享挂载未进入有序凭据范围：%v %#v", err, decision)
+	}
+	store.vaults["vlt_right"] = db.Vault{ExternalID: "vlt_right", ArchivedAt: new(time.Now())}
+	decision, err = service.Preview(t.Context(), ingress)
+	if err != nil || decision.Mode != "hold" || len(decision.VaultIDs) != 0 {
+		t.Fatalf("共享资源不可用时回退到了个人凭据：%v %#v", err, decision)
+	}
+}

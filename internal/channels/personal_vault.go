@@ -12,12 +12,35 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-func personalVaultIdentity(record db.ChannelRecord, actorID string) db.ChannelUserVaultIdentity {
-	return db.ChannelUserVaultIdentity{OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID, ChannelType: record.ChannelType, AppID: record.AppID, ActorID: actorID}
+func (s *Service) personalVaultIdentity(ctx context.Context, record db.ChannelRecord, actorID string, create bool) (db.ChannelUserVaultIdentity, error) {
+	key := db.ChannelUserVaultIdentity{OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID, ChannelType: record.ChannelType, AppID: record.AppID, ActorID: actorID}
+	if s.supervisor == nil || s.supervisor.ingress == nil {
+		return key, nil
+	}
+	ingress := channelIngress(record, &channelMessage{UserID: actorID, ChatType: "p2p"}, "")
+	owner, err := s.supervisor.ingress.PersonalActorIdentity(ctx, ingress, create)
+	if !create && errors.Is(err, db.ErrNotFound) {
+		return key, nil
+	}
+	if err != nil {
+		return key, err
+	}
+	if !owner.Enabled {
+		return key, db.ErrInvalidState
+	}
+	key.IdentityUUID = owner.UUID
+	if create {
+		return key, s.store.AdoptChannelUserVault(ctx, key)
+	}
+	return key, nil
 }
 
 func (s *Service) lookupPersonalVault(ctx context.Context, record db.ChannelRecord, actorID string) (string, bool, error) {
-	id, err := s.store.GetChannelUserVaultID(ctx, personalVaultIdentity(record, actorID))
+	identity, err := s.personalVaultIdentity(ctx, record, actorID, false)
+	if err != nil {
+		return "", false, err
+	}
+	id, err := s.store.GetChannelUserVaultID(ctx, identity)
 	if errors.Is(err, db.ErrNotFound) {
 		return "", false, nil
 	}
@@ -35,7 +58,10 @@ func (s *Service) lookupPersonalVault(ctx context.Context, record db.ChannelReco
 }
 
 func (s *Service) ensurePersonalVault(ctx context.Context, record db.ChannelRecord, actorID string) (string, error) {
-	identity := personalVaultIdentity(record, actorID)
+	identity, err := s.personalVaultIdentity(ctx, record, actorID, true)
+	if err != nil {
+		return "", err
+	}
 	id, err := s.store.GetChannelUserVaultID(ctx, identity)
 	if errors.Is(err, db.ErrNotFound) {
 		id, err = ids.New("vlt_")

@@ -4,10 +4,25 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="SessionEventMapper">
+    <update id="BeginTitleEnqueue" result="exec">
+        SAVEPOINT session_title_enqueue
+    </update>
+    <update id="RollbackTitleEnqueue" result="exec">
+        ROLLBACK TO SAVEPOINT session_title_enqueue
+    </update>
+    <update id="ReleaseTitleEnqueue" result="exec">
+        RELEASE SAVEPOINT session_title_enqueue
+    </update>
     <select id="FirstUserMessageUUID" result="scalar" resultType="string">
         SELECT uuid FROM session_events
         WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
           AND event_type = 'user.message' AND deleted_at IS NULL
+          AND thread_uuid = (
+              SELECT uuid FROM session_threads
+              WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+                AND parent_thread_uuid IS NULL AND deleted_at IS NULL
+              ORDER BY created_at ASC, uuid ASC LIMIT 1
+          )
         ORDER BY id ASC LIMIT 1
     </select>
     <select id="FindByUUID" resultType="sessionEventRow">

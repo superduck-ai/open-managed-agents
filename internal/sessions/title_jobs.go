@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -23,6 +24,9 @@ func (sessionTitleArgs) Kind() string { return TitleQueue }
 func (h *Handler) RegisterTitleWorker(workers *river.Workers, client *river.Client[*sql.Tx]) {
 	h.enqueueTitle = func(ctx context.Context, tx *sql.Tx, source db.SessionTitleSource) error {
 		_, err := client.InsertTx(ctx, tx, sessionTitleArgs{source}, &river.InsertOpts{Queue: TitleQueue, MaxAttempts: 3})
+		if err != nil {
+			h.logger.WarnContext(ctx, "enqueue session title", "session_uuid", source.SessionUUID, "error", fmt.Sprintf("%T", err))
+		}
 		return err
 	}
 	river.AddWorker(workers, &sessionTitleWorker{

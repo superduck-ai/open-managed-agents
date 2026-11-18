@@ -287,7 +287,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		return fmt.Errorf("start River workers: %w", err)
 	}
 	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), riverjobs.SoftStopTimeout+5*time.Second)
 		defer cancel()
 		if err := jobClient.Stop(stopCtx); err != nil {
 			logger.Error("stop River workers", "error", err)

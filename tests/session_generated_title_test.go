@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
@@ -63,7 +65,7 @@ func TestSessionGeneratedTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.server.Config.Handler.(*api.Server).RegisterSessionTitleWorker(workers, client)
-	if err := client.Start(ctx); err != nil {
+	if err := client.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -89,6 +91,7 @@ func TestSessionGeneratedTitle(t *testing.T) {
 		t.Fatal("new session already has a title")
 	}
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	seedTitleTestChildMessage(t, app, codeSessionID, session.ID)
 	stream := openGeneratedTitleStream(t, ctx, app, session.ID)
 	defer stream.Close()
 	sendSessionEvents(t, app, session.ID, `{"events":[`+message+`]}`, defaultTestKey)
@@ -103,9 +106,8 @@ func TestSessionGeneratedTitle(t *testing.T) {
 	if pending := retrieveSession(t, app, session.ID, defaultTestKey); pending.Title != nil {
 		t.Fatal("title was set before the model completed")
 	}
-	queued, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
-	if err != nil || len(queued) == 0 {
-		t.Fatalf("first input did not reach the Agent queue: %v", err)
+	if count := countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", "帮我排查会话延迟"); count != 1 {
+		t.Fatalf("first input appeared %d times in the Agent queue, want one", count)
 	}
 	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Later message"}]}]}`, defaultTestKey)
 	close(releaseModel)
@@ -137,6 +139,15 @@ func TestSessionGeneratedTitle(t *testing.T) {
 	listedJobs, err = client.JobList(ctx, river.NewJobListParams().Kinds(sessions.TitleQueue))
 	if err != nil || len(listedJobs.Jobs) != 1 {
 		t.Fatalf("first and later inputs queued unexpected title jobs: %v, %v", listedJobs, err)
+	}
+
+	removeFailure := installWebhookMutationFailure(t, app, "river_job", "INSERT", "NEW.kind = 'session_title'")
+	defer removeFailure()
+	unnamed := createSession(t, app, sessionBody+`}`)
+	workerID := launchLocalCodeSession(t, app, unnamed.ID)
+	sendSessionEvents(t, app, unnamed.ID, `{"events":[`+message+`]}`, defaultTestKey)
+	if count := countQueuedCodeSessionInboundEvents(app, workerID, "user", "帮我排查会话延迟"); count != 1 {
+		t.Fatalf("title queue failure prevented input delivery: got %d queued inputs, want one", count)
 	}
 }
 
@@ -181,4 +192,31 @@ func expectGeneratedTitleEvent(t *testing.T, stream io.Reader) {
 		}
 	}
 	t.Fatalf("stream ended before the title was delivered: %v", scanner.Err())
+}
+
+func seedTitleTestChildMessage(t *testing.T, app *testApp, codeSessionID, sessionID string) {
+	t.Helper()
+	ctx := t.Context()
+	code, found, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("load test code session: found=%t, %v", found, err)
+	}
+	primary, found, err := app.db.GetPrimarySessionThread(ctx, code.WorkspaceUUID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("load primary thread: found=%t, %v", found, err)
+	}
+	child := primary
+	child.UUID, child.ExternalID = uuid.NewV4().String(), "thread_"+uuid.NewV4().String()
+	child.ParentThreadUUID, child.ParentThreadExternalID = new(primary.UUID), new(primary.ExternalID)
+	if _, err := app.db.CreateSessionThreadIfAbsent(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := app.db.AppendSessionEventsIfAbsent(ctx, code.WorkspaceUUID, sessionID, []db.SessionEvent{{
+		UUID: uuid.NewV4().String(), ExternalID: "sevt_" + uuid.NewV4().String(),
+		EventType: "user.message", ThreadExternalID: &child.ExternalID, CreatedAt: time.Now(),
+		Payload: []byte(`{"type":"user.message","content":[{"type":"text","text":"Child task prompt"}]}`),
+	}})
+	if err != nil || len(changes.Events) != 1 {
+		t.Fatalf("persist child thread history: %d events, %v", len(changes.Events), err)
+	}
 }

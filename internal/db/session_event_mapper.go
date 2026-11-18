@@ -59,6 +59,9 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	BeginTitleEnqueue(ctx context.Context) error
+	RollbackTitleEnqueue(ctx context.Context) error
+	ReleaseTitleEnqueue(ctx context.Context) error
 	FirstUserMessageUUID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID, eventUUID string) (sessionEventRow, error)
 	HasAcceptedToolControl(ctx context.Context, workspaceUUID, sessionExternalID, publicID, historyID string) (bool, error)

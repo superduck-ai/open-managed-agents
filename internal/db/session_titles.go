@@ -25,15 +25,21 @@ func enqueueFirstSessionTitle(ctx context.Context, executor yourbatis.Executor, 
 	if index < 0 {
 		return nil
 	}
-	firstUUID, err := NewSessionEventMapper(executor).FirstUserMessageUUID(ctx, session.WorkspaceUUID, session.ExternalID)
+	mapper := NewSessionEventMapper(executor)
+	firstUUID, err := mapper.FirstUserMessageUUID(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil || firstUUID != events[index].UUID {
 		return err
 	}
-	return enqueue(ctx, executor.(*yourbatis.Tx).SQLTx(), SessionTitleSource{
-		WorkspaceUUID: session.WorkspaceUUID,
-		SessionUUID:   session.UUID,
-		EventUUID:     firstUUID,
-	})
+	if err := mapper.BeginTitleEnqueue(ctx); err != nil {
+		return err
+	}
+	source := SessionTitleSource{WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID, EventUUID: firstUUID}
+	if err := enqueue(ctx, executor.(*yourbatis.Tx).SQLTx(), source); err != nil {
+		if rollbackErr := mapper.RollbackTitleEnqueue(ctx); rollbackErr != nil {
+			return errors.Join(err, rollbackErr)
+		}
+	}
+	return mapper.ReleaseTitleEnqueue(ctx)
 }
 
 func (s Session) NeedsTitle() bool {

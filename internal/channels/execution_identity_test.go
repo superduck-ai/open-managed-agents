@@ -24,70 +24,61 @@ func TestTopicsShareRoomKindAndIsolateSessionKeys(t *testing.T) {
 	}
 }
 
-func TestIdentityHistoryRejectsHeldAndStaleMount(t *testing.T) {
-	worker := &channelWorker{supervisor: &runtimeSupervisor{ingress: holdIngress{}}}
+func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
+	decision := identities.Decision{Mode: "execute", AgentExternalID: "agent_paired", AgentVersion: 4, IdentityUUID: "identity-uuid",
+		IdentityExternalID: "idn_a", BindingRevision: 2, ConfigRevision: 3, PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}}
+	store := &fakeRuntimeStore{identityBinding: db.SessionIdentityRecord{IdentityUUID: decision.IdentityUUID, ChannelExternalID: "chn_1",
+		ScopeKey: "chat:user", BindingRevision: decision.BindingRevision}}
+	lookups := 0
+	worker := &channelWorker{record: db.ChannelRecord{ExternalID: "chn_1", AgentExternalID: "agent_default", ChannelType: "feishu", AppID: "app"},
+		supervisor: &runtimeSupervisor{
+			store: store, ingress: fixedIngress{decision: decision},
+			agentEnvironment: func(_ context.Context, _, _, agent string) (string, error) {
+				if agent != "agent_paired" {
+					t.Fatalf("恢复使用了默认 Agent：%s", agent)
+				}
+				return "env_current", nil
+			},
+			personalVault: func(context.Context, db.ChannelRecord, string) (string, error) {
+				t.Fatal("读取历史创建了个人 Vault")
+				return "", nil
+			},
+			personalVaultLookup: func(context.Context, db.ChannelRecord, string) (string, bool, error) {
+				lookups++
+				return "vlt_new", true, nil
+			},
+		},
+	}
 	msg := &channelMessage{ChatType: "p2p", ChatID: "user", UserID: "user"}
-	if worker.identitySessionOK(context.Background(), msg, "chat:user", omaSession{}) {
-		t.Fatal("held execution stayed recoverable")
+	target, err := worker.resolveRecoveryTarget(t.Context(), msg, "chat:user")
+	if err != nil {
+		t.Fatal(err)
 	}
-	decision := identities.Decision{
-		Mode: "execute", AgentExternalID: "agent_a", IdentityExternalID: "idn_a", BindingRevision: 2, ConfigRevision: 3,
-		PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}, ScopeKey: "chat:user",
+	session := omaSession{ID: "sesn_1", Status: "idle", Agent: omaSessionAgent{ID: "agent_paired", Version: 4}, EnvironmentID: "env_current", VaultIDs: []string{"vlt_new"},
+		Metadata: map[string]string{"source": "feishu", "app_id": "app", "channel_id": "chn_1", "credential_binding_mode": "first_vault",
+			"agent_version": "4", "identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
 	}
-	worker.supervisor.ingress = fixedIngress{decision: decision}
-	worker.supervisor.agentEnvironment = func(context.Context, string, string, string) (string, error) {
-		return "env_1", nil
+	if !worker.recoverableSession(t.Context(), session, "chat:user", "", target) || lookups != 1 {
+		t.Fatal("当前配对会话不可恢复，或重复读取 Vault")
 	}
-	current := omaSession{
-		Agent: omaSessionAgent{ID: "agent_a"}, EnvironmentID: "env_1", VaultIDs: []string{"vlt_new"},
-		Metadata: map[string]string{"identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
-	}
-	if !worker.identitySessionOK(context.Background(), msg, "chat:user", current) {
-		t.Fatal("current mount was rejected")
-	}
-	current.Metadata["personal_vault_id"] = "vlt_old"
-	if worker.identitySessionOK(context.Background(), msg, "chat:user", current) {
-		t.Fatal("old vault was accepted")
-	}
-	worker.supervisor.ingress = nil
-	if !worker.identitySessionOK(context.Background(), msg, "chat:user", current) {
-		t.Fatal("legacy session was rejected")
-	}
-}
-
-func TestResumeUsesAgentEnvironmentAndPreviewSkipsVaultCreate(t *testing.T) {
-	decision := identities.Decision{
-		Mode: "execute", AgentExternalID: "agent_a", IdentityExternalID: "idn_a", BindingRevision: 2, ConfigRevision: 3,
-		PersonalVaultID: "vlt_new", VaultIDs: []string{"vlt_new"}, ScopeKey: "chat:user",
-	}
-	created := false
-	worker := &channelWorker{supervisor: &runtimeSupervisor{
-		ingress: fixedIngress{decision: decision},
-		agentEnvironment: func(context.Context, string, string, string) (string, error) {
-			return "env_current", nil
-		},
-		personalVault: func(context.Context, db.ChannelRecord, string) (string, error) {
-			created = true
-			return "vlt_created", nil
-		},
-		personalVaultLookup: func(context.Context, db.ChannelRecord, string) (string, bool, error) {
-			return "vlt_existing", false, nil
-		},
-	}}
-	msg := &channelMessage{ChatType: "p2p", ChatID: "user", UserID: "user"}
-	session := omaSession{
-		Agent: omaSessionAgent{ID: "agent_a"}, EnvironmentID: "env_old", VaultIDs: []string{"vlt_new"},
-		Metadata: map[string]string{"identity_id": "idn_a", "binding_revision": "2", "config_revision": "3", "personal_vault_id": "vlt_new", "scope_id": "chat:user"},
-	}
-	if worker.identitySessionOK(context.Background(), msg, "chat:user", session) {
-		t.Fatal("stale environment stayed recoverable")
-	}
-	if created {
-		t.Fatal("preview created a personal vault")
+	session.EnvironmentID = "env_old"
+	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+		t.Fatal("旧执行环境可恢复")
 	}
 	session.EnvironmentID = "env_current"
-	if !worker.identitySessionOK(context.Background(), msg, "chat:user", session) {
-		t.Fatal("current environment was rejected")
+	worker.record.Mounts = `{"memory_store_id":"mem_new"}`
+	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+		t.Fatal("资源配置变化后复用了旧会话")
+	}
+	worker.record.Mounts = ""
+	store.identityBinding = db.SessionIdentityRecord{}
+	if worker.recoverableSession(t.Context(), session, "chat:user", "", target) {
+		t.Fatal("无正式身份绑定的会话可恢复")
+	}
+	worker.supervisor.ingress = holdIngress{}
+	held, err := worker.resolveRecoveryTarget(t.Context(), msg, "chat:user")
+	if err != nil || held.decision.Mode != "hold" {
+		t.Fatalf("执行已拦截时还能恢复：%+v %v", held, err)
 	}
 }
 
@@ -128,7 +119,6 @@ func (holdIngress) Resolve(context.Context, identities.Ingress) (identities.Deci
 func (holdIngress) Preview(context.Context, identities.Ingress) (identities.Decision, error) {
 	return identities.Decision{Mode: "hold", Notice: "held"}, nil
 }
-func (holdIngress) BindSession(context.Context, identities.SessionBind) error { return nil }
 func (holdIngress) ObserveConnection(context.Context, string, string, string) error {
 	return nil
 }
@@ -150,7 +140,6 @@ func (f fixedIngress) Resolve(context.Context, identities.Ingress) (identities.D
 func (f fixedIngress) Preview(context.Context, identities.Ingress) (identities.Decision, error) {
 	return f.decision, nil
 }
-func (fixedIngress) BindSession(context.Context, identities.SessionBind) error { return nil }
 func (fixedIngress) ObserveConnection(context.Context, string, string, string) error {
 	return nil
 }

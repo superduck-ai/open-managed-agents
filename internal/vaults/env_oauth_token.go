@@ -1,6 +1,7 @@
 package vaults
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,7 +160,7 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	var provider EnvOAuthProviderSnapshot
 	if publicAuth.CustomProvider != nil {
 		definition := publicAuth.CustomProvider
-		provider = EnvOAuthProviderSnapshot{TokenEndpoint: definition.TokenEndpoint, ClientID: definition.ClientID, ClientSecret: secret.ClientSecret, TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "form"}
+		provider = EnvOAuthProviderSnapshot{TokenEndpoint: definition.TokenEndpoint, ClientID: definition.ClientID, ClientSecret: secret.ClientSecret, TokenEndpointAuthMethod: cmp.Or(definition.TokenEndpointAuthMethod, "client_secret_post"), TokenEndpointEncoding: "form"}
 	} else {
 		if r.providers == nil {
 			return "", errors.Join(ErrEnvOAuthProviderUnavailable, errEnvOAuthRefreshUnavailable)

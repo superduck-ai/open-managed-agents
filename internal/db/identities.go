@@ -246,12 +246,6 @@ func (d *DB) ClaimPersonalIdentityByActor(ctx context.Context, organizationUUID,
 	return NewIdentityMapper(d.mapperDB).UpsertActorLink(ctx, organizationUUID, workspaceUUID, channelType, appID, actorID, identityUUID)
 }
 
-func (d *DB) BindSessionIdentity(ctx context.Context, params InsertSessionIdentityParams) error {
-	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		return bindSessionIdentityTx(ctx, executor, params)
-	})
-}
-
 func bindSessionIdentityTx(ctx context.Context, executor yourbatis.Executor, params InsertSessionIdentityParams) error {
 	mapper := NewIdentityMapper(executor)
 	count, err := mapper.SetSessionIdentity(ctx, params.WorkspaceUUID, params.SessionExternalID, params.IdentityUUID)

@@ -246,6 +246,16 @@ func NewServer(deps ServerDeps) *Server {
 		tunnelBroker:      deps.TunnelBroker,
 	}
 	channelService.WithSessionEvents(s.subscribeChannelEvents).WithSessionAttachments(s.putChannelAttachment)
+	channelService.WithIdentitySessionCreator(func(ctx context.Context, apiKey string, payload []byte, binding db.InsertSessionIdentityParams) (string, error) {
+		principal, found, apiErr := s.authenticateWorkspaceAPIKeyContext(ctx, apiKey)
+		if apiErr != nil {
+			return "", apiErr
+		}
+		if !found {
+			return "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		}
+		return s.sessions.CreateChannelSession(ctx, principal, payload, binding)
+	})
 	s.codeSessions.WithOAuthCredentials(s.sessions.WaitForOAuthCredential)
 	channelService.WithOAuthProviders(envOAuthProviders, s.startChannelMCPOAuth)
 	if deps.SandboxLifecycle != nil {

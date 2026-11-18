@@ -112,6 +112,7 @@ type sendEventsResponse struct {
 }
 
 type sessionCreateRequest struct {
+	identityBinding *db.InsertSessionIdentityParams
 	sessionMutationRequest
 	InitialEvents json.RawMessage `json:"initial_events"`
 	IdentityID    json.RawMessage `json:"identity_id"`

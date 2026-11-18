@@ -217,11 +217,11 @@ type ListSessionThreadsPageParams struct {
 }
 
 type CreateSessionInput struct {
-	ConsoleIdentityUUID string
-	Session             Session
-	Thread              SessionThread
-	Resources           []CreateSessionResourceInput
-	Work                EnvironmentWork
+	IdentityBinding *InsertSessionIdentityParams
+	Session         Session
+	Thread          SessionThread
+	Resources       []CreateSessionResourceInput
+	Work            EnvironmentWork
 }
 
 // CreateSessionResourceInput contains the normalized resource row and its

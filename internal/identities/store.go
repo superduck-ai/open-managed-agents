@@ -36,7 +36,6 @@ type Store interface {
 	FindPersonalIdentityByActor(context.Context, string, string, string, string, string) (db.IdentityRecord, error)
 	IsPersonalIdentity(context.Context, string, string) (bool, error)
 	ClaimPersonalIdentityByActor(context.Context, string, string, string, string, string, string) error
-	BindSessionIdentity(context.Context, db.InsertSessionIdentityParams) error
 	FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error)
 	ListIdentitySessions(context.Context, string, string, int) ([]db.SessionIdentityRecord, error)
 	BusinessIdentityStats(context.Context, string, string, *time.Time) (db.IdentityStatsRecord, error)

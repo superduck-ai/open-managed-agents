@@ -44,6 +44,11 @@ func (s *Service) PutConfig(ctx context.Context, principal auth.Principal, ident
 	if err != nil {
 		return db.IdentityConfigRecord{}, err
 	}
+	for _, value := range patch.Env {
+		if value != nil {
+			return db.IdentityConfigRecord{}, invalid("执行身份暂不支持环境变量覆盖，请在原生执行环境中配置", nil)
+		}
+	}
 	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, agentID, 0); err != nil {
 		return db.IdentityConfigRecord{}, err
 	}
@@ -113,6 +118,7 @@ func (s *Service) Effective(ctx context.Context, principal auth.Principal, ident
 	if version > 0 {
 		base.Version = version
 	}
+	state.Env = nil
 	return CompileEffective(base, state, revision, identity.AutoMemoryStore), nil
 }
 

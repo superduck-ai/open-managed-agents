@@ -164,18 +164,12 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 		}
 		return s.startMCPOAuth(ctx, target)
 	}
-	provider, err := s.oauthProviders.ResolveEnvOAuthProvider(ctx, target.Request.Provider)
-	if err != nil {
-		return "", err
-	}
-	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
-		return "", errors.New("目标服务的个人 OAuth 配置不可用")
-	}
 	credentials, _, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{WorkspaceUUID: flow.WorkspaceUUID, VaultExternalID: target.Vault.ExternalID, Limit: 50})
 	if err != nil {
 		return "", err
 	}
 	credentialID := ""
+	var selected *db.VaultCredential
 	for _, credential := range credentials {
 		if credential.AuthType != "env_oauth" || credential.CredentialKey != target.Request.SecretName {
 			continue
@@ -185,6 +179,19 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 			return "", errors.New("目标变量已有其他服务的连接")
 		}
 		credentialID = credential.ExternalID
+		selected = new(credential)
+	}
+	var provider vaults.EnvOAuthProviderSnapshot
+	if selected != nil {
+		provider, err = vaults.ResolveEnvOAuthCredentialProvider(ctx, s.supervisor.cipher, *selected, s.oauthProviders)
+	} else {
+		provider, err = s.oauthProviders.ResolveEnvOAuthProvider(ctx, target.Request.Provider)
+	}
+	if err != nil {
+		return "", err
+	}
+	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
+		return "", errors.New("目标服务的个人 OAuth 配置不可用")
 	}
 	_, link, err := oauthflows.CreateEnv(ctx, s.store, s.supervisor.cipher, provider, db.EnvOAuthFlow{
 		OrganizationUUID: flow.OrganizationUUID, WorkspaceUUID: flow.WorkspaceUUID,

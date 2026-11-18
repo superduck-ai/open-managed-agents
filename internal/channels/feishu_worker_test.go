@@ -23,6 +23,7 @@ import (
 )
 
 type fakeRuntimeStore struct {
+	identityBinding db.SessionIdentityRecord
 	mu              sync.Mutex
 	record          db.ChannelRecord
 	bindings        map[string]string
@@ -36,6 +37,13 @@ type fakeRuntimeStore struct {
 	credential      string
 	credentialErr   error
 	env             string
+}
+
+func (f *fakeRuntimeStore) FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error) {
+	if f.identityBinding.IdentityUUID == "" {
+		return db.SessionIdentityRecord{}, db.ErrNotFound
+	}
+	return f.identityBinding, nil
 }
 
 func (f *fakeRuntimeStore) GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error) {

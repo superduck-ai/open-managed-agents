@@ -45,6 +45,7 @@ type runtimeStore interface {
 	ListChannelReplyDeliveries(context.Context, db.ChannelDeliveryScope) ([]db.ChannelReplyDelivery, error)
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
 	GetChannelSessionBinding(context.Context, string, string) (string, error)
+	FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error)
 	SetChannelSessionBinding(context.Context, string, string, string) error
 	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
@@ -55,22 +56,23 @@ type runtimeStore interface {
 }
 
 type runtimeSupervisor struct {
-	personalVault       func(context.Context, db.ChannelRecord, string) (string, error)
-	personalVaultLookup func(context.Context, db.ChannelRecord, string) (string, bool, error)
-	agentEnvironment    func(context.Context, string, string, string) (string, error)
-	oauthOrigin         string
-	fileMaxBytes        int64
-	putAttachment       SessionAttachmentWriter
-	subscribeEvents     SessionEventSubscriber
-	adapters            map[string]channelAdapterFactory
-	store               runtimeStore
-	cipher              *secrets.Service
-	oma                 *omaClient
-	logger              *slog.Logger
-	mu                  sync.Mutex
-	workers             map[string]*channelWorker
-	shutdown            chan struct{}
-	ingress             identityIngress
+	createIdentitySession func(context.Context, string, []byte, db.InsertSessionIdentityParams) (string, error)
+	personalVault         func(context.Context, db.ChannelRecord, string) (string, error)
+	personalVaultLookup   func(context.Context, db.ChannelRecord, string) (string, bool, error)
+	agentEnvironment      func(context.Context, string, string, string) (string, error)
+	oauthOrigin           string
+	fileMaxBytes          int64
+	putAttachment         SessionAttachmentWriter
+	subscribeEvents       SessionEventSubscriber
+	adapters              map[string]channelAdapterFactory
+	store                 runtimeStore
+	cipher                *secrets.Service
+	oma                   *omaClient
+	logger                *slog.Logger
+	mu                    sync.Mutex
+	workers               map[string]*channelWorker
+	shutdown              chan struct{}
+	ingress               identityIngress
 }
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {

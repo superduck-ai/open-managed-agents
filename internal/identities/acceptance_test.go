@@ -379,9 +379,6 @@ func (s *acceptanceStore) IsPersonalIdentity(context.Context, string, string) (b
 func (s *acceptanceStore) ClaimPersonalIdentityByActor(context.Context, string, string, string, string, string, string) error {
 	return nil
 }
-func (s *acceptanceStore) BindSessionIdentity(context.Context, db.InsertSessionIdentityParams) error {
-	return nil
-}
 func (s *acceptanceStore) ListIdentitySessions(context.Context, string, string, int) ([]db.SessionIdentityRecord, error) {
 	return nil, nil
 }

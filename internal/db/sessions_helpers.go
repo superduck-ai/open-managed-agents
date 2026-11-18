@@ -85,8 +85,9 @@ func insertSessionTx(
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
-	if input.ConsoleIdentityUUID != "" {
-		identity, found, err := NewIdentityMapper(executor).FindIdentityByUUID(ctx, session.WorkspaceUUID, input.ConsoleIdentityUUID)
+	if input.IdentityBinding != nil {
+		binding := *input.IdentityBinding
+		identity, found, err := NewIdentityMapper(executor).FindIdentityByUUID(ctx, session.WorkspaceUUID, binding.IdentityUUID)
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}
@@ -96,11 +97,11 @@ func insertSessionTx(
 		if !identity.Enabled {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrConsoleIdentityDisabled
 		}
-		err = bindSessionIdentityTx(ctx, executor, InsertSessionIdentityParams{
-			UUID: uuid.NewV4().String(), OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-			SessionUUID: session.UUID, SessionExternalID: session.ExternalID, IdentityUUID: input.ConsoleIdentityUUID,
-			AgentExternalID: session.AgentExternalID, ScopeKind: "console", ScopeKey: "console",
-		})
+		binding.UUID = uuid.NewV4().String()
+		binding.OrganizationUUID, binding.WorkspaceUUID = session.OrganizationUUID, session.WorkspaceUUID
+		binding.SessionUUID, binding.SessionExternalID = session.UUID, session.ExternalID
+		binding.AgentExternalID = session.AgentExternalID
+		err = bindSessionIdentityTx(ctx, executor, binding)
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}

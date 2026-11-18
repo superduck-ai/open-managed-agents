@@ -35,6 +35,10 @@ func (w *channelWorker) compatibleMounts(session omaSession, personalID string) 
 	if !slices.Equal(mounts.VaultIDs, session.VaultIDs) {
 		return false
 	}
+	return w.compatibleResources(session, mounts)
+}
+
+func (w *channelWorker) compatibleResources(session omaSession, mounts channelMounts) bool {
 	configured, err := configuredChannelResources(w.record)
 	if err != nil {
 		return false

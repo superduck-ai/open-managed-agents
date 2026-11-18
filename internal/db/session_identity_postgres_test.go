@@ -10,7 +10,19 @@ import (
 	"uuid"
 )
 
-func TestCreateConsoleSessionIdentityIsAtomicPostgres(t *testing.T) {
+func TestCreateSessionIdentityIsAtomicPostgres(t *testing.T) {
+	t.Run("控制台", func(t *testing.T) {
+		testCreateSessionIdentityIsAtomic(t, InsertSessionIdentityParams{ScopeKind: "console", ScopeKey: "console"})
+	})
+	t.Run("渠道", func(t *testing.T) {
+		testCreateSessionIdentityIsAtomic(t, InsertSessionIdentityParams{
+			ScopeKind: "direct", ScopeKey: "p2p:actor", ChannelExternalID: "chnl_atomic", BindingRevision: 2,
+		})
+	})
+}
+
+func testCreateSessionIdentityIsAtomic(t *testing.T, bindingParams InsertSessionIdentityParams) {
+	t.Helper()
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	fixture := devIdentityFixture()
 	if err := store.CreateDevIdentity(ctx, fixture); err != nil {
@@ -26,8 +38,9 @@ func TestCreateConsoleSessionIdentityIsAtomicPostgres(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	empty := json.RawMessage("{}")
+	bindingParams.IdentityUUID = identity.UUID
 	input := CreateSessionInput{
-		ConsoleIdentityUUID: identity.UUID,
+		IdentityBinding: &bindingParams,
 		Session: Session{
 			UUID: uuid.NewV4().String(), ExternalID: "sesn_console_atomic", OrganizationUUID: org, WorkspaceUUID: workspace,
 			EnvironmentUUID: uuid.NewV4().String(), EnvironmentExternalID: "env_console_atomic", AgentUUID: uuid.NewV4().String(),
@@ -66,7 +79,9 @@ func TestCreateConsoleSessionIdentityIsAtomicPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding, err := store.FindSessionIdentity(ctx, workspace, input.Session.ExternalID)
-	if err != nil || binding.IdentityUUID != identity.UUID || binding.ScopeKind != "console" {
+	if err != nil || binding.IdentityUUID != identity.UUID || binding.ScopeKind != bindingParams.ScopeKind ||
+		binding.ScopeKey != bindingParams.ScopeKey || binding.ChannelExternalID != bindingParams.ChannelExternalID ||
+		binding.BindingRevision != bindingParams.BindingRevision {
 		t.Fatalf("会话和任务提交后应已带身份绑定：%+v，错误=%v", binding, err)
 	}
 }

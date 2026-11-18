@@ -24,23 +24,24 @@ import (
 // Handler 是 code-session 的 HTTP transport 边界。
 // 它持有协议相关的鉴权、代理连接和日志状态；业务状态与业务编排统一委托给 Service。
 type Handler struct {
-	oauthCredentials       OAuthCredentialWaiter
-	prepareEnvOAuth        func(context.Context, db.VaultCredential) error
-	toolCallNotifications  *nats.Conn
-	cfg                    config.Config
-	db                     *db.DB
-	service                *Service
-	logger                 *slog.Logger
-	errorAdapter           *httpapi.ErrorAdapter
-	sandboxTimeoutExtender SandboxTimeoutExtender
-	sandboxRenewals        sandboxRenewals
-	sandboxEnsures         singleflight.Group
-	upstreamProxy          upstreamProxyRuntime
-	mcpProxyTransport      http.RoundTripper
-	wrapMCPVaultTransport  mcpProxyTransportWrapper
-	mitmEgress             *vaults.MITMEgress
-	envOAuthProviders      vaults.EnvOAuthProviderDirectory
-	tunnelInvoker          TunnelInvoker
+	oauthCredentials          OAuthCredentialWaiter
+	prepareEnvOAuth           func(context.Context, db.VaultCredential) error
+	resolveEnvOAuthCredential func(context.Context, db.VaultCredential) (vaults.EnvOAuthProviderSnapshot, error)
+	toolCallNotifications     *nats.Conn
+	cfg                       config.Config
+	db                        *db.DB
+	service                   *Service
+	logger                    *slog.Logger
+	errorAdapter              *httpapi.ErrorAdapter
+	sandboxTimeoutExtender    SandboxTimeoutExtender
+	sandboxRenewals           sandboxRenewals
+	sandboxEnsures            singleflight.Group
+	upstreamProxy             upstreamProxyRuntime
+	mcpProxyTransport         http.RoundTripper
+	wrapMCPVaultTransport     mcpProxyTransportWrapper
+	mitmEgress                *vaults.MITMEgress
+	envOAuthProviders         vaults.EnvOAuthProviderDirectory
+	tunnelInvoker             TunnelInvoker
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
@@ -144,6 +145,9 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 	}
 	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
 	h.prepareEnvOAuth = injector.PrepareEnvOAuthCredential
+	h.resolveEnvOAuthCredential = func(ctx context.Context, credential db.VaultCredential) (vaults.EnvOAuthProviderSnapshot, error) {
+		return vaults.ResolveEnvOAuthCredentialProvider(ctx, secretSvc, credential, h.envOAuthProviders)
+	}
 	return h
 }
 

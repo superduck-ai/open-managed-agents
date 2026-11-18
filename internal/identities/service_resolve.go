@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -42,24 +41,8 @@ type Decision struct {
 	ConfigRevision     int64
 	VaultIDs           []string
 	PersonalVaultID    string
-	Env                map[string]string
 	ScopeKind          string
 	ScopeKey           string
-}
-
-type SessionBind struct {
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	SessionUUID       string
-	SessionExternalID string
-	IdentityUUID      string
-	AgentExternalID   string
-	BindingRevision   int64
-	ConfigRevision    int64
-	PersonalVaultID   string
-	ScopeKind         string
-	ScopeKey          string
-	ChannelExternalID string
 }
 
 func (s *Service) Resolve(ctx context.Context, ingress Ingress) (Decision, error) {
@@ -189,7 +172,7 @@ func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity 
 	return Decision{
 		Mode: "execute", AgentExternalID: agentID, AgentVersion: version, IdentityUUID: identity.UUID,
 		IdentityExternalID: identity.ExternalID, BindingRevision: bindingRevision, ConfigRevision: revision,
-		VaultIDs: credentials.VaultIDs, PersonalVaultID: credentials.PersonalVaultID, Env: state.Env,
+		VaultIDs: credentials.VaultIDs, PersonalVaultID: credentials.PersonalVaultID,
 		ScopeKind: scopeKind, ScopeKey: ingress.ScopeKey,
 	}, nil
 }
@@ -231,29 +214,6 @@ func (s *Service) ObserveConnection(ctx context.Context, workspaceUUID, channelE
 		return nil
 	}
 	return err
-}
-
-func (s *Service) BindSession(ctx context.Context, bind SessionBind) error {
-	if bind.IdentityUUID == "" || bind.SessionExternalID == "" {
-		return nil
-	}
-	if bind.SessionUUID == "" {
-		session, found, err := s.store.GetSession(ctx, bind.WorkspaceUUID, bind.SessionExternalID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return db.ErrNotFound
-		}
-		bind.SessionUUID = session.UUID
-	}
-	return s.store.BindSessionIdentity(ctx, db.InsertSessionIdentityParams{
-		UUID: uuid.NewString(), OrganizationUUID: bind.OrganizationUUID, WorkspaceUUID: bind.WorkspaceUUID,
-		SessionUUID: bind.SessionUUID, SessionExternalID: bind.SessionExternalID, IdentityUUID: bind.IdentityUUID,
-		AgentExternalID: bind.AgentExternalID, BindingRevision: bind.BindingRevision, ConfigRevision: bind.ConfigRevision,
-		PersonalVaultID: bind.PersonalVaultID, ScopeKind: bind.ScopeKind, ScopeKey: bind.ScopeKey,
-		ChannelExternalID: bind.ChannelExternalID,
-	})
 }
 
 func (s *Service) ExecutionView(ctx context.Context, workspaceUUID, channelExternalID string) (map[string]any, error) {

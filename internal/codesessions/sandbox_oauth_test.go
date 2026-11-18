@@ -43,7 +43,7 @@ func TestSandboxOAuthMatchesConfiguredClient(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := &Handler{envOAuthProviders: sandboxOAuthDirectory{test.providers}}
-			got, err := h.resolveSandboxOAuthProvider(t.Context(), test.workspace, input)
+			got, err := h.resolveSandboxOAuthProvider(t.Context(), input, nil)
 			if (err == nil) != test.valid || test.valid && got.ProviderKey != provider.ProviderKey {
 				t.Fatalf("客户端匹配错误：%v", err)
 			}

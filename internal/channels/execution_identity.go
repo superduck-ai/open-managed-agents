@@ -19,7 +19,6 @@ type identityIngress interface {
 	ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error
 	Resolve(context.Context, identities.Ingress) (identities.Decision, error)
 	Preview(context.Context, identities.Ingress) (identities.Decision, error)
-	BindSession(context.Context, identities.SessionBind) error
 	ObserveConnection(context.Context, string, string, string) error
 	ExecutionView(context.Context, string, string) (map[string]any, error)
 	ResolveChannelIdentity(context.Context, auth.Principal, string) (string, error)
@@ -50,7 +49,7 @@ func (w *channelWorker) observeOnline(online bool) {
 }
 
 func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessage, scopeKey string, create bool) (identities.Decision, error) {
-	if w.supervisor.ingress == nil {
+	if create && w.supervisor.ingress == nil {
 		return identities.Decision{Mode: "legacy"}, nil
 	}
 	personalID := ""
@@ -81,7 +80,17 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 	if create {
 		return w.supervisor.ingress.Resolve(ctx, ingress)
 	}
-	return w.supervisor.ingress.Preview(ctx, ingress)
+	if !personalActive {
+		personalID = ""
+	}
+	if w.supervisor.ingress == nil {
+		return identities.Decision{Mode: "legacy", PersonalVaultID: personalID}, nil
+	}
+	decision, err := w.supervisor.ingress.Preview(ctx, ingress)
+	if decision.Mode == "legacy" {
+		decision.PersonalVaultID = personalID
+	}
+	return decision, err
 }
 
 func channelIngress(record db.ChannelRecord, msg *channelMessage, scopeKey string) identities.Ingress {
@@ -112,7 +121,13 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 			return "", sessionErr
 		}
 		if session.ArchivedAt == nil && w.decisionCompatible(session, decision, environmentID, scopeKey) {
-			return sessionID, nil
+			bound, err := w.sessionIdentityBound(ctx, session.ID, decision, scopeKey)
+			if err != nil {
+				return "", err
+			}
+			if bound {
+				return sessionID, nil
+			}
 		}
 	}
 	resources, err := channelSessionResources(ctx, w.supervisor.cipher, w.record)
@@ -134,26 +149,34 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	if decision.AgentVersion > 0 {
 		metadata["agent_version"] = strconv.Itoa(decision.AgentVersion)
 	}
-	version := decision.AgentVersion
-	created, err := w.supervisor.oma.createSession(ctx, apiKey, decision.AgentExternalID, version, environmentID, channelSessionTitle(msg.Content), metadata, resources.Resources, resources.VaultIDs)
+	if w.supervisor.createIdentitySession == nil {
+		return "", errors.New("渠道身份会话创建服务未配置")
+	}
+	body, err := json.Marshal(sessionCreationBody(decision.AgentExternalID, decision.AgentVersion, environmentID, channelSessionTitle(msg.Content), metadata, resources.Resources, resources.VaultIDs))
+	if err != nil {
+		return "", err
+	}
+	created, err := w.supervisor.createIdentitySession(ctx, apiKey, body, db.InsertSessionIdentityParams{
+		IdentityUUID: decision.IdentityUUID, BindingRevision: decision.BindingRevision, ConfigRevision: decision.ConfigRevision,
+		PersonalVaultID: decision.PersonalVaultID, ScopeKind: decision.ScopeKind, ScopeKey: scopeKey,
+		ChannelExternalID: w.record.ExternalID,
+	})
 	if err != nil {
 		return "", err
 	}
 	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created); err != nil {
 		return "", err
 	}
-	if w.supervisor.ingress != nil {
-		if err := w.supervisor.ingress.BindSession(ctx, identities.SessionBind{
-			OrganizationUUID: w.record.OrganizationUUID, WorkspaceUUID: w.record.WorkspaceUUID,
-			SessionExternalID: created, IdentityUUID: decision.IdentityUUID, AgentExternalID: decision.AgentExternalID,
-			BindingRevision: decision.BindingRevision, ConfigRevision: decision.ConfigRevision,
-			PersonalVaultID: decision.PersonalVaultID, ScopeKind: decision.ScopeKind, ScopeKey: scopeKey,
-			ChannelExternalID: w.record.ExternalID,
-		}); err != nil {
-			return "", err
-		}
-	}
 	return created, nil
+}
+
+func (w *channelWorker) sessionIdentityBound(ctx context.Context, sessionID string, decision identities.Decision, scopeKey string) (bool, error) {
+	binding, err := w.supervisor.store.FindSessionIdentity(ctx, w.record.WorkspaceUUID, sessionID)
+	if errors.Is(err, db.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil && binding.IdentityUUID == decision.IdentityUUID && binding.ChannelExternalID == w.record.ExternalID &&
+		binding.ScopeKey == scopeKey && binding.BindingRevision == decision.BindingRevision, err
 }
 
 func (w *channelWorker) decisionCompatible(session omaSession, decision identities.Decision, environmentID, scopeKey string) bool {
@@ -175,28 +198,8 @@ func (w *channelWorker) decisionCompatible(session omaSession, decision identiti
 	if decision.AgentVersion > 0 && (session.Agent.Version != decision.AgentVersion || session.Metadata["agent_version"] != strconv.Itoa(decision.AgentVersion)) {
 		return false
 	}
-	return slices.Equal(session.VaultIDs, decision.VaultIDs)
-}
-
-func (w *channelWorker) identitySessionOK(ctx context.Context, msg *channelMessage, scopeKey string, session omaSession) bool {
-	if w.supervisor.ingress == nil {
-		return true
-	}
-	decision, err := w.executionDecision(ctx, msg, scopeKey, false)
-	if err != nil || decision.Mode == "hold" {
-		return false
-	}
-	if decision.Mode != "execute" {
-		return session.Metadata["identity_id"] == ""
-	}
-	if w.supervisor.agentEnvironment == nil {
-		return false
-	}
-	environmentID, err := w.supervisor.agentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, decision.AgentExternalID)
-	if err != nil {
-		return false
-	}
-	return w.decisionCompatible(session, decision, environmentID, scopeKey)
+	return session.Metadata["credential_binding_mode"] == "first_vault" && slices.Equal(session.VaultIDs, decision.VaultIDs) &&
+		w.compatibleResources(session, parseChannelMounts(w.record.Mounts))
 }
 
 func (s *localService) attachExecution(ctx context.Context, view map[string]any, record db.ChannelRecord) error {

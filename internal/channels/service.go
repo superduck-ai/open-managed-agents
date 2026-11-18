@@ -49,6 +49,10 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 	return result
 }
 
+func (s *Service) WithIdentitySessionCreator(create func(context.Context, string, []byte, db.InsertSessionIdentityParams) (string, error)) {
+	s.supervisor.createIdentitySession = create
+}
+
 func (s *Service) AgentHandler() http.Handler {
 	return s.agent
 }

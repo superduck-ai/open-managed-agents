@@ -117,3 +117,16 @@ test('a late metadata response cannot overwrite the title from a newer update', 
   await act(async () => finishOld?.(Response.json(session('sesn_title', 'Old title'))));
   expect(hook.result.current.session?.title).toBe('Newer canonical title');
 });
+
+test('recovers the generated title after one failed metadata read', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    if (requests === 1) return Response.json({ error: { message: 'Unavailable' } }, { status: 503 });
+    return Response.json(session('sesn_title', 'Recovered'));
+  };
+  const hook = renderSync(session(), [{ id: 'sevt_title', type: 'session.updated', title: 'Recovered' }]);
+  await waitFor(() => expect(hook.result.current.session?.title).toBe('Recovered'));
+  expect(requests).toBe(2);
+});

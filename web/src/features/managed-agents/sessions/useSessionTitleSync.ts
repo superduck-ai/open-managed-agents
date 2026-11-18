@@ -3,6 +3,8 @@ import { retrieveManagedEntity } from '../api';
 import type { QuickstartSessionEvent, SessionApiResponse } from '../types';
 import { sessionEventKey, sessionEventType } from './sessionTraceModel';
 
+const TITLE_READ_RETRY_MS = [250, 1000];
+
 export function useSessionTitleSync(
   session: SessionApiResponse | null,
   events: QuickstartSessionEvent[],
@@ -24,18 +26,26 @@ export function useSessionTitleSync(
     if (!sessionId || !eventKey) return;
     const title = readTitle();
     let active = true;
-    void retrieveManagedEntity('sessions', sessionId, workspaceId)
-      .then((updated) => {
-        if (!active || updated.type !== 'session') return;
-        setSession((current) =>
-          current?.id === sessionId && current.title === title && current.title !== updated.title
-            ? { ...current, title: updated.title }
-            : current,
-        );
-      })
-      .catch(() => undefined);
+    let retry: number | undefined;
+    const refresh = (attempt: number) => {
+      void retrieveManagedEntity('sessions', sessionId, workspaceId)
+        .then((updated) => {
+          if (!active || updated.type !== 'session') return;
+          setSession((current) =>
+            current?.id === sessionId && current.title === title && current.title !== updated.title
+              ? { ...current, title: updated.title }
+              : current,
+          );
+        })
+        .catch(() => {
+          const delay = TITLE_READ_RETRY_MS[attempt];
+          if (active && delay !== undefined) retry = window.setTimeout(() => refresh(attempt + 1), delay);
+        });
+    };
+    refresh(0);
     return () => {
       active = false;
+      window.clearTimeout(retry);
     };
   }, [sessionId, workspaceId, eventKey, setSession]);
 }

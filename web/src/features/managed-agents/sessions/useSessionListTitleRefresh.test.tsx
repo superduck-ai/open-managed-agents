@@ -112,12 +112,18 @@ test('pauses background requests while the page is hidden', async () => {
     requests += 1;
     return Response.json({ data: [session('sesn_title', 'Generated')] });
   };
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-  const hook = renderRefresh([session()]);
-  await showPage();
-  expect(requests).toBe(0);
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
-  await showPage();
-  await waitFor(() => expect(hook.result.current[0]?.title).toBe('Generated'));
-  expect(requests).toBe(1);
+  const descriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  try {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    const hook = renderRefresh([session()]);
+    await showPage();
+    expect(requests).toBe(0);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    await showPage();
+    await waitFor(() => expect(hook.result.current[0]?.title).toBe('Generated'));
+    expect(requests).toBe(1);
+  } finally {
+    if (descriptor) Object.defineProperty(document, 'visibilityState', descriptor);
+    else Reflect.deleteProperty(document, 'visibilityState');
+  }
 });

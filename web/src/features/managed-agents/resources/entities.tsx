@@ -511,7 +511,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     section: config.section,
     loading,
     searching: sessionIdSearch.handled,
-    entities: visibleEntities,
+    entities,
     workspaceId: activeWorkspaceId,
     cursor: entityPageCursor,
     filters: managedEntityListFilters,

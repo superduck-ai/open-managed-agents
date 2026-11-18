@@ -705,7 +705,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     if (!session) return;
     await applyBudgetChange(session, usd, {
       workspaceId: activeWorkspaceId,
-      onUpdated: setSession,
+      onUpdated: (updated) =>
+        setSession((current) =>
+          current?.id === updated.id ? { ...current, usage: updated.usage, budget: updated.budget } : current,
+        ),
       onError: setMutationError,
       onBusyChange: (busy) => setBusyAction(busy ? 'budget' : null),
       toastFor: (cents) => budgetToastMessage(cents, msg),

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { I18nProvider } from '../../shared/i18n';
 
@@ -6,9 +6,15 @@ const testingLibrary = await import('@testing-library/react');
 const { LoginFlow } = await import('./LoginPage');
 
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const originalEvent = globalThis.Event;
+
+beforeEach(() => {
+  globalThis.Event = window.Event as unknown as typeof Event;
+});
 
 afterEach(() => {
   cleanup();
+  globalThis.Event = originalEvent;
 });
 
 describe('LoginFlow', () => {
@@ -252,7 +258,11 @@ describe('LoginFlow', () => {
     const slots = container.querySelectorAll('[data-slot="input-otp-slot"]');
     expect(slots.length).toBe(6);
 
-    fireEvent.input(otpInput, { target: { value: '123-456' } });
+    fireEvent.paste(otpInput, {
+      clipboardData: {
+        getData: () => '123-456',
+      },
+    });
 
     await waitFor(() => expect(verify).toHaveBeenCalledTimes(1));
     expect(verify).toHaveBeenCalledWith('ada@example.org', '123456');

@@ -7,7 +7,8 @@ import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { cn } from '@/shared/lib/utils';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/shared/ui/input-otp';
+import { REGEXP_ONLY_DIGITS } from 'input-otp';
 import { sendMagicLink, verifyMagicLink } from '../../shared/auth/api';
 import { useAuth } from '../../shared/auth/context';
 import { returnToFromSearch } from '../../shared/auth/redirects';
@@ -22,6 +23,8 @@ type LoginFlowProps = {
   onVerifyMagicLink?: (emailAddress: string, code: string) => Promise<unknown>;
   onAuthenticated: () => Promise<void> | void;
 };
+
+const otpSlotIndexes = [0, 1, 2, 3, 4, 5] as const;
 
 const topNavItems = [
   { id: 'auth.login.topNav.developerDocs', label: 'Developer Docs', path: 'overview' },
@@ -243,12 +246,35 @@ export function LoginFlow({
                       },
                     )}
                   </FieldDescription>
-                  <VerificationCodeInput
-                    disabled={isSubmitting}
+                  <InputOTP
                     id="login-code"
-                    onChange={handleCodeChange}
+                    aria-disabled={isSubmitting || undefined}
+                    autoComplete="one-time-code"
+                    autoFocus
+                    containerClassName="w-full"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(nextValue) => {
+                      if (!isSubmitting) {
+                        handleCodeChange(nextValue);
+                      }
+                    }}
+                    pasteTransformer={(pasted) => pasted.replace(/\D/g, '')}
+                    pattern={REGEXP_ONLY_DIGITS}
+                    pushPasswordManagerStrategy="none"
+                    readOnly={isSubmitting}
                     value={code}
-                  />
+                  >
+                    <InputOTPGroup className="grid w-full grid-cols-6 gap-2 sm:gap-2.5">
+                      {otpSlotIndexes.map((index) => (
+                        <InputOTPSlot
+                          key={index}
+                          index={index}
+                          className="h-12 w-full rounded-lg border-[0.5px] border-input bg-background font-mono text-base font-medium shadow-none first:rounded-lg first:border-[0.5px] last:rounded-lg data-[active=true]:border-foreground data-[active=true]:ring-[0.5px] data-[active=true]:ring-foreground"
+                        />
+                      ))}
+                    </InputOTPGroup>
+                  </InputOTP>
                 </Field>
 
                 <StatusMessage error={error} notice={notice} />
@@ -310,65 +336,6 @@ function LoginShell({ children }: { children: ReactNode }) {
       <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-5 py-6 lg:px-8">
         {children}
       </main>
-    </div>
-  );
-}
-
-function VerificationCodeInput({
-  id,
-  value,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  const [focused, setFocused] = useState(false);
-  const activeSlotIndex = Math.min(value.length, 5);
-
-  return (
-    <div className="relative">
-      <div className="grid grid-cols-6 gap-2 sm:gap-2.5" aria-hidden="true">
-        {Array.from({ length: 6 }, (_, index) => {
-          const digit = value[index] ?? '';
-          const isActive = focused && index === activeSlotIndex;
-          return (
-            <div
-              key={index}
-              data-slot="input-otp-slot"
-              data-active={isActive ? 'true' : undefined}
-              className={cn(
-                'flex h-12 items-center justify-center rounded-lg border-[0.5px] border-input bg-background font-mono text-base font-medium text-foreground transition-[border-color,box-shadow] duration-150',
-                isActive && 'border-foreground ring-[0.5px] ring-foreground',
-                disabled && 'opacity-50',
-              )}
-            >
-              {digit}
-            </div>
-          );
-        })}
-      </div>
-      <input
-        id={id}
-        data-slot="input"
-        aria-disabled={disabled || undefined}
-        autoComplete="one-time-code"
-        autoFocus
-        className="absolute inset-0 h-full w-full cursor-text border-0 bg-transparent text-transparent caret-transparent outline-none selection:bg-transparent read-only:cursor-not-allowed"
-        inputMode="numeric"
-        onBlur={() => setFocused(false)}
-        onChange={(event) => {
-          if (!disabled) {
-            onChange(event.target.value);
-          }
-        }}
-        onFocus={() => setFocused(true)}
-        readOnly={disabled}
-        type="text"
-        value={value}
-      />
     </div>
   );
 }

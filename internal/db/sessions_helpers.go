@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -83,6 +84,23 @@ func insertSessionTx(
 	workRow, err := workMapper.Insert(ctx, environmentWorkWriteParamsFrom(input.Work))
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+	}
+	if input.ConsoleIdentityUUID != "" {
+		identity, found, err := NewIdentityMapper(executor).FindIdentityByUUID(ctx, session.WorkspaceUUID, input.ConsoleIdentityUUID)
+		if err != nil {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+		}
+		if !found || identity.OrganizationUUID != session.OrganizationUUID || !identity.Enabled {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrPreconditionFailed
+		}
+		err = bindSessionIdentityTx(ctx, executor, InsertSessionIdentityParams{
+			UUID: uuid.NewV4().String(), OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
+			SessionUUID: session.UUID, SessionExternalID: session.ExternalID, IdentityUUID: input.ConsoleIdentityUUID,
+			AgentExternalID: session.AgentExternalID, ScopeKind: "console", ScopeKey: "console",
+		})
+		if err != nil {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+		}
 	}
 	return session, thread, resources, workRow.work(), nil
 }

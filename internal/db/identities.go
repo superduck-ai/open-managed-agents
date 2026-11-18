@@ -255,20 +255,24 @@ func (d *DB) UpsertIdentityActorLink(ctx context.Context, organizationUUID, work
 
 func (d *DB) BindSessionIdentity(ctx context.Context, params InsertSessionIdentityParams) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewIdentityMapper(executor)
-		count, err := mapper.SetSessionIdentity(ctx, params.WorkspaceUUID, params.SessionExternalID, params.IdentityUUID)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			return ErrNotFound
-		}
-		err = mapper.InsertSessionIdentity(ctx, params)
-		if isUniqueViolation(err) {
-			return ErrDuplicate
-		}
-		return err
+		return bindSessionIdentityTx(ctx, executor, params)
 	})
+}
+
+func bindSessionIdentityTx(ctx context.Context, executor yourbatis.Executor, params InsertSessionIdentityParams) error {
+	mapper := NewIdentityMapper(executor)
+	count, err := mapper.SetSessionIdentity(ctx, params.WorkspaceUUID, params.SessionExternalID, params.IdentityUUID)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	err = mapper.InsertSessionIdentity(ctx, params)
+	if isUniqueViolation(err) {
+		return ErrDuplicate
+	}
+	return err
 }
 
 func (d *DB) FindSessionIdentity(ctx context.Context, workspaceUUID, sessionExternalID string) (SessionIdentityRecord, error) {

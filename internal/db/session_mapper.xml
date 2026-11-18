@@ -48,7 +48,6 @@ RETURNING <include refid="columns"/>
         deployment_uuid,
         deployment_external_id,
         title,
-        title_manual,
         metadata - '_oma_runtime_user_uuid' AS metadata,
         metadata->>'_oma_runtime_user_uuid' AS runtime_user_uuid,
         vault_ids,
@@ -71,14 +70,14 @@ RETURNING <include refid="columns"/>
             uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
             environment_uuid, environment_external_id, agent_uuid, agent_external_id,
             agent_version, agent_snapshot, deployment_uuid, deployment_external_id,
-            title, title_manual, metadata, vault_ids, status, budget, usage, stats, outcome_evaluations,
+            title, metadata, vault_ids, status, budget, usage, stats, outcome_evaluations,
             created_at, updated_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID}, #{params.EnvironmentUUID}, #{params.EnvironmentExternalID},
             #{params.AgentUUID}, #{params.AgentExternalID}, #{params.AgentVersion},
             CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb), #{params.DeploymentUUID},
-            #{params.DeploymentID}, #{params.Title}, (CAST(#{params.Title} AS text) IS NOT NULL), (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+            #{params.DeploymentID}, #{params.Title}, (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
                 || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', CAST(#{params.RuntimeUserUUID} AS text))),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb), #{params.Status},
             CAST(#{params.Budget,sensitive=true} AS jsonb),
@@ -122,7 +121,6 @@ RETURNING <include refid="columns"/>
         UPDATE sessions
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             title = CASE WHEN #{params.TitleSet} THEN #{params.Title} ELSE title END,
-            title_manual = title_manual OR #{params.TitleSet},
             metadata = (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
                 || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', metadata->'_oma_runtime_user_uuid')),
             budget = CAST(#{params.Budget,sensitive=true} AS jsonb),
@@ -134,7 +132,7 @@ RETURNING <include refid="columns"/>
         AND deleted_at IS NULL
         AND archived_at IS NULL
         AND status = 'idle'
-        AND ((#{params.TitleSet} AND (title IS DISTINCT FROM #{params.Title} OR NOT title_manual))
+        AND ((#{params.TitleSet} AND title IS DISTINCT FROM #{params.Title})
             OR budget IS DISTINCT FROM CAST(#{params.Budget,sensitive=true} AS jsonb)
             OR budget_reached_at IS DISTINCT FROM #{params.BudgetReachedAt}
             OR budget_removed_at IS DISTINCT FROM #{params.BudgetRemovedAt}

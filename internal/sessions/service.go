@@ -373,7 +373,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	updated := current
 	var changed bool
-	if len(changedSessionFields(current, next, len(body.Title) > 0)) > 0 || len(body.Title) > 0 {
+	if len(changedSessionFields(current, next, len(body.Title) > 0)) > 0 {
 		next.UpdatedAt = time.Now().UTC()
 		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next, len(body.Title) > 0)
 		if err != nil {

@@ -2,11 +2,13 @@
 <mapper namespace="SessionTitleJobMapper">
     <insert id="Enqueue" result="exec">
         INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
-        SELECT 'job_session_title_' || s.uuid, s.workspace_uuid, 'session_title', 'pending',
-            jsonb_build_object('session_uuid', s.uuid, 'session_id', s.external_id, 'input', CAST(#{input,sensitive=true} AS text))
+        SELECT 'job_session_title_' || s.uuid, s.workspace_uuid, 'session_title',
+            CASE WHEN NULLIF(s.title, '') IS NULL THEN 'pending' ELSE 'completed' END,
+            jsonb_strip_nulls(jsonb_build_object('session_uuid', s.uuid, 'session_id', s.external_id,
+                'input', CASE WHEN NULLIF(s.title, '') IS NULL THEN CAST(#{input,sensitive=true} AS text) END))
         FROM sessions s
         WHERE s.organization_uuid = #{organizationUUID} AND s.workspace_uuid = #{workspaceUUID}
-            AND s.uuid = #{sessionUUID} AND s.title IS NULL AND NOT s.title_manual
+            AND s.uuid = #{sessionUUID}
             AND s.archived_at IS NULL AND s.deleted_at IS NULL AND s.status != 'terminated'
             AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.workspace_uuid = s.workspace_uuid
                 AND j.external_id = 'job_session_title_' || s.uuid)
@@ -38,7 +40,7 @@
         UPDATE sessions s SET title = #{params.Title,sensitive=true}, updated_at = now()
         FROM completed j
         WHERE s.workspace_uuid = j.workspace_uuid AND s.uuid = CAST(j.session_uuid AS uuid)
-            AND s.title IS NULL AND NOT s.title_manual AND #{params.Title,sensitive=true} != ''
+            AND NULLIF(s.title, '') IS NULL AND #{params.Title,sensitive=true} != ''
             AND s.archived_at IS NULL AND s.deleted_at IS NULL AND s.status != 'terminated'
     </update>
 </mapper>

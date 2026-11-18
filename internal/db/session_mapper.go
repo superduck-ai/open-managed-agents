@@ -69,7 +69,6 @@ type sessionRow struct {
 	DeploymentUUID        *string                   `db:"deployment_uuid"`
 	DeploymentID          *string                   `db:"deployment_external_id"`
 	Title                 *string                   `db:"title"`
-	TitleManual           bool                      `db:"title_manual"`
 	Metadata              []byte                    `db:"metadata"`
 	RuntimeUserUUID       *string                   `db:"runtime_user_uuid"`
 	VaultIDs              sessionVaultIDs           `db:"vault_ids"`

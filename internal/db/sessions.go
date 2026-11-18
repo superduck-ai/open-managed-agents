@@ -33,7 +33,6 @@ type Session struct {
 	DeploymentUUID        *string
 	DeploymentID          *string
 	Title                 *string
-	TitleManual           bool
 	Metadata              json.RawMessage
 	VaultIDs              []string
 	Status                string

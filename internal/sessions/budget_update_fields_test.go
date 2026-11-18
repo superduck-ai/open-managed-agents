@@ -29,6 +29,6 @@ func TestTitleUpdateFieldsOnlyIncludeExplicitChanges(t *testing.T) {
 		t.Fatal("explicit title update missing")
 	}
 	if _, ok := changedSessionFields(after, after, true)["title"]; ok {
-		t.Fatal("same-text manual pin generated a public change")
+		t.Fatal("an unchanged title generated a public change")
 	}
 }

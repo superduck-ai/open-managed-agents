@@ -51,7 +51,6 @@ func TestWorkerTitlePolicy(t *testing.T) {
 		wantTitle string
 		wantCalls int
 	}{
-		{"manual null", func(s *db.Session) { s.TitleManual = true }, nil, "", 0},
 		{"existing title", func(s *db.Session) { s.Title = new("User title") }, nil, "", 0},
 		{"archived", func(s *db.Session) { s.ArchivedAt = new(time.Now()) }, nil, "", 0},
 		{"deleted", func(s *db.Session) { s.DeletedAt = new(time.Now()) }, nil, "", 0},

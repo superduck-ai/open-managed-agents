@@ -257,7 +257,7 @@ func (r sessionRow) session() Session {
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
-		DeploymentID: r.DeploymentID, Title: r.Title, TitleManual: r.TitleManual, Metadata: bytes.Clone(r.Metadata),
+		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
 		VaultIDs: append([]string{}, r.VaultIDs...), Status: r.Status,
 		Budget: bytes.Clone(r.Budget), BudgetReachedAt: r.BudgetReachedAt, BudgetRemovedAt: r.BudgetRemovedAt,
 		Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),

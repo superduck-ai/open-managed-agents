@@ -87,7 +87,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
-				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
+				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
 				"params.VaultIDs", "params.Status", "params.Budget", "params.Usage", "params.Stats",
 				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
 			},

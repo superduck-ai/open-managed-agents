@@ -81,24 +81,25 @@ func TestSessionAutoTitles(t *testing.T) {
 		}
 		return mustSessionRecord(t, app, id)
 	}
-	t.Run("manual titles and explicit null never call the model", func(t *testing.T) {
+	t.Run("existing titles skip first-turn generation", func(t *testing.T) {
 		before := calls.Load()
-		for _, manual := range []string{`"Pinned"`, `null`} {
-			s := createSession(t, app, prefix+`}`)
-			updateSession(t, app, s.ID, `{"title":`+manual+`}`)
-			sendSessionEvents(t, app, s.ID, `{"events":[`+message("should not name")+`]}`, defaultTestKey)
-			run()
-			var want *string
-			if manual != "null" {
-				want = new("Pinned")
-			}
-			assertTitle(s.ID, want)
-		}
+		s := createSession(t, app, prefix+`}`)
+		updateSession(t, app, s.ID, `{"title":"Pinned"}`)
+		sendSessionEvents(t, app, s.ID, `{"events":[`+message("should not name")+`]}`, defaultTestKey)
+		run()
+		assertTitle(s.ID, new("Pinned"))
+
 		created := createSession(t, app, prefix+`,"title":"Created title","initial_events":[`+message("ignored")+`]}`)
 		run()
 		assertTitle(created.ID, new("Created title"))
+
+		idle(created.ID)
+		updateSession(t, app, created.ID, `{"title":null}`)
+		sendSessionEvents(t, app, created.ID, `{"events":[`+message("too late to name")+`]}`, defaultTestKey)
+		run()
+		assertTitle(created.ID, nil)
 		if calls.Load() != before {
-			t.Fatal("manual title generated a model request")
+			t.Fatal("title generation ran outside the first eligible turn")
 		}
 	})
 	t.Run("first initial input once with no public events", func(t *testing.T) {
@@ -186,7 +187,7 @@ func TestSessionAutoTitles(t *testing.T) {
 			t.Fatalf("auxiliary ledger counts=%d,%d", ledgerCount, sessionLedgerCount)
 		}
 	})
-	t.Run("in-flight rename and clear win", func(t *testing.T) {
+	t.Run("in-flight result only fills an empty title", func(t *testing.T) {
 		for _, manual := range []string{`"Manual winner"`, `null`} {
 			s := createSession(t, app, prefix+`,"initial_events":[`+message("race input")+`]}`)
 			idle(s.ID)
@@ -198,6 +199,9 @@ func TestSessionAutoTitles(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("title request did not start")
 			}
+			if manual == "null" {
+				updateSession(t, app, s.ID, `{"title":"Temporary title"}`)
+			}
 			updateSession(t, app, s.ID, `{"title":`+manual+`}`)
 			release <- struct{}{}
 			select {
@@ -208,16 +212,12 @@ func TestSessionAutoTitles(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("title job did not finish")
 			}
-			var want *string
-			if manual != "null" {
-				want = new("Manual winner")
+			want, wantExtra := "Manual winner", 1
+			if manual == "null" {
+				want, wantExtra = "会话标题修复", 2
 			}
-			assertTitle(s.ID, want)
+			assertTitle(s.ID, &want)
 			after := listSessionEvents(t, app, s.ID, "", defaultTestKey)
-			wantExtra := 0
-			if manual != "null" {
-				wantExtra = 1
-			}
 			if len(after.Data) != len(before.Data)+wantExtra {
 				t.Fatal("unexpected title events")
 			}
@@ -233,14 +233,10 @@ func TestSessionAutoTitles(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertTitle(s.ID, new("会话标题修复"))
-		updateSession(t, app, s.ID, `{"title":"会话标题修复"}`)
-		if !mustSessionRecord(t, app, s.ID).TitleManual {
-			t.Fatal("same text did not pin title")
-		}
 	})
 	t.Run("normal message blob input and failure fallback", func(t *testing.T) {
 		text := "failure input " + strings.Repeat("a", 40000)
-		s := createSession(t, app, prefix+`}`)
+		s := createSession(t, app, prefix+`,"title":""}`)
 		sendSessionEvents(t, app, s.ID, `{"events":[`+message(text)+`]}`, defaultTestKey)
 		before := listSessionEvents(t, app, s.ID, "", defaultTestKey)
 		run()

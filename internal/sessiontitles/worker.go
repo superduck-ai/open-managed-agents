@@ -84,7 +84,7 @@ func (w *Worker) process(ctx context.Context, job db.SessionTitleJob, workerID s
 		return err
 	}
 	title := ""
-	if found && session.UUID == job.SessionUUID && session.Title == nil && !session.TitleManual &&
+	if found && session.UUID == job.SessionUUID && (session.Title == nil || *session.Title == "") &&
 		session.ArchivedAt == nil && session.DeletedAt == nil && session.Status != "terminated" {
 		title = titletext.Fallback(job.Input)
 		if session.BudgetReachedAt == nil {

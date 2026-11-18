@@ -9,29 +9,29 @@
   - `internal/db/files.go` 暴露 file record、file CRUD、workspace storage 统计和 object cleanup job 数据访问；具体 SQL 按表拆分到 Mapper XML，统一使用生成参数绑定、静态行映射和 Yourbatis 事务。
   - `internal/db/platform_auth.go` 只暴露 platform auth 所需的事务内数据访问原语，例如按邮箱查询用户上下文、插入 organization/user/workspace/workspace_member/api_key，以及 session identity 查询。
 - `internal/platformauth`
-  - 当前只实现邮箱验证码登录；配置完整的 `auth.smtp` 时真实发信，完全省略时接受任意非空验证码且不发送邮件。部分 SMTP 配置拒绝启动，避免误降级。
+  - 按邮箱标识用户的验证码登录；配置完整的 `auth.smtp` 或 `auth.feishu` 时真实发送，两者均配置则并行发送同一个验证码。两者均省略时接受任意非空验证码且不发送通知；任一种配置不完整均拒绝启动，避免误降级。
   - 负责 email 归一化和校验、验证码签发/验证、默认用户名/组织名、外部 ID 生成、默认 workspace/member/API key 创建流程、API key raw token/hash/hint 生成。
   - `LoginCodeSender` 保留为测试 seam，使验证码流程可以在测试中避开真实发信。
-  - 真实发信模式下，Redis challenge 只保存 HMAC 摘要，不保存邮箱或验证码明文；HMAC key 由 SMTP 密码做域隔离派生，不需要额外配置 secret。验证码固定 10 分钟有效，邮件使用中英双语的相对有效期文案；同一邮箱每小时最多发送 5 次、1 分钟重发冷却、最多错误 5 次。验证码先校验但不删除，账号和 session 准备成功后再原子核销；并发请求只有一个能核销成功。
+  - 真实发信模式下，Redis challenge 只保存 HMAC 摘要，不保存邮箱或验证码明文；HMAC key 在配置 SMTP 时继续由 SMTP 密码做域隔离派生，仅配置飞书时由 App Secret 派生，不需要额外配置 secret；添加飞书不会改变已有 SMTP 验证码的摘要密钥。验证码固定 10 分钟有效，邮件使用中英双语的相对有效期文案，飞书卡片使用简短中文提示；同一邮箱每小时最多发送 5 次、1 分钟重发冷却、最多错误 5 次。验证码先校验但不删除，账号和 session 准备成功后再原子核销；并发请求只有一个能核销成功。
   - 当前不按客户端 IP 限流，避免默认反向代理把所有用户折叠到同一额度；只有建立可信代理边界后才可重新引入客户端 IP 限流。
   - 通过 `db.WithPlatformAuthTx` 保持默认 organization、user、workspace、workspace member 和 API key 的事务一致性。
 - `internal/platformapi`
   - 只负责 HTTP 请求解析、cookie/session 响应和路由注册。
-  - `/send_magic_link` 在 SMTP 已配置时真实发信，否则只返回成功；`/verify_magic_link` 验证当前模式允许的验证码后获取用户上下文并保存 session，最后核销验证码。核销失败时删除尚未返回给客户端的 session。
+  - `/send_magic_link` 在任一发送方式已配置时真实发送，否则只返回成功；`/verify_magic_link` 验证当前模式允许的验证码后获取用户上下文并保存 session，最后核销验证码。核销失败时删除尚未返回给客户端的 session。
 
 ## 依赖方向
 
 - `internal/platformauth` 可以依赖 `internal/db` 的数据访问接口和事务原语。
 - `internal/db` 不依赖 `internal/platformauth`、`internal/platformapi` 或 HTTP handler 包。
-- `main` 只把 `auth` 配置和共享依赖交给 `platformauth.New`；SMTP、Redis challenge 和 HMAC 组装全部留在邮箱认证模块内部。
+- `main` 只把 `auth` 配置和共享依赖交给 `platformauth.New`；SMTP、飞书、Redis challenge 和 HMAC 组装全部留在邮箱认证模块内部。
 
 ## 兼容与测试
 
 邮箱验证码登录保持原有路由和成功响应形状：
 
 - email 必须是有效地址，空 email 不再回退为测试账号。
-- SMTP 完整配置时，验证码为 6 位随机数字、默认 10 分钟有效、只能成功使用一次；SMTP 失败时撤销本次 challenge、重发冷却和本次增加的小时额度。邮件已经提交成功后，SMTP `QUIT` 仅作为 best-effort 清理，不会撤销可用验证码。
-- SMTP 完全省略时不发送邮件，任意非空验证码都可登录；服务启动时记录安全警告。该模式不提供身份安全性，不应在需要真实认证的部署中使用。
+- SMTP 或飞书完整配置时，验证码为 6 位随机数字、默认 10 分钟有效、只能成功使用一次；全部配置的发送方式失败时撤销本次 challenge、重发冷却和本次增加的小时额度。任一种发送成功则保留验证码，失败方不额外重试。邮件已经提交成功后，SMTP `QUIT` 仅作为 best-effort 清理，不会撤销可用验证码。
+- SMTP 和飞书都完全省略时不发送通知，任意非空验证码都可登录；服务启动时记录安全警告。该模式不提供身份安全性，不应在需要真实认证的部署中使用。
 - 发码限流返回 `429`，但不提供无法区分一分钟冷却和小时额度的 `Retry-After`。
 - 默认 user/org 名称仍来自 email local part，且沿用 lower-case 行为。
 - 找不到用户时仍创建默认 organization、admin user、default workspace、workspace_admin membership 和 active default API key。
@@ -58,3 +58,15 @@
 平台进入不新增 schema 或服务端状态。AccountUUID 与目标成员 UserUUID 分离；资源层校验平台来源后提供成员事务回调，DB 只查询真实角色、锁定目标并执行变更，不接收 auth.Principal 或判断平台授权。空 actor 必须经回调校验，不能自动放行；保留组织锁和最后管理员计数。
 
 完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。
+
+## 飞书通知
+
+`auth.feishu` 与 `auth.smtp` 同级，只需 `app_id` 和 `app_secret`，不增加 type、备用策略或独立密钥。企业自建应用需开启机器人能力、申请 `im:message:send_as_bot`，发布并将收件人纳入应用可用范围。通过 `receive_id_type=email` 向登录邮箱对应的飞书用户私聊；邮箱必须准确对应企业管理的飞书身份，不将验证码发送到群聊。SMTP 与飞书共享既有邮箱白名单、验证码校验和可信登录标记；该标记表示企业身份对应邮箱的验证码认证，不单独证明用户可访问邮箱收件箱。
+
+`FeishuSender` 直接调用飞书 HTTPS API，缓存 tenant_access_token 并在过期前刷新，不依赖智能体聊天桥接、不订阅入站事件、不同步通讯录。两种发送方式并行启动，任一种成功即返回成功，让登录页立即进入验证码输入步骤；全部失败才返回不可用。各发送任务使用独立于请求取消和截止时间的上下文，保留请求域日志信息，并统一限制为 15 秒；飞书仍有更短的 5 秒整次调用限制。接口返回后，另一发送任务继续提交同一条通知，不因 HTTP 请求结束而取消，不额外重试。既有 API 响应、Redis 数据格式、认证会话和数据库 schema 保持不变。
+
+失败日志保留发送方式及安全错误信息。飞书错误在 `error.http_status` 和可用时的 `error.api_code` 中记录数字状态，包括 HTTP 非 200 响应中的 API 错误码；未知发送错误使用固定描述。禁止记录凭据、验证码、用户邮箱、SMTP 原始错误或第三方响应正文。
+
+单测使用本地替身验证飞书鉴权和收件人请求、令牌复用与刷新、失败响应和敏感数据隔离，以及双发相同验证码、部分失败仍可登录、全部失败撤销及一次性消费。回归覆盖快速成功不等待慢发送、请求取消后另一方仍可完成，以及 HTTP 400 / API 230013 的安全日志字段。未配置真实应用时不声称完成飞书收件或延迟验收。
+
+飞书验证码使用 JSON 2.0 卡片：短标题“登录验证码”，同一个六位验证码居中加粗并以 `heading-0` 字号显示，辅助说明使用较小灰色字体，过期分钟数来自已有验证码有效期常量。验证码与邀请卡片均采用 `compact` 紧凑宽度；验证码仅展示一次，由用户选中复制，不增加复制网页或回调。邀请使用同一客户端与卡片 schema，模板由邀请资源包生成，具体内容与按钮边界见[组织邀请通知](../organization-invitation-email.md#飞书与邮件同时发送)。不增加模板 ID、回调或额外配置。

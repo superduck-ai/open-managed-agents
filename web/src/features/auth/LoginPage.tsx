@@ -216,9 +216,13 @@ export function LoginFlow({
                     {msg('auth.login.verificationCode', 'Verification code')}
                   </FieldLabel>
                   <FieldDescription className="break-words">
-                    {msg('auth.login.codeSentTo', 'We sent a 6-digit code to {email}.', {
-                      email: submittedEmail,
-                    })}
+                    {msg(
+                      'auth.login.codeSentTo',
+                      'We sent a 6-digit code for {email}. Check your email or Feishu messages.',
+                      {
+                        email: submittedEmail,
+                      },
+                    )}
                   </FieldDescription>
                   <Input
                     id="login-code"

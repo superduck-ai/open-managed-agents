@@ -168,7 +168,13 @@ type NATSConfig struct {
 type AuthConfig struct {
 	AllowedEmailDomains []string        `yaml:"allowed_email_domains"`
 	SMTP                EmailSMTPConfig `yaml:"smtp"`
+	Feishu              FeishuConfig    `yaml:"feishu"`
 	ConsoleURL          string          `yaml:"console_url"`
+}
+
+type FeishuConfig struct {
+	AppID     string `yaml:"app_id"`
+	AppSecret string `yaml:"app_secret"`
 }
 
 type EmailSMTPConfig struct {

@@ -31,6 +31,7 @@ func Load() (Config, error) {
 	for i, domain := range cfg.Auth.AllowedEmailDomains {
 		cfg.Auth.AllowedEmailDomains[i] = strings.ToLower(strings.TrimSpace(domain))
 	}
+	cfg.Auth.Feishu.AppID = strings.TrimSpace(cfg.Auth.Feishu.AppID)
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
 	cfg.Auth.ConsoleURL = strings.TrimSpace(cfg.Auth.ConsoleURL)
@@ -226,6 +227,9 @@ func validateAuthConfig(environment string, cfg AuthConfig) error {
 		default:
 			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
 		}
+	}
+	if (cfg.Feishu.AppID != "" || cfg.Feishu.AppSecret != "") && (cfg.Feishu.AppID == "" || strings.TrimSpace(cfg.Feishu.AppSecret) == "") {
+		return errors.New("auth.feishu.app_id and auth.feishu.app_secret must be configured together")
 	}
 	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
 		return nil

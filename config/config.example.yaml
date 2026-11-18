@@ -25,13 +25,16 @@ nats:
 tunnel:
   public_base_url: http://127.0.0.1:38080
 
-# Optional SMTP email verification. When omitted, any non-empty verification
-# code is accepted. Configure all three fields together for real email delivery.
+# Optional login and invitation delivery. Every configured sender is used.
+# Without SMTP or Feishu, any non-empty verification code is accepted.
 # auth:
 #   smtp:
 #     addr: smtp.example.com:587
 #     username: sender@example.com
 #     password: replace-me
+#   feishu:
+#     app_id: cli_xxxxxxxxx
+#     app_secret: replace-me
 
 storage:
   type: s3

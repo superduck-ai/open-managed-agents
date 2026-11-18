@@ -38,15 +38,27 @@ func (s *EmailProvider) VerifiedLoginEnabled() bool {
 }
 
 func New(cfg config.AuthConfig, store Store, redisClient *redis.Client, logger *slog.Logger) *EmailProvider {
-	domains := cfg.AllowedEmailDomains
-	if cfg.SMTP.Addr == "" {
-		logger = logging.LoggerOrDefault(logger)
-		logger.Warn("SMTP is not configured; email login accepts any non-empty verification code")
-		return &EmailProvider{store: store, acceptAnyCode: true, logger: logger, loginEmailDomains: domains}
+	logger = logging.LoggerOrDefault(logger)
+	sender := &loginCodeSenders{logger: logger}
+	secret := cfg.SMTP.Password
+	keyDomain := "open-managed-agents/email-login-code/v1\x00"
+	if cfg.SMTP.Addr != "" {
+		sender.smtp = newSMTPSender(cfg.SMTP)
 	}
-	key := sha256.Sum256([]byte("open-managed-agents/email-login-code/v1\x00" + cfg.SMTP.Password))
-	provider := NewEmailProvider(store, newRedisEmailCodeStore(redisClient), newSMTPSender(cfg.SMTP), key[:], logger)
-	provider.loginEmailDomains = domains
+	if cfg.Feishu.AppID != "" && cfg.Feishu.AppSecret != "" {
+		sender.feishu = NewFeishuSender(cfg.Feishu)
+		if sender.smtp == nil {
+			secret = cfg.Feishu.AppSecret
+			keyDomain = "open-managed-agents/feishu-login-code/v1\x00"
+		}
+	}
+	if sender.smtp == nil && sender.feishu == nil {
+		logger.Warn("Login delivery is not configured; email login accepts any non-empty verification code")
+		return &EmailProvider{store: store, acceptAnyCode: true, logger: logger, loginEmailDomains: cfg.AllowedEmailDomains}
+	}
+	key := sha256.Sum256([]byte(keyDomain + secret))
+	provider := NewEmailProvider(store, newRedisEmailCodeStore(redisClient), sender, key[:], logger)
+	provider.loginEmailDomains = cfg.AllowedEmailDomains
 	return provider
 }
 

@@ -32,6 +32,9 @@ type Mailer struct {
 	sender              interface {
 		SendMessage(context.Context, string, []byte) error
 	}
+	feishu interface {
+		SendCard(context.Context, string, []byte) error
+	}
 }
 
 func NewMailer(cfg config.AuthConfig, database mailStore, logger *slog.Logger) *Mailer {
@@ -39,11 +42,14 @@ func NewMailer(cfg config.AuthConfig, database mailStore, logger *slog.Logger) *
 	if cfg.SMTP.Addr != "" && cfg.ConsoleURL != "" {
 		m.sender = platformauth.NewMailSender(cfg.SMTP)
 	}
+	if cfg.Feishu.AppID != "" && cfg.Feishu.AppSecret != "" && cfg.ConsoleURL != "" {
+		m.feishu = platformauth.NewFeishuSender(cfg.Feishu)
+	}
 	return m
 }
 
 func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient string, expiresAt time.Time) string {
-	if m == nil || m.sender == nil {
+	if m == nil || (m.sender == nil && m.feishu == nil) {
 		return "not_configured"
 	}
 	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
@@ -68,7 +74,7 @@ func (m *Mailer) NotifyPlatform(ctx context.Context, organizationUUID, recipient
 }
 
 func (m *Mailer) notify(ctx context.Context, organizationUUID, recipient, inviter string, expiresAt time.Time) string {
-	if m == nil || m.sender == nil {
+	if m == nil || (m.sender == nil && m.feishu == nil) {
 		return "not_configured"
 	}
 	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
@@ -78,12 +84,27 @@ func (m *Mailer) notify(ctx context.Context, organizationUUID, recipient, invite
 	if err != nil || org == nil {
 		return "failed"
 	}
-	message, err := invitationMessage(m.from, recipient, org.Name, inviter, strings.TrimSuffix(m.consoleURL, "/")+"/invites", expiresAt)
-	if err == nil {
-		err = m.sender.SendMessage(ctx, recipient, message)
+	link := strings.TrimSuffix(m.consoleURL, "/") + "/invites"
+	var deliveries []platformauth.Delivery
+	if m.sender != nil {
+		deliveries = append(deliveries, platformauth.Delivery{Channel: "smtp", Send: func(ctx context.Context) error {
+			message, err := invitationMessage(m.from, recipient, org.Name, inviter, link, expiresAt)
+			if err != nil {
+				return err
+			}
+			return m.sender.SendMessage(ctx, recipient, message)
+		}})
 	}
-	if err != nil {
-		m.logger.WarnContext(ctx, "invitation email submission failed", "organization_uuid", organizationUUID)
+	if m.feishu != nil {
+		deliveries = append(deliveries, platformauth.Delivery{Channel: "feishu", Send: func(ctx context.Context) error {
+			card, err := invitationFeishuMessage(org.Name, inviter, link, expiresAt)
+			if err != nil {
+				return err
+			}
+			return m.feishu.SendCard(ctx, recipient, card)
+		}})
+	}
+	if err := platformauth.Deliver(ctx, m.logger.With("organization_uuid", organizationUUID), deliveries...); err != nil {
 		return "failed"
 	}
 	return "sent"

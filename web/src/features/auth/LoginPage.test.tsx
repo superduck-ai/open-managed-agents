@@ -70,7 +70,8 @@ describe('LoginFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
 
     await waitFor(() => expect(send).toHaveBeenCalledWith('ada@subsidiary.example'));
-    expect(screen.getByText(/We sent a 6-digit code to/i)).toBeTruthy();
+    expect(screen.getByText(/We sent a 6-digit code for/i)).toBeTruthy();
+    expect(screen.getByText(/Check your email or Feishu messages/i)).toBeTruthy();
   });
 
   test('verifies code and completes authentication', async () => {

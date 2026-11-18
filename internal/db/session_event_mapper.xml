@@ -4,6 +4,12 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="SessionEventMapper">
+    <select id="FirstUserMessageUUID" result="scalar" resultType="string">
+        SELECT uuid FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND event_type = 'user.message' AND deleted_at IS NULL
+        ORDER BY id ASC LIMIT 1
+    </select>
     <select id="FindByUUID" resultType="sessionEventRow">
         SELECT <include refid="columns"/> FROM session_events
         WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}

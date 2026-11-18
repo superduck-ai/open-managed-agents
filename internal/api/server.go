@@ -303,6 +303,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
+func (s *Server) RegisterSessionTitleWorker(workers *river.Workers, client *river.Client[*sql.Tx]) {
+	s.sessions.RegisterTitleWorker(workers, client)
+}
+
 func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }

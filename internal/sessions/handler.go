@@ -38,6 +38,7 @@ type Handler struct {
 	eventBus        sessionfanout.EventBus
 	previews        *workerPreviewConverter
 	eventObserver   SessionEventObserver
+	enqueueTitle    db.SessionTitleEnqueuer
 	ports           *sessionports.Settings
 }
 

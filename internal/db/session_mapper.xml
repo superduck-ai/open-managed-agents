@@ -120,7 +120,7 @@ RETURNING <include refid="columns"/>
     <update id="UpdateByExternalID" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
-            title = #{params.Title},
+            title = CASE WHEN #{params.SetTitle} THEN #{params.Title,sensitive=true} ELSE title END,
             metadata = (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
                 || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', metadata->'_oma_runtime_user_uuid')),
             budget = CAST(#{params.Budget,sensitive=true} AS jsonb),
@@ -132,13 +132,20 @@ RETURNING <include refid="columns"/>
         AND deleted_at IS NULL
         AND archived_at IS NULL
         AND status = 'idle'
-        AND (title IS DISTINCT FROM #{params.Title}
+        AND ((#{params.SetTitle} AND title IS DISTINCT FROM #{params.Title,sensitive=true})
             OR budget IS DISTINCT FROM CAST(#{params.Budget,sensitive=true} AS jsonb)
             OR budget_reached_at IS DISTINCT FROM #{params.BudgetReachedAt}
             OR budget_removed_at IS DISTINCT FROM #{params.BudgetRemovedAt}
             OR agent_snapshot IS DISTINCT FROM CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb)
             OR (metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'))
         RETURNING <include refid="columns"/>
+    </update>
+
+    <update id="SetGeneratedTitle" result="rows">
+        UPDATE sessions
+        SET title = #{title,sensitive=true}, updated_at = GREATEST(updated_at, #{updatedAt})
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID}
+          AND COALESCE(title, '') = '' AND archived_at IS NULL AND deleted_at IS NULL
     </update>
 
     <update id="PatchMetadata" result="returning" resultType="sessionRow">

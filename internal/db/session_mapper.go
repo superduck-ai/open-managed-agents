@@ -116,6 +116,7 @@ type sessionUpdateParams struct {
 	ExternalID      string
 	AgentSnapshot   []byte
 	Title           *string
+	SetTitle        bool
 	Metadata        []byte
 	Budget          []byte
 	BudgetReachedAt *time.Time
@@ -151,6 +152,7 @@ type sessionTrajectoryRow struct {
 }
 
 type SessionMapper interface {
+	SetGeneratedTitle(ctx context.Context, workspaceUUID, sessionExternalID, title string, updatedAt time.Time) (int64, error)
 	IsRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
 	AddUsage(ctx context.Context, workspaceUUID, sessionUUID, threadUUID string, usage SessionUsageIncrement) (sessionRow, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)

@@ -340,15 +340,18 @@ export function SessionListTable({
   };
   return (
     <TooltipProvider>
-      <Table className={cn(dataTableClassName, 'min-w-[960px]')} data-testid="session-list-table">
+      <Table className={cn(dataTableClassName, 'min-w-[1080px]')} data-testid="session-list-table">
         <TableHeader>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id} className={dataTableHeaderRowClassName}>
               {group.headers.map((header) => (
                 <TableHead
                   key={header.id}
-                  style={{ width: header.id === 'name' ? undefined : header.getSize() }}
-                  className={cn(dataTableHeaderCellClassName, ['cost', 'tokens'].includes(header.id) && 'text-right')}
+                  className={cn(
+                    dataTableHeaderCellClassName,
+                    sessionColumnWidthClassName(header.id),
+                    ['cost', 'tokens'].includes(header.id) && 'text-right',
+                  )}
                   aria-label={
                     header.id === 'actions'
                       ? msg('common.actions', 'Actions')
@@ -387,7 +390,8 @@ export function SessionListTable({
                       edge={cell.column.id === 'id' ? 'start' : cell.column.id === 'actions' ? 'end' : undefined}
                       className={cn(
                         'min-w-0 truncate',
-                        ['cost', 'tokens'].includes(cell.column.id) && 'text-right tabular-nums',
+                        ['cost', 'tokens'].includes(cell.column.id) && 'whitespace-nowrap pl-4 text-right tabular-nums',
+                        cell.column.id === 'created' && 'whitespace-nowrap pl-6',
                       )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -399,4 +403,19 @@ export function SessionListTable({
       </Table>
     </TooltipProvider>
   );
+}
+
+const sessionColumnWidthClasses: Record<string, string> = {
+  id: 'w-[15%]',
+  name: 'w-[23%]',
+  status: 'w-[8%]',
+  agent: 'w-[18%]',
+  cost: 'w-[10%] whitespace-nowrap pl-4',
+  tokens: 'w-[13%] whitespace-nowrap pl-4',
+  created: 'w-[13%] whitespace-nowrap pl-6',
+  actions: 'w-[76px]',
+};
+
+function sessionColumnWidthClassName(columnId: string) {
+  return sessionColumnWidthClasses[columnId];
 }

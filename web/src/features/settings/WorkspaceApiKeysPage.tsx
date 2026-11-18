@@ -317,7 +317,9 @@ function ApiKeyRow({ apiKey, onAction }: { apiKey: WorkspaceApiKey; onAction: (a
             </Badge>
           ) : null}
         </div>
-        <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{keyHint(apiKey)}</div>
+        <div className="mt-1 truncate font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
+          {keyHint(apiKey)}
+        </div>
       </TableCell>
       <TableCell className="min-w-0 px-3 py-2.5 align-middle">
         <div className="truncate">{creator.name}</div>
@@ -479,8 +481,14 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
           </DialogDescription>
         </DialogHeader>
         <Card size="sm" className="min-h-0 py-0">
-          <CardContent className="subtle-scrollbar min-h-0 overflow-y-auto px-3 py-3">
-            <div className="break-all font-mono text-sm leading-6 text-foreground">{rawKey}</div>
+          <CardContent
+            onClick={() => void handleCopy()}
+            className="subtle-scrollbar flex min-h-0 cursor-pointer items-start justify-between gap-3 overflow-y-auto px-3 py-3 transition-colors hover:bg-muted/40"
+          >
+            <div className="select-all break-all font-mono text-sm leading-6 text-foreground">{rawKey}</div>
+            <span className="mt-1 shrink-0 text-muted-foreground" aria-hidden="true">
+              {copied ? <Check className="size-4 text-foreground" /> : <Copy className="size-4" />}
+            </span>
           </CardContent>
         </Card>
         <DialogFooter>
@@ -688,7 +696,7 @@ function resolveWorkspace(routeWorkspaceId: string | undefined, workspaces: Work
 
 function keyHint(apiKey: WorkspaceApiKey) {
   if (apiKey.partial_key_hint) {
-    return apiKey.partial_key_hint;
+    return apiKey.partial_key_hint.replace(/\.\s+/g, '...');
   }
   if (apiKey.key_prefix || apiKey.key_suffix) {
     return `${apiKey.key_prefix ?? 'sk-ant'}...${apiKey.key_suffix ?? ''}`;

@@ -147,6 +147,27 @@ describe('Workspace API keys page', () => {
     expect(screen.getByTestId('workspace-api-keys-page').parentElement?.className).toContain('lg:px-8');
   });
 
+  test('normalizes dotted spaced key hints and disables font ligatures', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
+    mockWorkspaceApiKeys([
+      {
+        ...activeKey,
+        id: 'key_spaced',
+        name: 'spaced-key',
+        partial_key_hint: 'sk-ant-api03-KEj. hX3HFg',
+      },
+    ]);
+
+    render(
+      <WorkspaceApiKeysHarness>
+        <WorkspaceApiKeysContent routeWorkspaceId="default" />
+      </WorkspaceApiKeysHarness>,
+    );
+
+    const hintNode = await screen.findByText('sk-ant-api03-KEj...hX3HFg');
+    expect(hintNode.className).toContain('[font-variant-ligatures:none]');
+  });
+
   test('creates an API key, posts the official body, refreshes, and shows raw key once', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
     const api = mockWorkspaceApiKeys([activeKey]);

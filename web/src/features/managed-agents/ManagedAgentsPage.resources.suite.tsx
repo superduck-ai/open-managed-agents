@@ -383,6 +383,10 @@ export function registerManagedAgentsResourceTests() {
     expect(sessionHeading).toBeTruthy();
     expect(sessionHeading.className).toContain('font-sans');
     expect(sessionHeading.className).not.toContain('font-serif');
+    const headerSummary = within(sessionHeader).getByTestId('session-header-summary');
+    expect(headerSummary.className).toContain('items-center');
+    expect(headerSummary.className).toContain('overflow-x-auto');
+    expect(headerSummary.className).not.toContain('flex-wrap');
     expect(screen.getByRole('button', { name: 'Actions' }).className).toContain('h-8');
     const statusPill = await waitFor(() => within(sessionHeader).getByText('Idle'));
     expect(statusPill.dataset.slot).toBe('badge');
@@ -2355,6 +2359,15 @@ export function registerManagedAgentsResourceTests() {
     await screen.findByText('Session one');
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent);
     expect(headers.slice(0, 7)).toEqual(['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created']);
+    const table = screen.getByTestId('session-list-table');
+    expect(table.className).toContain('min-w-[1080px]');
+    const columnHeaders = screen.getAllByRole('columnheader');
+    expect(columnHeaders[4].className).toContain('w-[10%]');
+    expect(columnHeaders[4].className).toContain('pl-4');
+    expect(columnHeaders[5].className).toContain('w-[13%]');
+    expect(columnHeaders[5].className).toContain('pl-4');
+    expect(columnHeaders[6].className).toContain('w-[13%]');
+    expect(columnHeaders[6].className).toContain('pl-6');
     expect(screen.queryByText(remote.title)).toBeNull();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
     await screen.findByText(remote.title);

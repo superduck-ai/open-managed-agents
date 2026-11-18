@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { I18nProvider } from '../../shared/i18n';
 
@@ -6,9 +6,15 @@ const testingLibrary = await import('@testing-library/react');
 const { LoginFlow } = await import('./LoginPage');
 
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const originalEvent = globalThis.Event;
+
+beforeEach(() => {
+  globalThis.Event = window.Event as unknown as typeof Event;
+});
 
 afterEach(() => {
   cleanup();
+  globalThis.Event = originalEvent;
 });
 
 describe('LoginFlow', () => {
@@ -206,4 +212,61 @@ describe('LoginFlow', () => {
       expect(authenticated).not.toHaveBeenCalled();
     },
   );
+
+  test('uses flex-1 viewport shell without calc height overflow in email and code steps', async () => {
+    resetTestDom('https://oma.duck.ai/login');
+    const send = mock(async () => ({ sent: true }));
+    const { container } = render(<LoginFlow onAuthenticated={() => undefined} onSendMagicLink={send} />);
+
+    const assertShellLayout = () => {
+      const main = container.querySelector('main');
+      const header = container.querySelector('header');
+      const shell = header?.parentElement;
+      const section = main?.querySelector('section');
+
+      expect(shell?.className).toContain('min-h-dvh');
+      expect(shell?.className).toContain('flex-col');
+      expect(header?.className).toContain('shrink-0');
+      expect(main?.className).toContain('flex-1');
+      expect(main?.className).not.toContain('min-h-[calc(');
+      expect(section?.className).not.toContain('min-h-[calc(');
+    };
+
+    assertShellLayout();
+
+    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'ada@example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
+
+    await screen.findByLabelText(/Verification code/i);
+    assertShellLayout();
+  });
+
+  test('renders 6 OTP slots and auto-submits when 6 digits are pasted or entered', async () => {
+    resetTestDom('https://oma.duck.ai/login');
+    const send = mock(async () => ({ sent: true }));
+    const verify = mock(async () => ({ success: true }));
+    const authenticated = mock(async () => undefined);
+
+    const { container } = render(
+      <LoginFlow onAuthenticated={authenticated} onSendMagicLink={send} onVerifyMagicLink={verify} />,
+    );
+
+    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'ada@example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
+
+    const otpInput = await screen.findByLabelText(/Verification code/i);
+    const slots = container.querySelectorAll('[data-slot="input-otp-slot"]');
+    expect(slots.length).toBe(6);
+
+    fireEvent.paste(otpInput, {
+      clipboardData: {
+        getData: () => '123-456',
+      },
+    });
+
+    await waitFor(() => expect(verify).toHaveBeenCalledTimes(1));
+    expect(verify).toHaveBeenCalledWith('ada@example.org', '123456');
+    await waitFor(() => expect(authenticated).toHaveBeenCalledTimes(1));
+    expect(Array.from(slots, (slot) => slot.textContent).join('')).toBe('123456');
+  });
 });

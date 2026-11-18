@@ -91,9 +91,17 @@ func TestMemoryStoresAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("failure unauthenticated without beta markers", func(t *testing.T) {
+		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores", nil, "", false)
+		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+	})
+
+	t.Run("success without beta markers", func(t *testing.T) {
+		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores", nil, defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
 	})
 
 	t.Run("failure invalid store fields", func(t *testing.T) {

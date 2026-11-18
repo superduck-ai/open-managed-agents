@@ -73,7 +73,6 @@ func TestStaticErrors(t *testing.T) {
 		kind    apperr.Kind
 		message string
 	}{
-		{name: "beta required", makeErr: vaultBetaRequired, kind: apperr.InvalidArgument, message: "Vaults API requires beta=true"},
 		{name: "route not found", makeErr: routeNotFound, kind: apperr.NotFound, message: "Not found"},
 		{name: "vault archived", makeErr: vaultArchived, kind: apperr.InvalidArgument, message: "Vault is archived"},
 		{name: "credential archived", makeErr: credentialArchived, kind: apperr.InvalidArgument, message: "Credential is archived"},

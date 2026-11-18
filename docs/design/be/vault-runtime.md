@@ -9,6 +9,10 @@
 
 主密钥支持 `local`、`aliyun_kms` 与 `hashicorp_vault` 三种 Provider（部署级配置，多 workspace 共用）。省略 Provider 保持本地 `kek` / `kek_file` 与 `version` + `decrypt_only` 行为。远程模式的主密钥留在阿里云 KMS 或 HashiCorp Vault Transit，OMA 仅发送待封装的数据密钥。
 
+## Vault API 兼容性
+
+`/v1/vaults` 及凭据子路由不要求 `?beta=true` 或 `anthropic-beta` 请求头。带这些标记的旧请求仍可使用，鉴权和资源访问范围不变。
+
 ## 背景
 
 Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 的普通 MCP 保留 Agent Snapshot 原始 URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不把普通 MCP 自动改写到该接口；只有 canonical Tunnel 条目会投影到独立的 named Runtime Gateway。

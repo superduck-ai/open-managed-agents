@@ -184,7 +184,7 @@ CPU 单位为毫核，内存单位为 MiB；CPU/内存为 `0` 时由集群选择
 
 已保存环境的详情页在配置表单下方展示工作队列，通过 `GET /v1/environments/{id}/work` 加载工作项 ID、状态、创建时间和更新时间，并提供加载提示、空状态及错误提示；归档环境仍可查看。新建环境页面仅显示配置表单。
 
-API 沿用 `/v1/environments` 的鉴权和 `beta=true` 要求，返回 `build` 对象。`job_id` 全程使用十进制字符串，避免 JavaScript 大整数精度丢失。
+API 沿用 `/v1/environments` 的鉴权，返回 `build` 对象。环境路由兼容带或不带 `beta=true` 的请求，不要求 `anthropic-beta` 请求头。`job_id` 全程使用十进制字符串，避免 JavaScript 大整数精度丢失。
 开始或取消操作在读取环境后仍会于事务中重新加锁；如果环境在两次读取之间被删除，返回环境不存在的 404。
 
 | 路由（相对于 `/v1/environments`） | 行为 |

@@ -27,7 +27,7 @@ import {
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
   archiveManagedEntity,
@@ -64,6 +64,7 @@ import {
   type ManagedEntityListFilters,
   type ManagedEntitySection,
   type PageCursor,
+  type PageResponse,
   type ResourceConfig,
   type SessionApiResponse,
 } from '../types';
@@ -80,6 +81,7 @@ import { SessionQuickView } from '../sessions/SessionQuickView';
 import { SessionListContent } from '../sessions/SessionListContent';
 import { SessionListHeader } from '../sessions/SessionListHeader';
 import { useSessionIdSearch } from '../sessions/useSessionIdSearch';
+import { useSessionListTitleRefresh } from '../sessions/useSessionListTitleRefresh';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -175,7 +177,12 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const [previewSession, setPreviewSession] = useState<{ workspaceId: string; session: SessionApiResponse } | null>(
     null,
   );
-  const [entities, setEntities] = useState<ManagedEntityApiResponse[]>([]);
+  const [entities, setEntityRows] = useState<ManagedEntityApiResponse[]>([]);
+  const pageRevision = useRef(0);
+  const setEntities = useCallback((next: SetStateAction<ManagedEntityApiResponse[]>) => {
+    pageRevision.current += 1;
+    setEntityRows(next);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -419,6 +426,23 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     };
   }, [activeWorkspaceId, config.section]);
 
+  const applyEntityPage = useCallback(
+    (page: PageResponse<ManagedEntityApiResponse>) => {
+      setEntities(page.data ?? []);
+      setEntityPageState((current) =>
+        withEntityPageResult(
+          current,
+          activeWorkspaceId,
+          config.section,
+          entityPageCursor,
+          page.next_page ?? null,
+          resourceListTotalCount(page.total_count),
+        ),
+      );
+    },
+    [activeWorkspaceId, config.section, entityPageCursor, setEntities],
+  );
+
   useEffect(() => {
     let active = true;
     const pageCursor = entityPageCursor;
@@ -434,17 +458,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       try {
         const page = await listManagedEntities(config.section, activeWorkspaceId, pageCursor, managedEntityListFilters);
         if (active) {
-          setEntities(page.data ?? []);
-          setEntityPageState((current) =>
-            withEntityPageResult(
-              current,
-              activeWorkspaceId,
-              config.section,
-              pageCursor,
-              page.next_page ?? null,
-              resourceListTotalCount(page.total_count),
-            ),
-          );
+          applyEntityPage(page);
           setLoading(false);
         }
       } catch (error) {
@@ -462,7 +476,16 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     return () => {
       active = false;
     };
-  }, [activeWorkspaceId, config.section, entityPageCursor, managedEntityListFilters, msg, refreshKey]);
+  }, [
+    activeWorkspaceId,
+    applyEntityPage,
+    config.section,
+    entityPageCursor,
+    managedEntityListFilters,
+    msg,
+    refreshKey,
+    setEntities,
+  ]);
 
   useEffect(() => {
     setSelectedEntityIds(new Set());
@@ -498,6 +521,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     config.section === 'sessions',
     entities.some((entity) => entity.id === search.trim()),
   );
+  useSessionListTitleRefresh({
+    section: config.section,
+    loading,
+    searching: sessionIdSearch.handled,
+    entities,
+    workspaceId: activeWorkspaceId,
+    cursor: entityPageCursor,
+    filters: managedEntityListFilters,
+    pageRevision,
+    onPage: applyEntityPage,
+  });
   const sessionListEntities = sessionIdSearch.handled
     ? sessionIdSearch.session
       ? [sessionIdSearch.session]
@@ -541,8 +575,13 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     });
   };
 
+  const selectEntityPage = (page: ManagedEntityPageState) => {
+    pageRevision.current += 1;
+    setEntityPageState(page);
+  };
+
   const resetEntityPage = () => {
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: null,
@@ -721,7 +760,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     if (!entityNextPage) {
       return;
     }
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: entityNextPage,
@@ -735,7 +774,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     if (!entityPageHistory.length) {
       return;
     }
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: entityPageHistory[entityPageHistory.length - 1],

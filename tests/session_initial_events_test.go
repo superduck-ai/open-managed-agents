@@ -143,7 +143,7 @@ func TestSessionInitialEvents(t *testing.T) {
 		first, second := makeEvent("sevt_initial_first"), makeEvent("sevt_initial_second")
 		missing := "sthr_missing_initial"
 		second.ThreadExternalID = &missing
-		_, _, _, _, _, err = app.db.CreateSessionWithEvents(t.Context(), input, []db.SessionEvent{first, second})
+		_, _, _, _, _, err = app.db.CreateSessionWithEvents(t.Context(), input, []db.SessionEvent{first, second}, nil)
 		if !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("expected missing thread after first insert, got %v", err)
 		}

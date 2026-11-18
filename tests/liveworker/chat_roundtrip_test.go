@@ -266,7 +266,18 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+			http.Error(w, "invalid model request", http.StatusBadRequest)
+			return
+		}
+		if !request.Stream {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"stop_reason":"end_turn","content":[{"type":"text","text":"Verify chat roundtrip"}]}`)
+			return
+		}
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, fields map[string]any) {

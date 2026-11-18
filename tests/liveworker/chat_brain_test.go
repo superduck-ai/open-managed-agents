@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -347,7 +348,8 @@ func brainHistoryModel(t *testing.T, previewSeen <-chan struct{}, calls *atomic.
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 		requireOK(t, err)
-		if calls.Load() == 1 {
+		var request chatModelFixtureRequest
+		if calls.Load() == 1 && jsonv2.Unmarshal(body, &request) == nil && request.Stream {
 			for _, expected := range []string{"请回复固定的聊天验证文本", "tool_result", "oma-brain-proof.txt"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("restored model context missing %q", expected)

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,10 @@ import (
 )
 
 const chatAnswer = "你好，聊天验证完成。"
+
+type chatModelFixtureRequest struct {
+	Stream bool `json:"stream"`
+}
 
 type chatEvent struct {
 	PrimaryEventID      string          `json:"primary_event_id"`
@@ -57,6 +62,57 @@ type chatEvent struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	} `json:"delta"`
+}
+
+func TestChatModelFixtureSeparatesTitleFromStream(t *testing.T) {
+	previewSeen := make(chan struct{}, 2)
+	var calls atomic.Int32
+	model := brainHistoryModel(t, previewSeen, &calls)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	requestModel := func(body string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, model.URL+"/v1/messages", strings.NewReader(body))
+		requireOK(t, err)
+		request.Header.Set("Anthropic-Version", "2023-06-01")
+		response, err := model.Client().Do(request)
+		requireOK(t, err)
+		return response
+	}
+
+	stream := requestModel(`{"stream":true}`)
+	defer stream.Body.Close()
+	if got := stream.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("chat Content-Type = %q, want event stream", got)
+	}
+	title := requestModel(`{"max_tokens":128}`)
+	defer title.Body.Close()
+	if got := title.Header.Get("Content-Type"); title.StatusCode != http.StatusOK || got != "application/json" {
+		t.Fatalf("title response = %d, %q, want 200 application/json", title.StatusCode, got)
+	}
+	var result struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	requireOK(t, jsonv2.UnmarshalRead(title.Body, &result))
+	if result.StopReason != "end_turn" || len(result.Content) != 1 || result.Content[0].Type != "text" || result.Content[0].Text == "" {
+		t.Fatalf("invalid title completion: %+v", result)
+	}
+
+	for range 2 {
+		previewSeen <- struct{}{}
+	}
+	frames, err := io.ReadAll(stream.Body)
+	requireOK(t, err)
+	if !strings.Contains(string(frames), "event: message_stop") {
+		t.Fatal("chat stream did not finish")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("chat model requests = %d, want 1", got)
+	}
 }
 
 func TestChatRoundtrip(t *testing.T) {
@@ -266,7 +322,16 @@ func chatModelFixture(t *testing.T, previewSeen <-chan struct{}, calls *atomic.I
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
+		var request chatModelFixtureRequest
+		if err := jsonv2.UnmarshalRead(io.LimitReader(r.Body, 1<<20), &request); err != nil {
+			http.Error(w, "invalid model request", http.StatusBadRequest)
+			return
+		}
+		if !request.Stream {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"msg_chat_title","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"聊天验证"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":4}}`)
+			return
+		}
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(kind string, fields map[string]any) {

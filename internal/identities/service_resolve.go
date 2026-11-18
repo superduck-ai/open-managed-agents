@@ -173,7 +173,11 @@ func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity 
 	mounts := EnabledMounts(append(append([]string{}, ingress.SharedVaultIDs...), state.Vaults...), state.Disabled)
 	availability := map[string]VaultState{}
 	for _, id := range mounts {
-		availability[id] = s.vaultState(ctx, ingress.WorkspaceUUID, id)
+		state, err := s.vaultState(ctx, ingress.WorkspaceUUID, id)
+		if err != nil {
+			return Decision{}, err
+		}
+		availability[id] = state
 	}
 	credentials, err := PlanCredentials(CredentialInput{
 		ChatType: ingress.ChatType, SharedMounts: mounts, Availability: availability,
@@ -190,15 +194,21 @@ func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity 
 	}, nil
 }
 
-func (s *Service) vaultState(ctx context.Context, workspaceUUID, vaultID string) VaultState {
+func (s *Service) vaultState(ctx context.Context, workspaceUUID, vaultID string) (VaultState, error) {
 	vault, err := s.store.GetVault(ctx, workspaceUUID, vaultID)
-	if errors.Is(err, db.ErrNotFound) || vault.DeletedAt != nil {
-		return VaultMissing
+	if errors.Is(err, db.ErrNotFound) {
+		return VaultMissing, nil
 	}
-	if err != nil || vault.ArchivedAt != nil {
-		return VaultArchived
+	if err != nil {
+		return "", err
 	}
-	return VaultActive
+	if vault.DeletedAt != nil {
+		return VaultMissing, nil
+	}
+	if vault.ArchivedAt != nil {
+		return VaultArchived, nil
+	}
+	return VaultActive, nil
 }
 
 func (s *Service) ResolveChannelIdentity(ctx context.Context, principal auth.Principal, identityID string) (string, error) {

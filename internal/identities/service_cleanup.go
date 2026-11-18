@@ -45,7 +45,10 @@ func (s *Service) ClearIdentity(ctx context.Context, principal auth.Principal, i
 		}
 		return ClearResult{State: "conflict", Outcome: outcome}, conflict(message, nil)
 	}
-	shared := s.sharedVaults(ctx, principal.WorkspaceUUID, identity.UUID)
+	shared, err := s.sharedVaults(ctx, principal.WorkspaceUUID, identity.UUID)
+	if err != nil {
+		return ClearResult{}, unavailable(err)
+	}
 	cleanupID, err := ids.New("idcl_")
 	if err != nil {
 		return ClearResult{}, unavailable(err)
@@ -77,7 +80,11 @@ func (s *Service) ClearIdentity(ctx context.Context, principal auth.Principal, i
 
 func (s *Service) ApplyCleanup(ctx context.Context, workspaceUUID, identityUUID string, shared []string) CleanupOutcome {
 	if shared == nil {
-		shared = s.sharedVaults(ctx, workspaceUUID, identityUUID)
+		listed, err := s.sharedVaults(ctx, workspaceUUID, identityUUID)
+		if err != nil {
+			return FinishCleanup(CleanupOutcome{Failures: []string{"list shared vaults failed"}, PersonalVaultsDeleted: false})
+		}
+		shared = listed
 	}
 	outcome := CleanupOutcome{RetainedSharedVaults: append([]string{}, shared...), PersonalVaultsDeleted: false}
 	archived, err := s.store.ArchiveIdentityConfigs(ctx, workspaceUUID, identityUUID)
@@ -101,26 +108,33 @@ func (s *Service) ApplyCleanup(ctx context.Context, workspaceUUID, identityUUID 
 	return FinishCleanup(outcome)
 }
 
-func (s *Service) sharedVaults(ctx context.Context, workspaceUUID, identityUUID string) []string {
-	rows, err := s.store.ListIdentityConfigs(ctx, workspaceUUID, identityUUID, "", "", pageMax)
-	if err != nil {
-		return []string{}
-	}
+func (s *Service) sharedVaults(ctx context.Context, workspaceUUID, identityUUID string) ([]string, error) {
 	seen := map[string]struct{}{}
 	var ids []string
-	for _, row := range rows {
-		for _, id := range decodeList(row.VaultMounts) {
-			if _, ok := seen[id]; ok || id == "" {
-				continue
-			}
-			seen[id] = struct{}{}
-			ids = append(ids, id)
+	cursor := ""
+	for {
+		rows, err := s.store.ListIdentityConfigs(ctx, workspaceUUID, identityUUID, "", cursor, pageMax)
+		if err != nil {
+			return nil, err
 		}
+		for _, row := range rows {
+			for _, id := range decodeList(row.VaultMounts) {
+				if _, ok := seen[id]; ok || id == "" {
+					continue
+				}
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+		if len(rows) < pageMax {
+			break
+		}
+		cursor = rows[len(rows)-1].ExternalID
 	}
 	if ids == nil {
-		return []string{}
+		return []string{}, nil
 	}
-	return ids
+	return ids, nil
 }
 
 func (s *Service) GetCleanup(ctx context.Context, principal auth.Principal, cleanupID string) (ClearResult, error) {

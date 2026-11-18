@@ -33,8 +33,11 @@ func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairi
 	}
 	if row.Status == "active" {
 		owner, err := s.PersonalActorIdentity(ctx, ingress, false)
-		if err != nil || row.IdentityUUID == nil || owner.UUID != *row.IdentityUUID {
-			return conflict("当前私聊已使用其他绑定，请联系管理员", err)
+		if err != nil {
+			return unavailable(err)
+		}
+		if row.IdentityUUID == nil || owner.UUID != *row.IdentityUUID {
+			return conflict("当前私聊已使用其他绑定，请联系管理员", nil)
 		}
 		return nil
 	}
@@ -56,11 +59,21 @@ func (s *Service) activatePersonalPairing(ctx context.Context, ingress Ingress, 
 	err = s.activatePairing(ctx, principal, row, identity, PairingWrite{AgentID: ingress.AgentExternalID, AgentVersion: version})
 	if errors.Is(err, db.ErrInvalidState) {
 		current, findErr := s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, row.ExternalID)
-		if findErr == nil && current.Status == "active" {
+		if findErr != nil {
+			return findErr
+		}
+		if current.Status == "active" && sameScopeTarget(current, identity.UUID, ingress.AgentExternalID, version) {
 			return nil
+		}
+		if current.Status == "active" {
+			return conflict("配对目标已变化，请重新发送消息", nil)
 		}
 	}
 	return err
+}
+
+func sameScopeTarget(row db.ScopePairingRecord, identityUUID, agentID string, version *int) bool {
+	return row.IdentityUUID != nil && *row.IdentityUUID == identityUUID && row.AgentExternalID == agentID && sameVersion(row.AgentVersion, version)
 }
 
 func (s *Service) PersonalActorIdentity(ctx context.Context, ingress Ingress, create bool) (db.IdentityRecord, error) {

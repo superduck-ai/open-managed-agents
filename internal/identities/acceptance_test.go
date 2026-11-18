@@ -3,6 +3,7 @@ package identities
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,9 +84,22 @@ func TestAcceptanceDecisions(t *testing.T) {
 		t.Fatalf("cleanup conflict: %v", err)
 	}
 	store.running = nil
+	store.listConfigErr = errors.New("list failed")
+	if _, err := service.ClearIdentity(context.Background(), principal, "idn_friday"); err == nil || store.channelMutations != 0 {
+		t.Fatalf("cleanup continued after vault list failure: %v mutations=%d", err, store.channelMutations)
+	}
+	store.listConfigErr = nil
+	store.vaultErr = errors.New("vault timeout")
+	if _, err := service.Resolve(context.Background(), Ingress{
+		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelExternalID: "chn_shared", ChatType: "p2p", ActorID: "ou_shared",
+		PersonalVaultID: "vlt_alice", PersonalActive: true,
+	}); err == nil {
+		t.Fatal("vault query failure was treated as an archived mount")
+	}
+	store.vaultErr = nil
 	store.archiveErr = db.ErrDuplicate
 	cleared, err := service.ClearIdentity(context.Background(), principal, "idn_friday")
-	if err != nil || cleared.Outcome.Completed || cleared.Outcome.PersonalVaultsDeleted || !contains(cleared.Outcome.RetainedSharedVaults, "vlt_left") {
+	if err != nil || cleared.Outcome.Completed || cleared.Outcome.PersonalVaultsDeleted || !contains(cleared.Outcome.RetainedSharedVaults, "vlt_shared") || contains(cleared.Outcome.RetainedSharedVaults, "vlt_left") {
 		t.Fatalf("partial cleanup: %v %#v", err, cleared)
 	}
 	view := configView(db.IdentityConfigRecord{Env: `{"API_TOKEN":"sk-secret","REGION":"cn"}`, VaultMounts: `[]`, DisabledVaults: `[]`})
@@ -113,6 +127,8 @@ type acceptanceStore struct {
 	pairingCreates    int
 	channelMutations  int
 	archiveErr        error
+	listConfigErr     error
+	vaultErr          error
 	pendingCode       db.ScopePairingRecord
 	pendingHash       string
 	activated         *db.ScopePairingRecord
@@ -200,6 +216,9 @@ func (s *acceptanceStore) FindActiveIdentityConfig(_ context.Context, _, identit
 }
 
 func (s *acceptanceStore) GetVault(_ context.Context, _, id string) (db.Vault, error) {
+	if s.vaultErr != nil {
+		return db.Vault{}, s.vaultErr
+	}
 	row, ok := s.vaults[id]
 	if !ok {
 		return db.Vault{}, db.ErrNotFound
@@ -237,10 +256,28 @@ func (s *acceptanceStore) ListRunningIdentitySessions(context.Context, string, s
 	return append([]string{}, s.running...), nil
 }
 
-func (s *acceptanceStore) ListIdentityConfigs(context.Context, string, string, string, string, int) ([]db.IdentityConfigRecord, error) {
+func (s *acceptanceStore) ListIdentityConfigs(_ context.Context, _, identity, agent, cursor string, limit int) ([]db.IdentityConfigRecord, error) {
+	if s.listConfigErr != nil {
+		return nil, s.listConfigErr
+	}
 	rows := make([]db.IdentityConfigRecord, 0, len(s.configs))
 	for _, row := range s.configs {
+		if row.IdentityUUID != identity || (row.Status != "" && row.Status != "active") {
+			continue
+		}
+		if agent != "" && row.AgentExternalID != agent {
+			continue
+		}
+		if cursor != "" && row.ExternalID >= cursor {
+			continue
+		}
 		rows = append(rows, row)
+	}
+	slices.SortFunc(rows, func(left, right db.IdentityConfigRecord) int {
+		return strings.Compare(right.ExternalID, left.ExternalID)
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
 	}
 	return rows, nil
 }

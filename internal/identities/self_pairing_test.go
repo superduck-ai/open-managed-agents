@@ -2,6 +2,7 @@ package identities
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -59,8 +60,9 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	if err := service.DeleteIdentity(t.Context(), principal, owner.ExternalID); err == nil {
 		t.Fatal("普通删除可以清除个人身份的稳定归属")
 	}
-	if left.AgentExternalID != "agent_friday" || left.AgentVersion == nil || *left.AgentVersion != 4 || left.Revision != 1 {
-		t.Fatalf("重复确认覆盖了已有配对: %+v", left)
+	current, err := store.FindScopePairing(t.Context(), "ws", first)
+	if err != nil || current.AgentExternalID != "agent_friday" || current.AgentVersion == nil || *current.AgentVersion != 4 || current.Revision != 1 {
+		t.Fatalf("重复确认覆盖了已有配对: %+v %v", current, err)
 	}
 	second, err := service.Resolve(t.Context(), other)
 	if err != nil || second.Mode != "execute" || second.IdentityUUID == owner.UUID {
@@ -86,11 +88,25 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	}
 }
 
+func TestSelfPairingRejectsConcurrentDifferentTarget(t *testing.T) {
+	store := &selfPairingStore{acceptanceStore: newAcceptanceStore(), pairings: map[string]db.ScopePairingRecord{}, links: map[string]string{}}
+	store.activateErr = db.ErrInvalidState
+	service := NewService(store, nil)
+	decision, err := service.Resolve(t.Context(), Ingress{
+		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelUUID: "channel", ChannelExternalID: "chn_self",
+		ChannelType: "feishu", AppID: "app", ChatType: "p2p", ActorID: "ou_left", DisplayName: "张三", AgentExternalID: "agent_friday",
+	})
+	if err != nil || decision.Mode != "hold" || !strings.Contains(decision.Notice, "配对目标已变化") {
+		t.Fatalf("并发改到其他目标后仍继续原消息：%+v %v", decision, err)
+	}
+}
+
 type selfPairingStore struct {
 	*acceptanceStore
-	pairings map[string]db.ScopePairingRecord
-	links    map[string]string
-	version  *int
+	pairings    map[string]db.ScopePairingRecord
+	links       map[string]string
+	version     *int
+	activateErr error
 }
 
 func (s *selfPairingStore) FindExecutionContext(context.Context, string, string) (db.ExecutionContextRecord, error) {
@@ -122,6 +138,17 @@ func (s *selfPairingStore) CreateBusinessIdentity(_ context.Context, p db.Insert
 	return row, nil
 }
 func (s *selfPairingStore) ActivateScopePairingByID(_ context.Context, p db.ActivateScopePairingParams) error {
+	if s.activateErr != nil {
+		err := s.activateErr
+		s.activateErr = nil
+		row := s.pairings[p.ExternalID]
+		other := "id_other"
+		row.Status = "active"
+		row.IdentityUUID = &other
+		row.AgentExternalID = "agent_other"
+		s.pairings[p.ExternalID] = row
+		return err
+	}
 	row := s.pairings[p.ExternalID]
 	row.IdentityUUID, row.AgentExternalID, row.AgentVersion = &p.IdentityUUID, p.AgentExternalID, p.AgentVersion
 	row.Revision, row.Status = 1, "active"

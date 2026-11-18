@@ -324,6 +324,12 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 }
 
 func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (bool, error) {
+	if event.EventType == "user.message" && event.TitleInput != "" &&
+		(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID) {
+		if err := NewSessionTitleJobMapper(executor).Enqueue(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, event.TitleInput); err != nil {
+			return false, err
+		}
+	}
 	if err := insertSessionUsageRecord(ctx, executor, event); err != nil {
 		return false, err
 	}

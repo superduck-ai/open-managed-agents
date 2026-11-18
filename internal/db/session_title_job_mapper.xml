@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SessionTitleJobMapper">
+    <insert id="Enqueue" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
+        SELECT 'job_session_title_' || s.uuid, s.workspace_uuid, 'session_title', 'pending',
+            jsonb_build_object('session_uuid', s.uuid, 'session_id', s.external_id, 'input', CAST(#{input,sensitive=true} AS text))
+        FROM sessions s
+        WHERE s.organization_uuid = #{organizationUUID} AND s.workspace_uuid = #{workspaceUUID}
+            AND s.uuid = #{sessionUUID} AND s.title IS NULL AND NOT s.title_manual
+            AND s.archived_at IS NULL AND s.deleted_at IS NULL AND s.status != 'terminated'
+            AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.workspace_uuid = s.workspace_uuid
+                AND j.external_id = 'job_session_title_' || s.uuid)
+        ON CONFLICT (external_id) DO NOTHING
+    </insert>
+    <update id="Lease" result="returning" resultType="sessionTitleJobRow">
+        WITH ready AS (
+            SELECT uuid FROM jobs
+            WHERE type = 'session_title' AND run_after &lt;= now()
+                AND (status = 'pending' OR (status = 'running' AND locked_until &lt; now()))
+            ORDER BY run_after, created_at
+            LIMIT #{limit} FOR UPDATE SKIP LOCKED
+        )
+        UPDATE jobs j SET status = 'running', locked_by = #{workerID},
+            locked_until = now() + interval '1 minute', updated_at = now()
+        FROM ready WHERE j.uuid = ready.uuid
+        RETURNING j.uuid, j.workspace_uuid, j.payload-&gt;&gt;'session_uuid' AS session_uuid,
+            j.payload-&gt;&gt;'session_id' AS session_id, j.payload-&gt;&gt;'input' AS input
+    </update>
+    <update id="Complete" result="exec">
+        WITH completed AS (
+            UPDATE jobs SET status = 'completed', locked_by = NULL, locked_until = NULL,
+                payload = payload - 'input', updated_at = now()
+            WHERE workspace_uuid = #{params.WorkspaceUUID} AND uuid = #{params.JobUUID}
+                AND type = 'session_title' AND status = 'running' AND locked_by = #{params.WorkerID}
+                AND locked_until &gt; now()
+            RETURNING workspace_uuid, payload-&gt;&gt;'session_uuid' AS session_uuid
+        )
+        UPDATE sessions s SET title = #{params.Title,sensitive=true}, updated_at = now()
+        FROM completed j
+        WHERE s.workspace_uuid = j.workspace_uuid AND s.uuid = CAST(j.session_uuid AS uuid)
+            AND s.title IS NULL AND NOT s.title_manual AND #{params.Title,sensitive=true} != ''
+            AND s.archived_at IS NULL AND s.deleted_at IS NULL AND s.status != 'terminated'
+    </update>
+</mapper>

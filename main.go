@@ -40,6 +40,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessiontitles"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -159,6 +160,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
+	stopSessionTitles := sessiontitles.NewWorker(database, vaultSecrets, logger.With("component", "session_titles")).Start(ctx)
+	defer stopSessionTitles()
 	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。

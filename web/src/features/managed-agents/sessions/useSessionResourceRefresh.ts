@@ -17,7 +17,7 @@ export function useSessionResourceRefresh(
   const { data, error, refetch } = useQuery({
     queryKey: ['session-resources', workspaceId, sessionId],
     queryFn: () => retrieveSessionDetailSession(sessionId!, workspaceId),
-    select: (response) => response.resources,
+    select: (response) => ({ resources: response.resources, title: response.title, updatedAt: response.updated_at }),
     enabled: Boolean(sessionId),
     refetchInterval: fileRefreshInterval || (resourcesVisible ? 10000 : false),
     refetchOnWindowFocus: true,
@@ -27,8 +27,9 @@ export function useSessionResourceRefresh(
     if (data)
       setSession((current) => {
         if (!current || current.id !== sessionId) return current;
-        const resources = replaceEqualDeep(current.resources, data);
-        return resources === current.resources ? current : { ...current, resources };
+        const resources = replaceEqualDeep(current.resources, data.resources);
+        const title = !current.title && data.title && data.updatedAt >= current.updated_at ? data.title : current.title;
+        return resources === current.resources && title === current.title ? current : { ...current, resources, title };
       });
   }, [data, sessionId, setSession, workspaceId]);
   useEffect(() => {

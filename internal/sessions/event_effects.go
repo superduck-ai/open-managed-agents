@@ -12,9 +12,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-func changedSessionFields(before, after db.Session) map[string]any {
+func changedSessionFields(before, after db.Session, titleSet bool) map[string]any {
 	fields := map[string]any{}
-	if !reflect.DeepEqual(before.Title, after.Title) {
+	if titleSet && !reflect.DeepEqual(before.Title, after.Title) {
 		fields["title"] = after.Title
 	}
 	if !agentsnapshot.SameRawJSON(before.Metadata, after.Metadata) {

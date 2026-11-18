@@ -126,3 +126,32 @@ test('discovers late resources after idle with the resources inspector closed', 
   resources = [{ type: 'file', file_id: 'file_late', mount_path: '/outputs/late.txt' }];
   await waitFor(() => expect(hook.latest()?.resources[0]?.file_id).toBe('file_late'), { timeout: 2500 });
 });
+
+test('discovers a generated title without replacing a manual title or other session fields', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const initial = { ...makeSession(), title: null, updated_at: '2026-11-17T00:00:00Z' };
+  globalThis.fetch = async () =>
+    Response.json({ ...initial, title: '修复会话标题', updated_at: '2026-11-17T00:00:01Z', status: 'idle' });
+  const hook = renderRefresh(initial, false);
+  await waitFor(() => expect(hook.latest()?.title).toBe('修复会话标题'));
+  expect(hook.latest()?.status).toBe('running');
+  expect(hook.latest()?.updated_at).toBe(initial.updated_at);
+  globalThis.fetch = async () => Response.json({ ...initial, title: 'Old title', updated_at: '2026-11-17T00:00:02Z' });
+  await act(async () => {
+    await hook.result.current.refresh();
+  });
+  expect(hook.latest()?.title).toBe('修复会话标题');
+});
+
+test('ignores title responses older than a manual clear', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const initial = { ...makeSession(), title: null, updated_at: '2026-11-17T00:00:02Z' };
+  globalThis.fetch = async () =>
+    Response.json({ ...initial, title: 'Old generated title', updated_at: '2026-11-17T00:00:01Z' });
+  const hook = renderRefresh(initial, false);
+  await waitFor(() => expect(hook.result.current.error).toBeNull());
+  await act(async () => {
+    await hook.result.current.refresh();
+  });
+  expect(hook.latest()?.title).toBeNull();
+});

@@ -373,13 +373,15 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	updated := current
 	var changed bool
-	if len(changedSessionFields(current, next)) > 0 {
+	if len(changedSessionFields(current, next, len(body.Title) > 0)) > 0 || len(body.Title) > 0 {
 		next.UpdatedAt = time.Now().UTC()
-		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next, len(body.Title) > 0)
 		if err != nil {
 			return mapSessionLoadError(err, sessionID)
 		}
-		if fields := changedSessionFields(current, updated); changed && len(fields) > 0 {
+		fields := changedSessionFields(current, updated, len(body.Title) > 0)
+		changed = changed && len(fields) > 0
+		if changed {
 			event, err := h.sessionUpdatedEvent(updated, fields)
 			if err == nil {
 				h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})

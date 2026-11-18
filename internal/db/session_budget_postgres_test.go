@@ -20,7 +20,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 		t.Fatalf("加载会话：%v", err)
 	}
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"1","currency":"USD"}}`)
-	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)
+	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 
 	session.BudgetReachedAt = nil
 	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
-	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session); err != nil {
+	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, false); err != nil {
 		t.Fatal(err)
 	}
 	changes, err = store.AppendSessionBudgetReachedEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{usage, idle}, transition)
@@ -109,7 +109,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	}
 	session.Budget = nil
 	session.BudgetRemovedAt = new(now)
-	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session)
+	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, false)
 	if err != nil {
 		t.Fatal(err)
 	}

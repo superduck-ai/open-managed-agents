@@ -33,6 +33,7 @@ type Session struct {
 	DeploymentUUID        *string
 	DeploymentID          *string
 	Title                 *string
+	TitleManual           bool
 	Metadata              json.RawMessage
 	VaultIDs              []string
 	Status                string
@@ -132,6 +133,7 @@ type SessionResourceMemoryStore struct {
 
 type SessionEvent struct {
 	threadStatusMirror bool
+	TitleInput         string
 	StatusThreadID     string
 	UsageIncrement     *SessionUsageIncrement
 	PayloadBlobUUID    *string
@@ -341,13 +343,14 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 	return row.session(), true, nil
 }
 
-func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, bool, error) {
+func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session, titleSet bool) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
 		WorkspaceUUID:   workspaceUUID,
 		ExternalID:      externalID,
 		AgentSnapshot:   agentJSONArg(next.AgentSnapshot),
 		Title:           next.Title,
+		TitleSet:        titleSet,
 		Metadata:        agentJSONArg(next.Metadata),
 		Budget:          agentJSONArg(next.Budget),
 		BudgetReachedAt: next.BudgetReachedAt,

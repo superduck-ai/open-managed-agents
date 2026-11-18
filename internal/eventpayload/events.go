@@ -17,6 +17,7 @@ func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUU
 	prepared := append([]db.SessionEvent(nil), events...)
 	for i := range prepared {
 		event := &prepared[i]
+		event.TitleInput = sessionTitleInput(*event)
 		// Status facts are normalized and compared inside the DB transaction.
 		// Keep their stop reasons inline instead of replacing them with a blob summary.
 		_, sessionStatus := maevents.SessionStatus(event.EventType)

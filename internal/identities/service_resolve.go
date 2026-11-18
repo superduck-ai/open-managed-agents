@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -18,6 +19,7 @@ type Ingress struct {
 	ChannelMode       string
 	AppID             string
 	AgentExternalID   string
+	AgentVersion      *int
 	ChatType          string
 	RemoteID          string
 	ActorID           string
@@ -85,6 +87,7 @@ func (s *Service) resolve(ctx context.Context, ingress Ingress, create bool) (De
 	if execution.Mode == "fixed" {
 		return s.resolveFixed(ctx, ingress, execution)
 	}
+	ingress.AgentVersion = execution.AgentVersion
 	return s.resolvePaired(ctx, ingress, create)
 }
 
@@ -119,6 +122,18 @@ func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create boo
 	pairing, code, created, err := s.openPairing(ctx, ingress, create)
 	if err != nil {
 		return Decision{}, err
+	}
+	if create && ingress.ChannelType == "feishu" && ingress.ChatType == "p2p" && pairing.Status == "pending" {
+		if err := s.activatePersonalPairing(ctx, ingress, pairing, ingress.AgentVersion); err != nil {
+			if public, ok := errors.AsType[*apperr.Error](err); ok && public.Kind != apperr.Unavailable {
+				return Decision{Mode: "hold", Notice: public.PublicMessage}, nil
+			}
+			return Decision{}, err
+		}
+		pairing, err = s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, pairing.ExternalID)
+		if err != nil {
+			return Decision{}, err
+		}
 	}
 	if pairing.Status != "active" || pairing.IdentityUUID == nil {
 		notice := "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "。请管理员绑定后重新发送，本条消息不会执行。"

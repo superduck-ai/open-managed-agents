@@ -54,27 +54,6 @@ func (f *fakeRuntimeStore) ClaimChannelInput(_ context.Context, scope db.Channel
 	return row, true, nil
 }
 
-func (f *fakeRuntimeStore) HoldChannelInputForPairing(_ context.Context, scope db.ChannelInputScope, id, owner, pairing string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	row := f.inputs[id]
-	if f.inputKeys[inputStoreKey(scope, row.MessageID)] != id || row.State != "buffering" || row.LeaseOwner != owner {
-		return db.ErrInvalidState
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(row.Payload), &payload); err != nil {
-		return err
-	}
-	payload["pairing_id"] = pairing
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	row.State, row.LeaseOwner, row.Payload = "pairing_wait", "", string(raw)
-	f.inputs[id] = row
-	return nil
-}
-
 func (f *fakeRuntimeStore) ResumeChannelInputAfterPairing(_ context.Context, scope db.ChannelInputScope, input db.ChannelPairingResume) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

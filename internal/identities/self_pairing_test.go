@@ -12,6 +12,7 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	store := &selfPairingStore{
 		acceptanceStore: newAcceptanceStore(),
 		pairings:        map[string]db.ScopePairingRecord{},
+		version:         new(4),
 		links:           map[string]string{},
 	}
 	service := NewService(store, nil)
@@ -20,30 +21,33 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 		ChannelType: "feishu", AppID: "app", ChatType: "p2p", ActorID: "ou_left", DisplayName: "张三",
 		AgentExternalID: "agent_friday",
 	}
-	first, err := service.PrepareSelfPairing(t.Context(), ingress)
-	if err != nil || first == "" {
-		t.Fatalf("创建待配对失败: %s %v", first, err)
-	}
-	other := ingress
-	other.ActorID, other.DisplayName = "ou_right", "李四"
-	if err := service.ConfirmSelfPairing(t.Context(), other, first, nil); err == nil {
-		t.Fatal("其他用户能操作张三的配对")
+	preview, err := service.Preview(t.Context(), ingress)
+	if err != nil || preview.Mode != "hold" || len(store.pairings) != 0 || len(store.links) != 0 {
+		t.Fatalf("预览创建了配对或身份：%+v %v", preview, err)
 	}
 	owner, err := service.PersonalActorIdentity(t.Context(), ingress, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	version := 4
-	if err := service.ConfirmSelfPairing(t.Context(), ingress, first, &version); err != nil {
+	decision, err := service.Resolve(t.Context(), ingress)
+	if err != nil || decision.Mode != "execute" || decision.IdentityUUID != owner.UUID || decision.AgentVersion != 4 {
+		t.Fatalf("首条私聊没有使用已有个人身份和固定版本执行：%+v %v", decision, err)
+	}
+	left, err := store.FindOpenScopePairing(t.Context(), ingress.ChannelUUID, "direct", ingress.AppID, ingress.ActorID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	first := left.ExternalID
 	ingress.AgentExternalID = "agent_new"
-	if err := service.ConfirmSelfPairing(t.Context(), ingress, first, nil); err != nil {
-		t.Fatal(err)
+	store.version = nil
+	again, err := service.Resolve(t.Context(), ingress)
+	if err != nil || again.AgentExternalID != "agent_friday" || again.AgentVersion != 4 {
+		t.Fatalf("已有配对目标被覆盖：%+v %v", again, err)
 	}
-	left := store.pairings[first]
-	if left.IdentityUUID == nil || *left.IdentityUUID != owner.UUID {
-		t.Fatal("OAuth 先分配的个人身份未被配对复用")
+	other := ingress
+	other.ActorID, other.DisplayName = "ou_right", "李四"
+	if err := service.ConfirmSelfPairing(t.Context(), other, first, nil); err == nil {
+		t.Fatal("其他用户能操作旧确认卡片")
 	}
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	if _, err := service.UpdatePairing(t.Context(), principal, first, PairingWrite{IdentityID: "idn_right", Revision: 1}); err == nil {
@@ -58,38 +62,27 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	if left.AgentExternalID != "agent_friday" || left.AgentVersion == nil || *left.AgentVersion != 4 || left.Revision != 1 {
 		t.Fatalf("重复确认覆盖了已有配对: %+v", left)
 	}
-	second, err := service.PrepareSelfPairing(t.Context(), other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.ConfirmSelfPairing(t.Context(), other, second, nil); err != nil {
-		t.Fatal(err)
-	}
-	if *left.IdentityUUID == *store.pairings[second].IdentityUUID {
-		t.Fatal("两个操作者共享同一个自动分配的身份")
+	second, err := service.Resolve(t.Context(), other)
+	if err != nil || second.Mode != "execute" || second.IdentityUUID == owner.UUID {
+		t.Fatalf("不同操作者没有创建独立身份：%+v %v", second, err)
 	}
 	left.Status = "unbound"
 	store.pairings[first] = left
 	if err := service.ConfirmSelfPairing(t.Context(), ingress, first, nil); err == nil {
 		t.Fatal("旧卡片恢复了已解绑配对")
 	}
-	rebound, err := service.PrepareSelfPairing(t.Context(), ingress)
-	if err != nil || rebound == first {
-		t.Fatalf("解绑后未取得新配对: %s %v", rebound, err)
-	}
-	disabled := store.identities[*left.IdentityUUID]
+	disabled := store.identities[owner.UUID]
 	disabled.Enabled = false
-	store.identities[disabled.UUID] = disabled
-	if err := service.ConfirmSelfPairing(t.Context(), ingress, rebound, nil); err == nil {
-		t.Fatal("自助配对绕过身份停用")
+	store.identities[owner.UUID] = disabled
+	held, err := service.Resolve(t.Context(), ingress)
+	if err != nil || held.Mode != "hold" {
+		t.Fatalf("自动配对绕过身份停用：%+v %v", held, err)
 	}
 	disabled.Enabled = true
-	store.identities[disabled.UUID] = disabled
-	if err := service.ConfirmSelfPairing(t.Context(), ingress, rebound, nil); err != nil {
-		t.Fatal(err)
-	}
-	if *store.pairings[rebound].IdentityUUID != *left.IdentityUUID || store.pairings[rebound].AgentExternalID != "agent_new" {
-		t.Fatal("重新配对应复用身份并使用当前执行目标")
+	store.identities[owner.UUID] = disabled
+	rebound, err := service.Resolve(t.Context(), ingress)
+	if err != nil || rebound.Mode != "execute" || rebound.IdentityUUID != owner.UUID || rebound.AgentExternalID != "agent_new" {
+		t.Fatalf("重新配对应复用身份并使用当前执行目标：%+v %v", rebound, err)
 	}
 }
 
@@ -97,10 +90,11 @@ type selfPairingStore struct {
 	*acceptanceStore
 	pairings map[string]db.ScopePairingRecord
 	links    map[string]string
+	version  *int
 }
 
 func (s *selfPairingStore) FindExecutionContext(context.Context, string, string) (db.ExecutionContextRecord, error) {
-	return db.ExecutionContextRecord{Mode: "pairing"}, nil
+	return db.ExecutionContextRecord{Mode: "pairing", AgentVersion: s.version}, nil
 }
 func (s *selfPairingStore) FindOpenScopePairing(_ context.Context, channel, kind, app, actor string) (db.ScopePairingRecord, error) {
 	for _, row := range s.pairings {

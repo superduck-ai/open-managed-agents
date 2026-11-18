@@ -16,20 +16,6 @@ func (s *Service) AllowsSelfPairing(ctx context.Context, ingress Ingress) (bool,
 	return execution.Mode == "pairing" && !execution.EntryClosed, err
 }
 
-func (s *Service) PrepareSelfPairing(ctx context.Context, ingress Ingress) (string, error) {
-	enabled, err := s.AllowsSelfPairing(ctx, ingress)
-	if err != nil || !enabled {
-		return "", err
-	}
-	ingress.ScopeKind = "direct"
-	ingress.RemoteID = ingress.ActorID
-	pairing, _, _, err := s.ensurePendingPairing(ctx, ingress)
-	if err != nil || pairing.Status != "pending" {
-		return "", err
-	}
-	return pairing.ExternalID, nil
-}
-
 func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairingID string, version *int) error {
 	enabled, err := s.AllowsSelfPairing(ctx, ingress)
 	if err != nil {
@@ -52,6 +38,10 @@ func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairi
 		}
 		return nil
 	}
+	return s.activatePersonalPairing(ctx, ingress, row, version)
+}
+
+func (s *Service) activatePersonalPairing(ctx context.Context, ingress Ingress, row db.ScopePairingRecord, version *int) error {
 	if _, err := s.visibleAgent(ctx, ingress.WorkspaceUUID, ingress.AgentExternalID, versionValue(version)); err != nil {
 		return err
 	}
@@ -65,7 +55,7 @@ func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairi
 	}
 	err = s.activatePairing(ctx, principal, row, identity, PairingWrite{AgentID: ingress.AgentExternalID, AgentVersion: version})
 	if errors.Is(err, db.ErrInvalidState) {
-		current, findErr := s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, pairingID)
+		current, findErr := s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, row.ExternalID)
 		if findErr == nil && current.Status == "active" {
 			return nil
 		}

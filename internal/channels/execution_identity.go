@@ -16,7 +16,6 @@ import (
 type identityIngress interface {
 	PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error)
 	AllowsSelfPairing(context.Context, identities.Ingress) (bool, error)
-	PrepareSelfPairing(context.Context, identities.Ingress) (string, error)
 	ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error
 	Resolve(context.Context, identities.Ingress) (identities.Decision, error)
 	Preview(context.Context, identities.Ingress) (identities.Decision, error)
@@ -64,6 +63,9 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 		} else if w.supervisor.personalVaultLookup != nil {
 			personalID, personalActive, err = w.supervisor.personalVaultLookup(ctx, w.record, msg.UserID)
 		}
+		if create && errors.Is(err, errChannelPersonalIdentityDisabled) {
+			return identities.Decision{Mode: "hold", Notice: "个人执行身份已停用，请联系管理员。"}, nil
+		}
 		if err != nil {
 			return identities.Decision{}, err
 		}
@@ -71,7 +73,11 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 	ingress := channelIngress(w.record, msg, scopeKey)
 	ingress.PersonalVaultID = personalID
 	ingress.PersonalActive = personalActive
-	ingress.SharedVaultIDs = parseChannelMounts(w.record.Mounts).VaultIDs
+	mounts := parseChannelMounts(w.record.Mounts)
+	ingress.SharedVaultIDs = mounts.VaultIDs
+	if mounts.AgentVersion > 0 {
+		ingress.AgentVersion = new(mounts.AgentVersion)
+	}
 	if create {
 		return w.supervisor.ingress.Resolve(ctx, ingress)
 	}

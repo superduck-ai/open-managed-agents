@@ -116,9 +116,6 @@ func (inactiveSelfPairing) PersonalActorIdentity(context.Context, identities.Ing
 func (inactiveSelfPairing) AllowsSelfPairing(context.Context, identities.Ingress) (bool, error) {
 	return false, nil
 }
-func (inactiveSelfPairing) PrepareSelfPairing(context.Context, identities.Ingress) (string, error) {
-	return "", nil
-}
 func (inactiveSelfPairing) ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error {
 	return db.ErrInvalidState
 }

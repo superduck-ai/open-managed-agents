@@ -25,7 +25,6 @@ const (
 type runtimeStore interface {
 	ReceiveChannelInput(context.Context, db.ChannelInputScope, db.ChannelInput) (db.ChannelInput, bool, error)
 	ClaimChannelInput(context.Context, db.ChannelInputScope, string, string) (db.ChannelInput, bool, error)
-	HoldChannelInputForPairing(context.Context, db.ChannelInputScope, string, string, string) error
 	ResumeChannelInputAfterPairing(context.Context, db.ChannelInputScope, db.ChannelPairingResume) (string, bool, error)
 	ListRecoverableChannelInputs(context.Context, db.ChannelInputScope) ([]db.ChannelInput, error)
 	PrepareChannelInputBatch(context.Context, db.ChannelInputScope, string, db.ChannelInputBatch) (db.ChannelInput, error)

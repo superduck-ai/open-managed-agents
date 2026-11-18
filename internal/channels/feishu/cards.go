@@ -31,9 +31,6 @@ func Render(r contracts.Reply) string {
 	if !r.Ended && !r.Interrupted {
 		elements = append(elements, InteractionElements(r)...)
 	}
-	if r.PairingValue != nil {
-		elements = append(elements, button("绑定我的身份", "primary", *r.PairingValue, false))
-	}
 	if r.Thinking && len(r.Interactions) == 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "_🧠 正在思考…_", "text_size": "notation"})
 	}

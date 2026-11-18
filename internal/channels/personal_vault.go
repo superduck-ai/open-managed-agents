@@ -26,7 +26,7 @@ func (s *Service) personalVaultIdentity(ctx context.Context, record db.ChannelRe
 		return key, err
 	}
 	if !owner.Enabled {
-		return key, db.ErrInvalidState
+		return key, errChannelPersonalIdentityDisabled
 	}
 	key.IdentityUUID = owner.UUID
 	if create {

@@ -49,14 +49,6 @@ func (w *channelWorker) claimAndDispatchInput(ctx context.Context, inputUUID str
 	}
 	msg.Input = &row
 	if row.State == "buffering" {
-		handled, err := w.promptSelfPairing(ctx, &msg, row.ScopeKey)
-		if err != nil {
-			w.releaseInput(ctx, &msg)
-			return err
-		}
-		if handled {
-			return nil
-		}
 		if adapter, ok := w.adapter.(interface {
 			QueueInput(context.Context, *channelMessage) error
 		}); ok {

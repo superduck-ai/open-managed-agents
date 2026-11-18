@@ -11,31 +11,6 @@ import (
 
 const selfPairingAction = "pair_identity"
 
-func (w *channelWorker) promptSelfPairing(ctx context.Context, msg *channelMessage, scopeKey string) (bool, error) {
-	if w.supervisor.ingress == nil || w.record.ChannelType != "feishu" || msg.ChatType != "p2p" {
-		return false, nil
-	}
-	pairingID, err := w.supervisor.ingress.PrepareSelfPairing(ctx, channelIngress(w.record, msg, scopeKey))
-	if err != nil || pairingID == "" {
-		return false, err
-	}
-	if err := w.supervisor.store.HoldChannelInputForPairing(ctx, w.inputScope(), msg.Input.UUID, w.deliveryOwner, pairingID); err != nil {
-		return true, err
-	}
-	stream, err := w.adapter.OpenReply(ctx, msg, contracts.Reply{
-		Status: "绑定执行身份",
-		Blocks: []contracts.ReplyBlock{{Text: "绑定后继续处理这条消息。"}},
-		PairingValue: &channelActionValue{
-			Kind: selfPairingAction, ChannelID: w.record.ExternalID, ScopeKey: scopeKey,
-			OpenID: msg.UserID, PairingID: pairingID, SourceID: msg.MessageID,
-		},
-	})
-	if err != nil {
-		return true, err
-	}
-	return true, stream.Close(ctx)
-}
-
 func (w *channelWorker) confirmSelfPairing(ctx context.Context, event *contracts.ActionEvent, value channelActionValue) error {
 	if w.supervisor.ingress == nil || value.ChannelID != w.record.ExternalID || value.PairingID == "" || value.SourceID == "" ||
 		event.OpenID == "" || value.OpenID != event.OpenID || event.ChatID == "" ||

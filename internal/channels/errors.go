@@ -12,14 +12,15 @@ import (
 const channelExecutionFailedMessage = "本轮执行失败，请稍后重试或在 OMA 会话中查看错误。"
 
 var (
-	errChannelSubscriptionUnavailable = errors.New("内部会话订阅尚未配置")
-	errChannelDeliveryUnconfirmed     = errors.New("渠道卡片交付未确认")
-	errChannelSessionUnconfirmed      = errors.New("渠道会话状态未确认")
-	errChannelExecutionHeld           = errors.New("渠道执行已拦截")
-	errOMAPaginationCycle             = errors.New("OMA 分页游标重复")
-	errChannelInputUnconfirmed        = errors.New("渠道输入提交结果未确认")
-	errOMARequestRejected             = errors.New("OMA 明确拒绝请求")
-	errChannelMediaUploadRejected     = contracts.ErrMediaUploadRejected
+	errChannelSubscriptionUnavailable  = errors.New("内部会话订阅尚未配置")
+	errChannelDeliveryUnconfirmed      = errors.New("渠道卡片交付未确认")
+	errChannelSessionUnconfirmed       = errors.New("渠道会话状态未确认")
+	errChannelExecutionHeld            = errors.New("渠道执行已拦截")
+	errChannelPersonalIdentityDisabled = errors.New("个人执行身份已停用")
+	errOMAPaginationCycle              = errors.New("OMA 分页游标重复")
+	errChannelInputUnconfirmed         = errors.New("渠道输入提交结果未确认")
+	errOMARequestRejected              = errors.New("OMA 明确拒绝请求")
+	errChannelMediaUploadRejected      = contracts.ErrMediaUploadRejected
 )
 
 func omaResponseError(status int) error {

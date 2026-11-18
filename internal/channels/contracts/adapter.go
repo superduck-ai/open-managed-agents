@@ -106,7 +106,6 @@ type Reply struct {
 	Status, Text                 string
 	Blocks                       []ReplyBlock
 	StopValue                    *ActionValue
-	PairingValue                 *ActionValue
 	Interactions                 []Interaction
 }
 

@@ -19,6 +19,7 @@ type mailFixture struct {
 	recipient     string
 	message       string
 	memberLookups int
+	done          chan struct{}
 }
 
 func (f *mailFixture) GetPlatformOrganization(context.Context, string) (*platform.OrganizationRecord, error) {
@@ -44,9 +45,96 @@ func TestPlatformInvitationMailIdentity(t *testing.T) {
 	}
 }
 func (f *mailFixture) SendMessage(_ context.Context, recipient string, message []byte) error {
+	if f.done != nil {
+		defer close(f.done)
+	}
 	f.calls++
 	f.recipient, f.message = recipient, string(message)
 	return f.err
+}
+
+func (f *mailFixture) SendCard(ctx context.Context, recipient string, card []byte) error {
+	return f.SendMessage(ctx, recipient, card)
+}
+
+func TestInvitationFeishuDelivery(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		smtp       bool
+		smtpFail   bool
+		feishuFail bool
+		want       string
+	}{
+		{"both fail", true, true, true, "failed"},
+		{"Feishu-only failure", false, false, true, "failed"},
+		{"SMTP fails", true, true, false, "sent"},
+		{"Feishu fails", true, false, true, "sent"},
+		{"both succeed", true, false, false, "sent"},
+		{"Feishu only", false, false, false, "sent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.AuthConfig{ConsoleURL: "https://oma.example.com", Feishu: config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}}
+			store := &mailFixture{}
+			mailer := NewMailer(cfg, store, nil)
+			if mailer.feishu == nil || mailer.sender != nil {
+				t.Fatal("Feishu must be enabled independently of SMTP")
+			}
+			feishu := &mailFixture{done: make(chan struct{})}
+			smtp := &mailFixture{done: make(chan struct{})}
+			mailer.feishu = feishu
+			if tc.smtp {
+				mailer.sender = smtp
+			}
+			if tc.smtpFail {
+				smtp.err = errors.New("SMTP unavailable")
+			}
+			if tc.feishuFail {
+				feishu.err = errors.New("Feishu unavailable")
+			}
+			expiry := time.Date(2026, 12, 1, 8, 0, 0, 0, time.UTC)
+			if got := mailer.Notify(t.Context(), auth.Principal{OrganizationUUID: "org", UserExternalID: "user"}, "user@example.com", expiry); got != tc.want {
+				t.Fatalf("delivery status = %s, want %s", got, tc.want)
+			}
+			completed := []<-chan struct{}{feishu.done}
+			if tc.smtp {
+				completed = append(completed, smtp.done)
+			}
+			for _, done := range completed {
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("configured sender did not finish")
+				}
+			}
+			if feishu.calls != 1 || feishu.recipient != "user@example.com" || (tc.smtp && (smtp.calls != 1 || smtp.recipient != feishu.recipient)) {
+				t.Fatal("all configured senders must receive the invitation")
+			}
+			for _, part := range []string{"研发 <script>alert(1)</script>", "admin@example.com", "2026-12-01 16:00（北京时间）", "https://oma.example.com/invites", "使用受邀邮箱登录后确认加入"} {
+				if !strings.Contains(feishu.message, part) {
+					t.Fatalf("Feishu invitation is missing %q", part)
+				}
+			}
+		})
+	}
+}
+
+func TestFeishuInvitationBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		url     string
+		domains []string
+		want    string
+	}{
+		{"console URL missing", "", nil, "not_configured"},
+		{"email domain rejected", "https://oma.example.com", []string{"allowed.example"}, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mailer := NewMailer(config.AuthConfig{ConsoleURL: tc.url, AllowedEmailDomains: tc.domains, Feishu: config.FeishuConfig{AppID: "cli_test", AppSecret: "secret"}}, nil, nil)
+			if got := mailer.Notify(t.Context(), auth.Principal{}, "user@example.com", time.Now()); got != tc.want {
+				t.Fatalf("delivery status = %s, want %s", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestInvitationMailDelivery(t *testing.T) {

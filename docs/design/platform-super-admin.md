@@ -34,7 +34,7 @@
 | `platformIdentityMiddleware` 只验证登录身份并检查写请求 CSRF                                    | 全局后台复用此入口，另加超级管理员授权；不挂依赖 workspace 的通用业务鉴权 |
 | 组织成员变更通过组织行锁保护最后一名管理员                                                      | 后台操作共用相同锁和不变量，只增加显式的平台操作者授权分支                |
 | 邀请接受不覆盖已有成员角色                                                                      | 已有成员提权必须走显式管理员操作，不能靠邀请覆盖角色                      |
-| SMTP 未配置时允许任意非空验证码登录                                                             | 全局后台要求真实认证会话；配置切换前的开发会话不能获得后台权限            |
+| SMTP 与飞书均未配置时允许任意非空验证码登录                                                             | 全局后台要求真实认证会话；配置切换前的开发会话不能获得后台权限            |
 
 代码依据（均指上述 PR 提交）：`internal/api/platform_identity.go`、`internal/platformsession/session.go`、`internal/platformapi/platform_bootstrap.go`、`internal/platformapi/platform_bootstrap_builders.go`、`internal/db/platform_auth_user_mapper.xml`、`internal/db/organization_members.go`、`internal/platformauth/service.go`。
 
@@ -122,7 +122,7 @@ flowchart TD
 - 授权查询失败返回 503 并拒绝操作；不把故障降级为允许，也不返回误导性的“没有组织”。
 - 仅全局后台原有写事务内复核操作者平台授权并持有授权记录锁直至提交；撤权取得冲突锁。写操作先获得锁则先完成，撤权先提交则该写操作被拒绝，避免只在 HTTP 中间件检查造成竞态。
 
-认证强度必须来自成功认证路径的服务端记录。会话增加认证方式/版本标记；仅真实邮箱验证码验证成功的会话可进入后台。任意验证码开发模式、缺少可信标记的旧会话均需要重新认证，不得因为当前 SMTP 已配置就追认旧会话。生产会话使用 HTTPS 和 Secure cookie：API 组装层在 `env=prod` 或配置 HTTPS 的 `auth.console_url` 时启用 Secure，并显式传给两个邮箱登录入口；不使用请求的代理头决定此属性。会话 Cookie 保持 HttpOnly、SameSite=Lax 和根路径，本地 HTTP 开发环境仍可登录。全局后台的开启条件应包含真实认证配置；不满足时关闭后台能力，普通开发控制台保留现有行为。
+认证强度必须来自成功认证路径的服务端记录。会话增加认证方式/版本标记；仅真实验证码验证成功的会话可进入后台（SMTP 或企业飞书邮箱对应身份，见认证边界文档）。任意验证码开发模式、缺少可信标记的旧会话均需要重新认证，不得因为当前 SMTP 或飞书已配置就追认旧会话。生产会话使用 HTTPS 和 Secure cookie：API 组装层在 `env=prod` 或配置 HTTPS 的 `auth.console_url` 时启用 Secure，并显式传给两个邮箱登录入口；不使用请求的代理头决定此属性。会话 Cookie 保持 HttpOnly、SameSite=Lax 和根路径，本地 HTTP 开发环境仍可登录。全局后台的开启条件应包含真实认证配置；不满足时关闭后台能力，普通开发控制台保留现有行为。
 
 `GET /api/platform-admin/bootstrap` 返回后台所需的账号摘要、平台权限和 CSRF，不依赖完整组织 bootstrap。这也避免注册组织关系失效导致后台无法进入。身份资料读取应按稳定账号 UUID 获取，不能因组织成员软删除而误判全局账号删除；当前 `users.deleted_at` 表示成员移除，不能直接当作全局账号停用状态。
 
@@ -326,7 +326,7 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 组织详情由处理器读取一次；目录仅检查组织是否存在，写操作仍在事务内锁定组织并校验版本。后台与组织设置共用角色选项、说明、翻译和角色选择器。
 
-邀请创建、重发时，在原 `organization_invites.email_delivery_status` 保存最新平台投递状态，并与 River 任务在同一 Yourbatis 事务内提交。River 负责并发执行、30 秒超时、最多 5 次尝试和崩溃恢复，不再维护独立轮询、租约和重试计数。未启用真实邮箱认证时不注册邀请队列消费，保留待处理任务。不保留逐次投递历史。任务携带邀请 UUID、组织 UUID、收件邮箱、邀请时间及过期时间；发送前和回写结果时都按完整快照匹配，重发、撤销、接受、拒绝或过期后的旧任务不发送、不覆盖最新状态。所有入口修改邀请快照时通过数据库触发器重置最新平台投递状态，原 Console/Admin API 的同步发送及 `email_delivery` 返回合同保持不变。平台邀请与控制台邀请共用发送器，在读取组织和调用 SMTP 前遵守 `auth.allowed_email_domains`；未允许的域名返回投递失败，不发送邮件。SMTP 接受不等于收件或接受邀请。
+邀请创建、重发时，在原 `organization_invites.email_delivery_status` 保存最新平台投递状态，并与 River 任务在同一 Yourbatis 事务内提交。River 负责并发执行、30 秒超时、最多 5 次尝试和崩溃恢复，不再维护独立轮询、租约和重试计数。未启用真实邮箱认证时不注册邀请队列消费，保留待处理任务。不保留逐次投递历史。任务携带邀请 UUID、组织 UUID、收件邮箱、邀请时间及过期时间；发送前和回写结果时都按完整快照匹配，重发、撤销、接受、拒绝或过期后的旧任务不发送、不覆盖最新状态。所有入口修改邀请快照时通过数据库触发器重置最新平台投递状态，原 Console/Admin API 的同步发送及 `email_delivery` 返回合同保持不变。平台邀请与控制台邀请共用发送器，在读取组织和调用发送接口前遵守 `auth.allowed_email_domains`；未允许的域名返回投递失败，不发送邮件。通知发送方接受不等于收件或接受邀请；配置飞书时沿用同一任务并向所有已配置发送方式并行投递，任一种成功即记为 sent。
 
 旧 `reason` 字段仅兼容接收，不校验、不持久化；CLI `--reason` 可省略。撤销邀请使用 POST `.../{invitationUuid}/revoke`。
 

@@ -13,23 +13,23 @@ export function notifyInvitationDelivery(invites: OrganizationInvite[], msg: I18
     sent &&
       msg(
         'invitations.delivery.sent',
-        'Invitation emails submitted for sending. Remind recipients to check their inbox.',
+        'Invitation notifications submitted for sending. Remind recipients to check their email or Feishu messages.',
       ),
     failed &&
       msg(
         'invitations.delivery.failed',
-        '{count, plural, one {# invitation email} other {# invitation emails}} could not be sent. You can resend from the invitation menu.',
+        '{count, plural, one {# invitation notification} other {# invitation notifications}} could not be sent. You can resend from the invitation menu.',
         { count: failed },
       ),
     notConfigured &&
       msg(
         'invitations.delivery.notConfigured',
-        'Email delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations.',
+        'Notification delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations.',
       ),
     unknown &&
       msg(
         'invitations.delivery.unconfirmed',
-        'The server did not return the delivery status of {count, plural, one {# invitation email} other {# invitation emails}}. Recipients can sign in to view their invitations.',
+        'The server did not return the delivery status of {count, plural, one {# invitation notification} other {# invitation notifications}}. Recipients can sign in to view their invitations.',
         { count: unknown },
       ),
   ]

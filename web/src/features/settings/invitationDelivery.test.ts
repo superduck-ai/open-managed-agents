@@ -36,8 +36,8 @@ for (const locale of ['en', 'zh-CN'] as const) {
       expect(warning).toHaveBeenCalledWith(title, {
         description:
           locale === 'en'
-            ? `${count} invitation ${count === 1 ? 'email' : 'emails'} could not be sent. You can resend from the invitation menu.`
-            : `${count} 封邀请邮件发送失败，可在邀请菜单中重发。`,
+            ? `${count} invitation ${count === 1 ? 'notification' : 'notifications'} could not be sent. You can resend from the invitation menu.`
+            : `${count} 条邀请通知发送失败，可在邀请菜单中重发。`,
       });
       expect(success).not.toHaveBeenCalled();
     });
@@ -48,8 +48,8 @@ for (const locale of ['en', 'zh-CN'] as const) {
     expect(warning).toHaveBeenCalledWith(title, {
       description:
         locale === 'en'
-          ? 'The server did not return the delivery status of 1 invitation email. Recipients can sign in to view their invitations.'
-          : '服务端未返回 1 封邀请邮件的投递状态，受邀人可登录查看组织邀请。',
+          ? 'The server did not return the delivery status of 1 invitation notification. Recipients can sign in to view their invitations.'
+          : '服务端未返回 1 条邀请通知的投递状态，受邀人可登录查看组织邀请。',
     });
     expect(success).not.toHaveBeenCalled();
   });
@@ -76,7 +76,7 @@ for (const locale of ['en', 'zh-CN'] as const) {
     expect(warning).not.toHaveBeenCalled();
   });
 
-  test(`${locale} 服务端确认 SMTP 接受才显示提交发送`, () => {
+  test(`${locale} 服务端确认至少一种通知发送成功才显示提交发送`, () => {
     notify('sent');
     expect(success).toHaveBeenCalledWith(title, { description: messages['invitations.delivery.sent'] });
     expect(warning).not.toHaveBeenCalled();

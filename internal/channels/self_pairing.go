@@ -75,13 +75,15 @@ func (w *channelWorker) confirmSelfPairing(ctx context.Context, event *contracts
 	if err != nil {
 		return err
 	}
+	text := "身份已绑定。"
 	if resumed {
 		if err := w.claimAndDispatchInput(ctx, id); err != nil {
 			return err
 		}
+		text = "已继续处理刚才的消息。"
 	}
 	return w.adapter.ResumeReply(event.MessageID).Update(ctx, contracts.Reply{
 		Status: "绑定成功", Ended: true,
-		Blocks: []contracts.ReplyBlock{{Text: "已继续处理刚才的消息。"}},
+		Blocks: []contracts.ReplyBlock{{Text: text}},
 	})
 }

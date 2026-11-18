@@ -51,8 +51,15 @@ func TestSelfPairingChecksAdmissionAgainAndResumesOnlyTheConfirmedInput(t *testi
 	if err := worker.handleAction(t.Context(), event); err != nil || !ingress.confirmed {
 		t.Fatalf("准入后本人无法完成绑定: %v", err)
 	}
+	if !strings.Contains(strings.Join(feishu.appends, ""), "已继续处理刚才的消息。") {
+		t.Fatal("首次确认没有说明原消息会继续处理")
+	}
 	if err := worker.handleAction(t.Context(), event); err != nil {
 		t.Fatal(err)
+	}
+	last := feishu.appends[len(feishu.appends)-1]
+	if strings.Contains(last, "已继续处理刚才的消息。") || !strings.Contains(last, "身份已绑定。") {
+		t.Fatalf("重复确认仍声称原消息已继续: %s", last)
 	}
 	worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 	waitForScope(t, worker, "chat:oc_1")

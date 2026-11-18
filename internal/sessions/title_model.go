@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -124,13 +125,14 @@ func generateSessionTitle(ctx context.Context, client *http.Client, upstream llm
 	upstream.ApplyHeaders(request.Header)
 	response, err := client.Do(request)
 	if err != nil {
-		return "", titleModelRequestError(err)
+		return "", cmp.Or(ctx.Err(), titleModelRequestError(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("title model returned HTTP %d", response.StatusCode)
 	}
-	return readSessionTitle(io.LimitReader(response.Body, 1<<20), upstream.APIBackend)
+	title, err := readSessionTitle(io.LimitReader(response.Body, 1<<20), upstream.APIBackend)
+	return title, cmp.Or(ctx.Err(), err)
 }
 
 func (r *titleCompletionRequest) setOpenAITokenLimit() {
@@ -215,8 +217,10 @@ func readSessionTitle(reader io.Reader, backend string) (string, error) {
 			}
 			return r
 		}, line)
-		if title := strings.Trim(strings.Join(strings.Fields(line), " "), "`*\"“” "); title != "" {
-			return limitTitleRunes(title, titleOutputRunes), nil
+		title := strings.Trim(strings.Join(strings.Fields(line), " "), "`*\"“” ")
+		title = limitTitleRunes(title, titleOutputRunes)
+		if strings.Trim(title, " \u200c\u200d") != "" {
+			return title, nil
 		}
 	}
 	return "", errors.New("title model returned no complete title")

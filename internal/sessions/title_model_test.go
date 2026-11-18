@@ -1,7 +1,9 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -36,6 +38,7 @@ func TestSessionTitleModelResponses(t *testing.T) {
 		{"reasoning only", llmproviders.Messages, `{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"private"}]}`, ""},
 		{"first line", llmproviders.ChatCompletions, `{"choices":[{"finish_reason":"stop","message":{"content":"\n**排查会话延迟**\n说明"}}]}`, "排查会话延迟"},
 		{"join controls", llmproviders.Messages, `{"stop_reason":"end_turn","content":[{"type":"text","text":"نامه\u200cای \u202e👩\u200d💻"}]}`, "نامه\u200cای 👩\u200d💻"},
+		{"join controls only", llmproviders.Messages, `{"stop_reason":"end_turn","content":[{"type":"text","text":"\u200c\u200d"}]}`, ""},
 		{"complete text", llmproviders.Messages, `{"stop_reason":"end_turn","content":[{"type":"text","text":"\u202e Diagnose\tlatency"}]}`, "Diagnose latency"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,5 +121,22 @@ func TestTitleModelRequestErrorOmitsProviderAddress(t *testing.T) {
 	})
 	if got.Error() != "title model DNS lookup failed" {
 		t.Fatalf("unexpected model failure: %v", got)
+	}
+}
+
+func TestGenerateTitlePreservesRequestCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	model := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		_, _ = io.Copy(io.Discard, req.Body)
+		cancel(errors.New("worker shutdown"))
+		<-req.Context().Done()
+	}))
+	t.Cleanup(model.Close)
+	_, err := generateSessionTitle(ctx, model.Client(), llmproviders.Upstream{
+		APIBackend: llmproviders.Messages, BaseURL: model.URL, ModelID: "fixture",
+	}, "", "Help diagnose the delay")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled title request returned %v", err)
 	}
 }

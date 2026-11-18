@@ -21,6 +21,9 @@ func TestConsolidateChannelExecutionPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	org, workspace, identity := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
+	execClaimTest(t, ctx, database, `insert into identities
+		(uuid,external_id,organization_uuid,workspace_uuid,external_subject_id,display_name)
+		values ($1,'idn_test',$2,$3,'actor','固定身份')`, identity, org, workspace)
 	for _, id := range []string{"fixed", "paired", "legacy"} {
 		execClaimTest(t, ctx, database, `insert into channels
 			(external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,mounts)
@@ -61,6 +64,10 @@ func TestConsolidateChannelExecutionPostgres(t *testing.T) {
 	access, err := store.ListChannelPairingRecords(ctx, "paired")
 	if err != nil || len(access) != 1 || access[0].Status != "approved" {
 		t.Fatalf("丢失渠道准入记录：%+v %v", access, err)
+	}
+	bindings, err := store.ListAgentIdentityBindings(ctx, workspace, "agent_test")
+	if err != nil || len(bindings) != 2 {
+		t.Fatalf("Agent 的固定身份和范围绑定应同时可查：%+v %v", bindings, err)
 	}
 	changed, err := store.UpdateChannelRecord(ctx, ChannelRecordUpdate{
 		WorkspaceUUID: workspace, ExternalID: "fixed", Name: "fixed", Enabled: true,

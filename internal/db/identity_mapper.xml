@@ -334,11 +334,10 @@
         SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
             c.external_id AS channel_external_id, 'fixed' AS scope_kind,
             '' AS remote_id, '' AS pairing_external_id, 'active' AS status
-        FROM channel_execution_contexts x
-        JOIN channels c ON c.uuid = x.channel_uuid AND c.workspace_uuid = x.workspace_uuid AND c.deleted_at IS NULL
-        JOIN identities i ON i.uuid = x.identity_uuid AND i.workspace_uuid = x.workspace_uuid AND i.deleted_at IS NULL
-        WHERE x.workspace_uuid = #{workspaceUUID} AND c.agent_external_id = #{agentExternalID}
-        AND x.mode = 'fixed' AND x.entry_closed = false
+        FROM channels c
+        JOIN identities i ON i.uuid = c.identity_uuid AND i.workspace_uuid = c.workspace_uuid AND i.deleted_at IS NULL
+        WHERE c.workspace_uuid = #{workspaceUUID} AND c.agent_external_id = #{agentExternalID}
+        AND c.identity_resolution_mode = 'fixed' AND c.entry_closed = false AND c.deleted_at IS NULL
     </select>
 
     <select id="PersonalVault" result="scalar">

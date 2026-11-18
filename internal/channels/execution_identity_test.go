@@ -122,8 +122,8 @@ func (holdIngress) ObserveConnection(context.Context, string, string, string) er
 func (holdIngress) ExecutionView(context.Context, string, string) (map[string]any, error) {
 	return nil, nil
 }
-func (holdIngress) SaveChannelContext(context.Context, auth.Principal, identities.ChannelContextInput) error {
-	return nil
+func (holdIngress) ResolveChannelIdentity(context.Context, auth.Principal, string) (string, error) {
+	return "", nil
 }
 
 type fixedIngress struct{ decision identities.Decision }
@@ -141,6 +141,6 @@ func (fixedIngress) ObserveConnection(context.Context, string, string, string) e
 func (fixedIngress) ExecutionView(context.Context, string, string) (map[string]any, error) {
 	return nil, nil
 }
-func (fixedIngress) SaveChannelContext(context.Context, auth.Principal, identities.ChannelContextInput) error {
-	return nil
+func (fixedIngress) ResolveChannelIdentity(context.Context, auth.Principal, string) (string, error) {
+	return "", nil
 }

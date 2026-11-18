@@ -28,6 +28,8 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			ExecutionMode:     params.ExecutionMode,
+			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
 			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
@@ -80,6 +82,8 @@ func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			ExecutionMode:     params.ExecutionMode,
+			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
 			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
@@ -148,6 +152,8 @@ func (d *DB) SetChannelAgentEnvironment(ctx context.Context, organizationUUID, w
 }
 
 type ChannelRecordInput struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	EnvironmentID     *string
 	ExternalID        string
 	OrganizationUUID  string
@@ -168,6 +174,8 @@ type ChannelRecordInput struct {
 }
 
 type ChannelRecordUpdate struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	EnvironmentID     *string
 	ExternalID        string
 	WorkspaceUUID     string

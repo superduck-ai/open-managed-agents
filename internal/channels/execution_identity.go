@@ -19,7 +19,7 @@ type identityIngress interface {
 	BindSession(context.Context, identities.SessionBind) error
 	ObserveConnection(context.Context, string, string, string) error
 	ExecutionView(context.Context, string, string) (map[string]any, error)
-	SaveChannelContext(context.Context, auth.Principal, identities.ChannelContextInput) error
+	ResolveChannelIdentity(context.Context, auth.Principal, string) (string, error)
 }
 
 func (s *Service) UseIdentities(ingress identityIngress) {
@@ -200,10 +200,7 @@ func (s *localService) attachExecution(ctx context.Context, view map[string]any,
 	return nil
 }
 
-func (s *localService) saveExecution(ctx context.Context, principal auth.Principal, record db.ChannelRecord, input channelMutation) error {
-	if s.ingress == nil {
-		return nil
-	}
+func (s *localService) prepareExecution(ctx context.Context, principal auth.Principal, record *db.ChannelRecord, input channelMutation) error {
 	mode, present, err := executionMode(input)
 	if err != nil || !present {
 		return err
@@ -212,31 +209,26 @@ func (s *localService) saveExecution(ctx context.Context, principal auth.Princip
 	if input.IdentityID != nil {
 		identityID = *input.IdentityID
 	}
-	var version *int
-	if parsed := parseChannelMounts(record.Mounts).AgentVersion; parsed > 0 {
-		version = &parsed
-	}
-	return s.ingress.SaveChannelContext(ctx, principal, identities.ChannelContextInput{
-		OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID, ChannelUUID: record.UUID,
-		ChannelExternalID: record.ExternalID, Mode: mode, IdentityID: identityID, AgentID: record.AgentExternalID, AgentVersion: version,
-	})
-}
-
-func validateExecutionInput(input channelMutation) error {
-	mode, present, err := executionMode(input)
-	if err != nil || !present {
-		return err
-	}
-	identityID := ""
-	if input.IdentityID != nil {
-		identityID = *input.IdentityID
-	}
-	if mode == "fixed" && identityID == "" {
+	if (mode == "fixed") != (identityID != "") {
 		return invalidChannelMode()
 	}
-	if mode == "pairing" && identityID != "" {
-		return invalidChannelMode()
+	if record.ExecutionMode != nil && *record.ExecutionMode != mode {
+		return immutableExecutionMode()
 	}
+	if mode == "fixed" {
+		if s.ingress == nil {
+			return unavailable(nil)
+		}
+		identityUUID, resolveErr := s.ingress.ResolveChannelIdentity(ctx, principal, identityID)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if record.EntryClosed && (record.IdentityUUID == nil || *record.IdentityUUID != identityUUID) {
+			return closedExecutionEntry()
+		}
+		record.IdentityUUID = &identityUUID
+	}
+	record.ExecutionMode = &mode
 	return nil
 }
 

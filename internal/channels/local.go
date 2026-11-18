@@ -197,9 +197,6 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 	if mode != "open" && mode != "pairing" {
 		return nil, invalidChannelMode()
 	}
-	if err := validateExecutionInput(input); err != nil {
-		return nil, err
-	}
 	name := ""
 	if input.Name != nil {
 		name = strings.TrimSpace(*input.Name)
@@ -225,6 +222,9 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		Mode:             mode,
 		Enabled:          enabled,
 		BindingStatus:    "unbound",
+	}
+	if err := s.prepareExecution(ctx, principal, &record, input); err != nil {
+		return nil, err
 	}
 	applyChannelFlags(&record, input)
 	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
@@ -259,6 +259,8 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		ExecutionMode:     record.ExecutionMode,
+		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
 		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})
@@ -269,9 +271,6 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		return nil, unavailable(err)
 	}
 	s.reconcile(ctx, created)
-	if err := s.saveExecution(ctx, principal, created, input); err != nil {
-		return nil, err
-	}
 	return s.view(ctx, created)
 }
 
@@ -293,15 +292,15 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 	if input.Mode != nil && *input.Mode != record.Mode {
 		return nil, immutableChannelMode()
 	}
-	if err := validateExecutionInput(input); err != nil {
-		return nil, err
-	}
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
 		if name == "" || len([]rune(name)) > channelNameLimit {
 			return nil, invalidChannelName()
 		}
 		record.Name = name
+	}
+	if err := s.prepareExecution(ctx, principal, &record, input); err != nil {
+		return nil, err
 	}
 	applyChannelFlags(&record, input)
 	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
@@ -332,6 +331,8 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		ExecutionMode:     record.ExecutionMode,
+		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
 		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})
@@ -342,9 +343,6 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		return nil, unavailable(err)
 	}
 	s.reconcile(ctx, updated)
-	if err := s.saveExecution(ctx, principal, updated, input); err != nil {
-		return nil, err
-	}
 	return s.view(ctx, updated)
 }
 

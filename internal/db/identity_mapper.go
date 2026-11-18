@@ -105,26 +105,6 @@ type ExecutionContextRecord struct {
 	UpdatedAt         time.Time `db:"updated_at"`
 }
 
-type InsertExecutionContextParams struct {
-	UUID              string
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	ChannelUUID       string
-	ChannelExternalID string
-	Mode              string
-	IdentityUUID      *string
-	AgentVersion      *int
-}
-
-type UpdateExecutionTargetParams struct {
-	WorkspaceUUID string
-	ChannelUUID   string
-	Mode          string
-	IdentityUUID  *string
-	AgentVersion  *int
-	Revision      int64
-}
-
 type ScopePairingRecord struct {
 	UUID              string     `db:"uuid"`
 	ExternalID        string     `db:"external_id"`
@@ -277,9 +257,7 @@ type IdentityMapper interface {
 	ListIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID, agentExternalID, cursor string, limit int) ([]IdentityConfigRecord, error)
 	UpdateIdentityConfig(ctx context.Context, params UpdateIdentityConfigParams) (int64, error)
 	ArchiveIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID string) (int64, error)
-	InsertExecutionContext(ctx context.Context, params InsertExecutionContextParams) (ExecutionContextRecord, error)
 	FindExecutionContext(ctx context.Context, workspaceUUID, channelExternalID string) (ExecutionContextRecord, bool, error)
-	UpdateExecutionTarget(ctx context.Context, params UpdateExecutionTargetParams) (int64, error)
 	SetConnectionStatus(ctx context.Context, workspaceUUID, channelExternalID, status string) (int64, error)
 	CloseFixedEntries(ctx context.Context, workspaceUUID, identityUUID string) (int64, error)
 	InsertScopePairing(ctx context.Context, params InsertScopePairingParams) (ScopePairingRecord, error)

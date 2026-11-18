@@ -115,14 +115,6 @@ func (d *DB) ArchiveIdentityConfigs(ctx context.Context, workspaceUUID, identity
 	return NewIdentityMapper(d.mapperDB).ArchiveIdentityConfigs(ctx, workspaceUUID, identityUUID)
 }
 
-func (d *DB) CreateExecutionContext(ctx context.Context, params InsertExecutionContextParams) (ExecutionContextRecord, error) {
-	row, err := NewIdentityMapper(d.mapperDB).InsertExecutionContext(ctx, params)
-	if isUniqueViolation(err) {
-		return ExecutionContextRecord{}, ErrDuplicate
-	}
-	return row, err
-}
-
 func (d *DB) FindExecutionContext(ctx context.Context, workspaceUUID, channelExternalID string) (ExecutionContextRecord, error) {
 	row, found, err := NewIdentityMapper(d.mapperDB).FindExecutionContext(ctx, workspaceUUID, channelExternalID)
 	if err != nil {
@@ -132,17 +124,6 @@ func (d *DB) FindExecutionContext(ctx context.Context, workspaceUUID, channelExt
 		return ExecutionContextRecord{}, ErrNotFound
 	}
 	return row, nil
-}
-
-func (d *DB) UpdateExecutionTarget(ctx context.Context, params UpdateExecutionTargetParams) error {
-	count, err := NewIdentityMapper(d.mapperDB).UpdateExecutionTarget(ctx, params)
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrVersionConflict
-	}
-	return nil
 }
 
 func (d *DB) SetChannelConnectionStatus(ctx context.Context, workspaceUUID, channelExternalID, status string) error {

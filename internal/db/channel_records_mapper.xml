@@ -9,6 +9,9 @@
         name,
         channel_type,
         mode,
+        identity_resolution_mode,
+        identity_uuid,
+        entry_closed,
         enabled,
         binding_status,
         app_id,
@@ -36,13 +39,14 @@
         INSERT INTO channels (
             external_id, organization_uuid, workspace_uuid, agent_external_id, name, channel_type,
             mode, enabled, binding_status, app_id, app_secret_envelope, include_thinking,
-            include_tool_calls, reply_in_thread, mounts, git_token_envelope
+            include_tool_calls, reply_in_thread, mounts, git_token_envelope, identity_resolution_mode, identity_uuid
         ) VALUES (
             #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.AgentExternalID},
             #{params.Name}, #{params.ChannelType}, #{params.Mode}, #{params.Enabled}, #{params.BindingStatus},
             #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb), #{params.IncludeThinking},
             #{params.IncludeToolCalls}, #{params.ReplyInThread},
-            CAST(COALESCE(NULLIF(#{params.Mounts}, ''), '{}') AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb)
+            CAST(COALESCE(NULLIF(#{params.Mounts}, ''), '{}') AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb),
+            #{params.ExecutionMode}, #{params.IdentityUUID}
         )
         RETURNING <include refid="channelColumns"/>
     </insert>
@@ -97,6 +101,18 @@
     <update id="UpdateChannel" result="returning" resultType="ChannelRecord">
         UPDATE channels SET
             name = #{params.Name},
+            <if test="params.ExecutionMode != nil">
+            identity_resolution_mode = #{params.ExecutionMode},
+            identity_uuid = #{params.IdentityUUID},
+            </if>
+            execution_revision = execution_revision + CASE WHEN
+                <if test="params.ExecutionMode != nil">
+                (identity_resolution_mode IS NOT NULL AND identity_uuid IS DISTINCT FROM CAST(#{params.IdentityUUID} AS uuid)) OR
+                </if>
+                (identity_resolution_mode = 'fixed' AND
+                    (mounts -&gt;&gt; 'agent_version') IS DISTINCT FROM
+                    (CAST(NULLIF(#{params.Mounts}, '') AS jsonb) -&gt;&gt; 'agent_version'))
+                THEN 1 ELSE 0 END,
             enabled = #{params.Enabled},
             binding_status = #{params.BindingStatus},
             app_id = #{params.AppID},
@@ -110,6 +126,10 @@
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
         AND deleted_at IS NULL
+        <if test="params.ExecutionMode != nil">
+        AND (identity_resolution_mode IS NULL OR identity_resolution_mode = #{params.ExecutionMode})
+        AND (entry_closed = false OR identity_uuid IS NOT DISTINCT FROM CAST(#{params.IdentityUUID} AS uuid))
+        </if>
         RETURNING <include refid="channelColumns"/>
     </update>
 
@@ -122,24 +142,24 @@
 
     <select id="ListPairings" resultType="ChannelPairingRecord">
         SELECT external_id, channel_external_id, kind, target, display_name, status, created_at
-        FROM channel_pairings
+        FROM channel_access_pairings
         WHERE channel_external_id = #{channelExternalID}
         ORDER BY created_at, id
     </select>
 
     <select id="CountPairings" result="scalar">
-        SELECT count(*) FROM channel_pairings
+        SELECT count(*) FROM channel_access_pairings
         WHERE channel_external_id = #{channelExternalID}
     </select>
 
     <insert id="InsertPairing" result="exec">
-        INSERT INTO channel_pairings (external_id, channel_external_id, kind, target, display_name)
+        INSERT INTO channel_access_pairings (external_id, channel_external_id, kind, target, display_name)
         VALUES (#{params.ExternalID}, #{params.ChannelExternalID}, #{params.Kind}, #{params.Target}, #{params.DisplayName})
         ON CONFLICT (channel_external_id, kind, target) DO NOTHING
     </insert>
 
     <update id="UpdatePairingStatus" result="exec">
-        UPDATE channel_pairings SET status = #{status}, updated_at = now()
+        UPDATE channel_access_pairings SET status = #{status}, updated_at = now()
         WHERE channel_external_id = #{channelExternalID}
         AND external_id = #{pairingExternalID}
     </update>

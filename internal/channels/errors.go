@@ -144,3 +144,11 @@ func unsupportedChannelType(channelType string) error {
 func invalidChannelCardReceipt() error {
 	return apperr.New(apperr.PermissionDenied, "该卡片已失效或不属于当前对话", nil)
 }
+
+func immutableExecutionMode() error {
+	return apperr.New(apperr.Conflict, "身份解析模式创建后不能修改", nil)
+}
+
+func closedExecutionEntry() error {
+	return apperr.New(apperr.Conflict, "渠道执行入口已关闭", nil)
+}

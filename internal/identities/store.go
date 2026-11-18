@@ -20,9 +20,7 @@ type Store interface {
 	ListIdentityConfigs(context.Context, string, string, string, string, int) ([]db.IdentityConfigRecord, error)
 	UpdateIdentityConfig(context.Context, db.UpdateIdentityConfigParams) error
 	ArchiveIdentityConfigs(context.Context, string, string) (int64, error)
-	CreateExecutionContext(context.Context, db.InsertExecutionContextParams) (db.ExecutionContextRecord, error)
 	FindExecutionContext(context.Context, string, string) (db.ExecutionContextRecord, error)
-	UpdateExecutionTarget(context.Context, db.UpdateExecutionTargetParams) error
 	SetChannelConnectionStatus(context.Context, string, string, string) error
 	CloseFixedIdentityEntries(context.Context, string, string) (int64, error)
 	CreateScopePairing(context.Context, db.InsertScopePairingParams) (db.ScopePairingRecord, error)

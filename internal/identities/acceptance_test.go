@@ -292,14 +292,6 @@ func (s *acceptanceStore) CreateIdentityConfig(context.Context, db.InsertIdentit
 func (s *acceptanceStore) UpdateIdentityConfig(context.Context, db.UpdateIdentityConfigParams) error {
 	return nil
 }
-func (s *acceptanceStore) CreateExecutionContext(context.Context, db.InsertExecutionContextParams) (db.ExecutionContextRecord, error) {
-	s.channelMutations++
-	return db.ExecutionContextRecord{}, nil
-}
-func (s *acceptanceStore) UpdateExecutionTarget(context.Context, db.UpdateExecutionTargetParams) error {
-	s.channelMutations++
-	return nil
-}
 func (s *acceptanceStore) SetChannelConnectionStatus(context.Context, string, string, string) error {
 	s.channelMutations++
 	return nil

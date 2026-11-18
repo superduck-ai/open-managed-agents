@@ -9,10 +9,6 @@
         revision, status, CAST(env AS text) AS env, CAST(vault_mounts AS text) AS vault_mounts,
         CAST(disabled_vaults AS text) AS disabled_vaults, created_at, updated_at
     </sql>
-    <sql id="executionColumns">
-        uuid, organization_uuid, workspace_uuid, channel_uuid, channel_external_id, mode,
-        identity_uuid, agent_version, revision, connection_status, entry_closed, updated_at
-    </sql>
     <sql id="pairingColumns">
         uuid, external_id, organization_uuid, workspace_uuid, channel_uuid, channel_external_id,
         scope_kind, platform_account, remote_id, display_name, status, identity_uuid,
@@ -115,43 +111,31 @@
         WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
     </update>
 
-    <insert id="InsertExecutionContext" result="returning" resultType="ExecutionContextRecord">
-        INSERT INTO channel_execution_contexts (
-            uuid, organization_uuid, workspace_uuid, channel_uuid, channel_external_id, mode, identity_uuid, agent_version
-        ) VALUES (
-            #{params.UUID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.ChannelUUID},
-            #{params.ChannelExternalID}, #{params.Mode}, #{params.IdentityUUID}, #{params.AgentVersion}
-        )
-        RETURNING <include refid="executionColumns"/>
-    </insert>
-
     <select id="FindExecutionContext" result="optional" resultType="ExecutionContextRecord">
-        SELECT <include refid="executionColumns"/>
-        FROM channel_execution_contexts
-        WHERE workspace_uuid = #{workspaceUUID} AND channel_external_id = #{channelExternalID}
+        SELECT uuid, organization_uuid, workspace_uuid, uuid AS channel_uuid, external_id AS channel_external_id,
+            identity_resolution_mode AS mode, identity_uuid,
+            CAST(mounts -&gt;&gt; 'agent_version' AS integer) AS agent_version,
+            execution_revision AS revision, connection_status, entry_closed, updated_at
+        FROM channels
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{channelExternalID}
+        AND deleted_at IS NULL AND identity_resolution_mode IS NOT NULL
     </select>
 
-    <update id="UpdateExecutionTarget" result="rows">
-        UPDATE channel_execution_contexts SET identity_uuid = #{params.IdentityUUID}, agent_version = #{params.AgentVersion},
-            revision = revision + 1, updated_at = now()
-        WHERE workspace_uuid = #{params.WorkspaceUUID} AND channel_uuid = #{params.ChannelUUID}
-        AND mode = #{params.Mode} AND revision = #{params.Revision} AND entry_closed = false
-    </update>
-
     <update id="SetConnectionStatus" result="rows">
-        UPDATE channel_execution_contexts SET connection_status = #{status}, updated_at = now()
-        WHERE workspace_uuid = #{workspaceUUID} AND channel_external_id = #{channelExternalID}
+        UPDATE channels SET connection_status = #{status}
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{channelExternalID}
+        AND deleted_at IS NULL AND identity_resolution_mode IS NOT NULL
         AND connection_status IS DISTINCT FROM #{status}
     </update>
 
     <update id="CloseFixedEntries" result="rows">
-        UPDATE channel_execution_contexts SET entry_closed = true, updated_at = now()
+        UPDATE channels SET entry_closed = true, updated_at = now()
         WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID}
-        AND mode = 'fixed' AND entry_closed = false
+        AND identity_resolution_mode = 'fixed' AND entry_closed = false AND deleted_at IS NULL
     </update>
 
     <insert id="InsertScopePairing" result="returning" resultType="ScopePairingRecord">
-        INSERT INTO channel_scope_pairings (
+        INSERT INTO channel_pairings (
             uuid, external_id, organization_uuid, workspace_uuid, channel_uuid, channel_external_id,
             scope_kind, platform_account, remote_id, display_name, pairing_code_hash, pairing_code_expires_at
         ) VALUES (
@@ -164,13 +148,13 @@
 
     <select id="FindScopePairing" result="optional" resultType="ScopePairingRecord">
         SELECT <include refid="pairingColumns"/>
-        FROM channel_scope_pairings
+        FROM channel_pairings
         WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
     </select>
 
     <select id="FindOpenScopePairing" result="optional" resultType="ScopePairingRecord">
         SELECT <include refid="pairingColumns"/>
-        FROM channel_scope_pairings
+        FROM channel_pairings
         WHERE channel_uuid = #{channelUUID} AND scope_kind = #{scopeKind}
         AND platform_account = #{platformAccount} AND remote_id = #{remoteID}
         AND status IN ('pending', 'active')
@@ -178,7 +162,7 @@
 
     <select id="FindPendingScopePairingByCode" result="optional" resultType="ScopePairingRecord">
         SELECT <include refid="pairingColumns"/>
-        FROM channel_scope_pairings
+        FROM channel_pairings
         WHERE workspace_uuid = #{params.WorkspaceUUID} AND status = 'pending'
         AND pairing_code_hash = #{params.CodeHash,sensitive=true}
         AND pairing_code_expires_at &gt; #{params.Now}
@@ -186,7 +170,7 @@
 
     <select id="ListScopePairings" resultType="ScopePairingRecord">
         SELECT <include refid="pairingColumns"/>
-        FROM channel_scope_pairings
+        FROM channel_pairings
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         <if test="params.ChannelExternalID != ''">AND channel_external_id = #{params.ChannelExternalID}</if>
         <if test="params.Status != ''">AND status = #{params.Status}</if>
@@ -196,7 +180,7 @@
     </select>
 
     <update id="ActivateScopePairingByCode" result="rows">
-        UPDATE channel_scope_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
+        UPDATE channel_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
             agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
             revision = 1, pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = #{params.Now}
         WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
@@ -205,14 +189,14 @@
     </update>
 
     <update id="ActivateScopePairingByID" result="rows">
-        UPDATE channel_scope_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
+        UPDATE channel_pairings SET status = 'active', identity_uuid = #{params.IdentityUUID},
             agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
             revision = 1, pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
         WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID} AND status = 'pending'
     </update>
 
     <update id="RebindScopePairing" result="rows">
-        UPDATE channel_scope_pairings SET identity_uuid = #{params.IdentityUUID},
+        UPDATE channel_pairings SET identity_uuid = #{params.IdentityUUID},
             agent_external_id = #{params.AgentExternalID}, agent_version = #{params.AgentVersion},
             revision = revision + 1, updated_at = now()
         WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
@@ -220,14 +204,14 @@
     </update>
 
     <update id="UnbindScopePairing" result="rows">
-        UPDATE channel_scope_pairings SET status = 'unbound', revision = revision + 1,
+        UPDATE channel_pairings SET status = 'unbound', revision = revision + 1,
             pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
         WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
         AND status = 'active' AND revision = #{expectedRevision}
     </update>
 
     <update id="UnbindIdentityPairings" result="rows">
-        UPDATE channel_scope_pairings SET status = 'unbound', revision = revision + 1,
+        UPDATE channel_pairings SET status = 'unbound', revision = revision + 1,
             pairing_code_hash = NULL, pairing_code_expires_at = NULL, updated_at = now()
         WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
     </update>
@@ -324,7 +308,7 @@
         SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
             p.channel_external_id AS channel_external_id, p.scope_kind AS scope_kind,
             p.remote_id AS remote_id, p.external_id AS pairing_external_id, p.status AS status
-        FROM channel_scope_pairings p
+        FROM channel_pairings p
         JOIN identities i ON i.uuid = p.identity_uuid AND i.workspace_uuid = p.workspace_uuid AND i.deleted_at IS NULL
         WHERE p.workspace_uuid = #{workspaceUUID} AND p.agent_external_id = #{agentExternalID} AND p.status = 'active'
         UNION ALL

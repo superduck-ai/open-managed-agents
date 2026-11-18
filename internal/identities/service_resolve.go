@@ -43,17 +43,6 @@ type Decision struct {
 	ScopeKey           string
 }
 
-type ChannelContextInput struct {
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	ChannelUUID       string
-	ChannelExternalID string
-	Mode              string
-	IdentityID        string
-	AgentID           string
-	AgentVersion      *int
-}
-
 type SessionBind struct {
 	OrganizationUUID  string
 	WorkspaceUUID     string
@@ -192,51 +181,12 @@ func (s *Service) vaultState(ctx context.Context, workspaceUUID, vaultID string)
 	return VaultActive
 }
 
-func (s *Service) SaveChannelContext(ctx context.Context, principal auth.Principal, input ChannelContextInput) error {
-	if input.Mode != "fixed" && input.Mode != "pairing" {
-		return invalid("身份解析模式只接受 fixed 或 pairing", nil)
-	}
-	if input.Mode == "fixed" && (input.IdentityID == "" || input.AgentID == "") {
-		return invalid("固定上下文需要执行身份和智能体", nil)
-	}
-	if input.Mode == "pairing" && input.IdentityID != "" {
-		return invalid("范围配对创建时不能指定执行身份", nil)
-	}
-	var identityUUID *string
-	if input.IdentityID != "" {
-		identity, err := s.GetIdentity(ctx, principal, input.IdentityID)
-		if err != nil {
-			return err
-		}
-		identityUUID = &identity.UUID
-	}
-	if input.AgentID != "" {
-		if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, input.AgentID, versionValue(input.AgentVersion)); err != nil {
-			return err
-		}
-	}
-	current, err := s.store.FindExecutionContext(ctx, input.WorkspaceUUID, input.ChannelExternalID)
-	if errors.Is(err, db.ErrNotFound) {
-		_, createErr := s.store.CreateExecutionContext(ctx, db.InsertExecutionContextParams{
-			UUID: uuid.NewString(), OrganizationUUID: input.OrganizationUUID, WorkspaceUUID: input.WorkspaceUUID,
-			ChannelUUID: input.ChannelUUID, ChannelExternalID: input.ChannelExternalID, Mode: input.Mode,
-			IdentityUUID: identityUUID, AgentVersion: input.AgentVersion,
-		})
-		return mapStore(createErr, "渠道不存在")
-	}
+func (s *Service) ResolveChannelIdentity(ctx context.Context, principal auth.Principal, identityID string) (string, error) {
+	identity, err := s.GetIdentity(ctx, principal, identityID)
 	if err != nil {
-		return unavailable(err)
+		return "", err
 	}
-	if current.Mode != input.Mode {
-		return conflict("身份解析模式创建后不能修改", nil)
-	}
-	if sameExecution(current, identityUUID, input.AgentVersion) {
-		return nil
-	}
-	return mapStore(s.store.UpdateExecutionTarget(ctx, db.UpdateExecutionTargetParams{
-		WorkspaceUUID: input.WorkspaceUUID, ChannelUUID: input.ChannelUUID, Mode: current.Mode,
-		IdentityUUID: identityUUID, AgentVersion: input.AgentVersion, Revision: current.Revision,
-	}), "渠道不存在")
+	return identity.UUID, nil
 }
 
 func (s *Service) ObserveConnection(ctx context.Context, workspaceUUID, channelExternalID, status string) error {
@@ -335,15 +285,4 @@ func (s *Service) ListRecoverableSessions(ctx context.Context, principal auth.Pr
 		}
 	}
 	return kept, nil
-}
-
-func sameExecution(current db.ExecutionContextRecord, identityUUID *string, version *int) bool {
-	return sameStringPtr(current.IdentityUUID, identityUUID) && sameVersion(current.AgentVersion, version)
-}
-
-func sameStringPtr(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }

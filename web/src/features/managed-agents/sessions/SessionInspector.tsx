@@ -192,7 +192,7 @@ export function SessionInspector({
   return (
     <aside
       aria-label={msg('managedAgents.sessions.inspector.label', 'Session inspector')}
-      className="session-inspector-shell flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-card"
+      className="session-inspector-shell flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-card shadow-xs"
       data-testid="session-inspector"
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || event.defaultPrevented) {
@@ -212,7 +212,7 @@ export function SessionInspector({
         className="min-h-0 min-w-0 flex-1 gap-0"
         onValueChange={(value) => onActiveTabChange(value as SessionInspectorTab)}
       >
-        <div className="flex h-8 flex-none items-center border-b-[0.5px] border-border/60 pr-1">
+        <div className="flex h-9 flex-none items-center border-b-[0.5px] border-border/60 px-1.5">
           <TabsList
             ref={tabsListRef}
             aria-label={msg('managedAgents.sessions.inspector.label', 'Session inspector')}
@@ -427,7 +427,7 @@ function SessionOverviewPanel({
     ],
   ];
   return (
-    <div className="px-5 py-4 text-sm leading-5">
+    <div className="px-4 py-3 text-sm leading-5">
       <h2 className="mb-4 text-sm font-semibold">{msg('managedAgents.sessions.inspector.session', 'Session')}</h2>
       <InspectorFacts rows={rows} />
       <Separator className="mt-5 bg-border/60" />
@@ -1878,7 +1878,7 @@ function InspectorThreadsPanel({
 
 function InspectorFacts({ rows }: { rows: Array<[string, React.ReactNode]> }) {
   return (
-    <dl className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+    <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
       {rows.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="text-muted-foreground">{label}</dt>

@@ -1,8 +1,7 @@
 import { productIcons } from '@/shared/icons/product-icons';
 import { Search } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { AgentsListState } from '../components/common';
 
 export function SessionListEmpty({
   filtered,
@@ -19,34 +18,31 @@ export function SessionListEmpty({
 }) {
   const { msg } = useI18n();
   return (
-    <Empty className="min-h-64 rounded-none">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          {filtered ? <Search aria-hidden /> : <productIcons.sessions aria-hidden />}
-        </EmptyMedia>
-        <EmptyTitle>
-          {error
+    <div role={error ? 'alert' : undefined}>
+      <AgentsListState
+        icon={filtered ? Search : productIcons.sessions}
+        title={
+          error
             ? msg('managedAgents.sessions.loadFailed', 'Failed to load sessions')
             : filtered
               ? msg('managedAgents.sessions.noMatchingSessions', 'No matching sessions')
-              : msg('managedAgents.sessions.emptyTitle', 'No sessions yet')}
-        </EmptyTitle>
-        <EmptyDescription role={error ? 'alert' : undefined}>
-          {error ||
-            (filtered
-              ? msg('managedAgents.sessions.noMatchingHint', 'No sessions match the current filters.')
-              : msg('managedAgents.sessions.emptyBody', 'Create a session to trace and debug it here.'))}
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" onClick={error ? onRetry : filtered ? onReset : onCreate}>
-          {error
+              : msg('managedAgents.sessions.emptyTitle', 'No sessions yet')
+        }
+        body={
+          error ||
+          (filtered
+            ? msg('managedAgents.sessions.noMatchingHint', 'No sessions match the current filters.')
+            : msg('managedAgents.sessions.emptyBody', 'Create a session to trace and debug it here.'))
+        }
+        actionLabel={
+          error
             ? msg('common.retry', 'Retry')
             : filtered
               ? msg('managedAgents.sessions.resetFilters', 'Reset filters')
-              : msg('managedAgents.sessions.createLabel', 'Create session')}
-        </Button>
-      </EmptyContent>
-    </Empty>
+              : msg('managedAgents.sessions.createLabel', 'Create session')
+        }
+        onAction={error ? onRetry : filtered ? onReset : onCreate}
+      />
+    </div>
   );
 }

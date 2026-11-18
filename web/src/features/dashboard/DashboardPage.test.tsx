@@ -87,6 +87,24 @@ describe('Dashboard i18n', () => {
     expect(screen.getByRole('link', { name: '查看智能体' }).getAttribute('href')).toBe('/workspaces/default/agents');
   });
 
+  test('collapses empty session activity chart into a compact strip during cold start', async () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    mockOverview(() => ({
+      ...overviewFixture(),
+      agent_count: 0,
+      session_count: 0,
+      failed_session_count: 0,
+      active_agent_count: 0,
+      daily: [],
+      agents: [],
+    }));
+    renderDashboardPage(<DashboardPage section="dashboard" />, undefined, 'zh-CN');
+    expect(await screen.findByText('创建你的第一个智能体')).toBeTruthy();
+    const activitySection = screen.getByRole('region', { name: '会话趋势' });
+    expect(activitySection.textContent).toContain('暂无会话数据');
+    expect(screen.queryByLabelText('趋势智能体')).toBeNull();
+  });
+
   test('replaces data when the workspace changes', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const requests = mockOverview();

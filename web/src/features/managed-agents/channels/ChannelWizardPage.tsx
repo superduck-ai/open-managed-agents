@@ -37,7 +37,7 @@ export function ChannelWizardPage({ mode }: { mode: 'create' | 'edit' }) {
       title={
         mode === 'edit'
           ? msg('managedAgents.channels.editPage', '编辑渠道')
-          : msg('managedAgents.channels.createPage', '渠道创建页')
+          : msg('managedAgents.channels.createPage', '创建渠道')
       }
     />
   );

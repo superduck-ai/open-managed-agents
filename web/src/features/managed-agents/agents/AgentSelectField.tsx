@@ -8,6 +8,7 @@ import { Label } from '../../../shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { dedupeAgentsById, retrieveAgent } from '../api';
 import { type PageCursor } from '../types';
+import { handleInternalLinkClick } from '../utils';
 import { listAgentPickerPage } from './agent-picker-api';
 
 function useAgentPicker(
@@ -16,6 +17,7 @@ function useAgentPicker(
   onChange: (id: string) => void,
   open: boolean,
   defaultFirst: boolean,
+  showEmptyHint: boolean,
 ) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -31,8 +33,10 @@ function useAgentPicker(
       const next = page.next_page;
       return next && !cursors.includes(next) ? next : undefined;
     },
-    enabled: open || defaultFirst,
+    enabled: open || defaultFirst || showEmptyHint,
     retry: false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
   const agents = dedupeAgentsById(query.data?.pages.flatMap((page) => page.data) ?? []);
   const selected = agents.find((agent) => agent.id === value);
@@ -60,12 +64,14 @@ export function AgentSelectField({
   onChange,
   defaultFirst = false,
   manage = false,
+  showEmptyHint = false,
 }: {
   workspaceId: string;
   value: string;
   onChange: (id: string) => void;
   defaultFirst?: boolean;
   manage?: boolean;
+  showEmptyHint?: boolean;
 }) {
   const { msg } = useI18n();
   const id = useId();
@@ -76,7 +82,10 @@ export function AgentSelectField({
     onChange,
     open,
     defaultFirst,
+    showEmptyHint,
   );
+  const showEmptyWorkspaceHint =
+    showEmptyHint && !query.isPending && !query.isFetching && !query.isError && !debouncedSearch && agents.length === 0;
   const label = selectedName || msg('managedAgents.deployments.selectAgent', 'Select an agent');
   const changeOpen = (next: boolean) => {
     setOpen(next);
@@ -138,65 +147,114 @@ export function AgentSelectField({
                 if (list.scrollHeight - list.scrollTop - list.clientHeight < 48) loadMore();
               }}
             >
-              {!query.isPending && !searching && !query.isError && (
-                <CommandEmpty>{msg('managedAgents.agentPicker.empty', 'No agents found.')}</CommandEmpty>
-              )}
-              {!searching &&
-                agents.map((agent) => (
-                  <CommandItem
-                    key={agent.id}
-                    value={agent.id}
-                    aria-label={agent.name || agent.id}
-                    onSelect={() => {
-                      onChange(agent.id);
-                      changeOpen(false);
-                    }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{agent.name || agent.id}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{agent.id}</span>
-                    </span>
-                    {agent.id === value && <Check className="size-4 shrink-0" />}
-                  </CommandItem>
-                ))}
-              {(query.isFetching || searching) && (
-                <p role="status" className="p-3 text-sm text-muted-foreground">
-                  {msg('managedAgents.agents.loading', 'Loading agents...')}
-                </p>
-              )}
-              {!searching && query.isError && (
-                <div role="alert" className="p-2 text-sm">
-                  <p>{msg('managedAgents.agentPicker.failed', 'Could not load agents.')}</p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') event.stopPropagation();
-                    }}
-                    onClick={() => (query.isFetchNextPageError ? loadMore() : void query.refetch())}
-                  >
-                    {msg('common.retry', 'Retry')}
-                  </Button>
-                </div>
-              )}
-              {!query.isError && !searching && query.hasNextPage && !query.isFetching && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') event.stopPropagation();
-                  }}
-                  onClick={loadMore}
-                >
-                  {msg('managedAgents.agentPicker.more', 'Load more')}
-                </Button>
-              )}
+              <AgentPickerListContent
+                agents={agents}
+                value={value}
+                searching={searching}
+                query={query}
+                onSelect={(id) => {
+                  onChange(id);
+                  changeOpen(false);
+                }}
+                onLoadMore={loadMore}
+              />
             </CommandList>
           </Command>
         </PopoverContent>
       </Popover>
+      <EmptyAgentWorkspaceHint visible={showEmptyWorkspaceHint} workspaceId={workspaceId} />
     </div>
+  );
+}
+
+function EmptyAgentWorkspaceHint({ visible, workspaceId }: { visible: boolean; workspaceId: string }) {
+  const { msg } = useI18n();
+  if (!visible) return null;
+  const createAgentHref = `/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/new`;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {msg('managedAgents.agentPicker.emptyWorkspaceHint', 'No agents in this workspace yet. ')}
+      <a
+        href={createAgentHref}
+        className="font-medium text-primary underline-offset-4 hover:underline"
+        onClick={(event) => handleInternalLinkClick(event, createAgentHref)}
+      >
+        {msg('managedAgents.agentPicker.createFirstAgent', 'Create your first agent')} →
+      </a>
+    </p>
+  );
+}
+
+function AgentPickerListContent({
+  agents,
+  value,
+  searching,
+  query,
+  onSelect,
+  onLoadMore,
+}: {
+  agents: ReturnType<typeof dedupeAgentsById>;
+  value: string;
+  searching: boolean;
+  query: ReturnType<typeof useAgentPicker>['query'];
+  onSelect: (id: string) => void;
+  onLoadMore: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <>
+      {!query.isPending && !searching && !query.isError && (
+        <CommandEmpty>{msg('managedAgents.agentPicker.empty', 'No agents found.')}</CommandEmpty>
+      )}
+      {!searching &&
+        agents.map((agent) => (
+          <CommandItem
+            key={agent.id}
+            value={agent.id}
+            aria-label={agent.name || agent.id}
+            onSelect={() => onSelect(agent.id)}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{agent.name || agent.id}</span>
+              <span className="block truncate text-xs text-muted-foreground">{agent.id}</span>
+            </span>
+            {agent.id === value && <Check className="size-4 shrink-0" />}
+          </CommandItem>
+        ))}
+      {(query.isFetching || searching) && (
+        <p role="status" className="p-3 text-sm text-muted-foreground">
+          {msg('managedAgents.agents.loading', 'Loading agents...')}
+        </p>
+      )}
+      {!searching && query.isError && (
+        <div role="alert" className="p-2 text-sm">
+          <p>{msg('managedAgents.agentPicker.failed', 'Could not load agents.')}</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.stopPropagation();
+            }}
+            onClick={() => (query.isFetchNextPageError ? onLoadMore() : void query.refetch())}
+          >
+            {msg('common.retry', 'Retry')}
+          </Button>
+        </div>
+      )}
+      {!query.isError && !searching && query.hasNextPage && !query.isFetching && (
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.stopPropagation();
+          }}
+          onClick={onLoadMore}
+        >
+          {msg('managedAgents.agentPicker.more', 'Load more')}
+        </Button>
+      )}
+    </>
   );
 }

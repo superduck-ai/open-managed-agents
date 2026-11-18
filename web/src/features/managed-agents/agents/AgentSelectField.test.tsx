@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from 'bun:test';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { resetTestDom } from '../../../test/setup';
 import { setAnthropicClientForTest } from '../../../shared/api/anthropic';
 import { I18nProvider } from '../../../shared/i18n';
-const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { AgentSelectField } = await import('./AgentSelectField');
 const originalFetch = globalThis.fetch;
 const clients: QueryClient[] = [];
@@ -11,21 +11,29 @@ afterEach(() => {
   cleanup();
   clients.forEach((client) => client.clear());
   clients.length = 0;
+  focusManager.setFocused(undefined);
   globalThis.fetch = originalFetch;
   setAnthropicClientForTest(null);
 });
 function jsonResponse(body: string, init: ResponseInit = {}) {
   return new Response(body, { ...init, headers: { 'content-type': 'application/json' } });
 }
-function mountPicker() {
+function mountPicker(defaultFirst = false) {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 15_000, refetchOnWindowFocus: false } },
+  });
   clients.push(client);
   const selected: string[] = [];
   render(
     <QueryClientProvider client={client}>
       <I18nProvider initialLocale="en">
-        <AgentSelectField workspaceId="default" value="" onChange={(id) => selected.push(id)} />
+        <AgentSelectField
+          workspaceId="default"
+          value=""
+          defaultFirst={defaultFirst}
+          onChange={(id) => selected.push(id)}
+        />
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -34,6 +42,29 @@ function mountPicker() {
 }
 const first = { id: 'agent_11111111111111111111', name: 'First agent', archived_at: null };
 const last = { id: 'agent_22222222222222222222', name: 'Later agent', archived_at: null };
+
+test('refreshes agent options when returning from agent management in another tab', async () => {
+  let agents = [first];
+  globalThis.fetch = async () => jsonResponse(JSON.stringify({ data: agents, next_page: null }));
+  mountPicker(true);
+  await screen.findByText('First agent');
+  act(() => focusManager.setFocused(false));
+  agents = [last, first];
+  await act(async () => focusManager.setFocused(true));
+  await screen.findByText('Later agent');
+});
+
+test('refreshes cached options when reopening a picker that only loads while open', async () => {
+  let agents = [first];
+  globalThis.fetch = async () => jsonResponse(JSON.stringify({ data: agents, next_page: null }));
+  mountPicker();
+  await screen.findByText('First agent');
+  fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+  await waitFor(() => expect(screen.queryByPlaceholderText('Search by name or agent ID...')).toBeNull());
+  agents = [last, first];
+  fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+  await screen.findByText('Later agent');
+});
 
 test('keeps the first page when the next page fails and retries the same cursor', async () => {
   let attempts = 0;
@@ -157,3 +188,19 @@ for (const failed of [false, true]) {
     expect(selected).toEqual([]);
   });
 }
+
+test('shows an inline hint and link to create the first agent when workspace has no agents', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  clients.push(client);
+  globalThis.fetch = async () => jsonResponse(JSON.stringify({ data: [], next_page: null }));
+  render(
+    <QueryClientProvider client={client}>
+      <I18nProvider initialLocale="zh-CN">
+        <AgentSelectField workspaceId="default" value="" showEmptyHint onChange={() => {}} />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  const link = await screen.findByRole('link', { name: /去创建第一个智能体/ });
+  expect(link.getAttribute('href')).toBe('/workspaces/default/agents/new');
+});

@@ -77,10 +77,10 @@ describe('Workspace webhooks page', () => {
       </I18nProvider>,
     );
     const emptyState = await screen.findByTestId('webhooks-empty-state');
-    expect(screen.getAllByRole('button', { name: '添加 Webhook 端点' })).toHaveLength(1);
-    expect(within(emptyState).queryByRole('button')).toBeNull();
+    expect(screen.getAllByRole('button', { name: '添加 Webhook 端点' })).toHaveLength(2);
+    expect(within(emptyState).getByRole('button', { name: '添加 Webhook 端点' })).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '添加 Webhook 端点' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '添加 Webhook 端点' })[0]);
     const dialog = screen.getByRole('dialog', { name: '创建 Webhook 端点' });
     expect(within(dialog).getByText('会话生命周期')).toBeTruthy();
     expect(within(dialog).getByText('运行已开始')).toBeTruthy();
@@ -116,7 +116,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
     await screen.findByTestId('webhooks-empty-state');
-    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     fireEvent.change(within(dialog).getByLabelText('Endpoint URL'), { target: { value: 'https://example.com/hooks' } });
     await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'session.updated' }));
@@ -134,7 +134,7 @@ describe('Workspace webhooks page', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect((within(dialog).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('https://example.com/hooks');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const reopened = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     expect((within(reopened).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('');
     expect(within(reopened).getByRole('checkbox', { name: 'session.updated' }).getAttribute('aria-checked')).toBe(

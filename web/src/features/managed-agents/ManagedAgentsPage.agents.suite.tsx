@@ -321,7 +321,7 @@ export function registerManagedAgentsAgentsTests() {
     );
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Create agent' })[0]);
     const dialog = screen.getByRole('main', { name: 'Create agent' });
     expandAgentCreateSections(dialog);
 
@@ -2406,6 +2406,39 @@ export function registerManagedAgentsAgentsTests() {
     expect(await screen.findByText('First agent')).toBeTruthy();
   });
 
+  test('keeps agents pagination visible when a later page has zero rows', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi(
+      Array.from({ length: consoleResourceListLimit + 1 }, (_, index) => ({
+        id: `agent_${index}`,
+        name: index === 0 ? 'First agent' : `Agent ${index + 1}`,
+      })),
+    );
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/v1/agents?') && url.includes('page=next_cursor')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [], next_page: null, total_count: consoleResourceListLimit }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      return baseFetch(input, init);
+    };
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByText('First agent')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    expect(await screen.findByText('No agents yet')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    expect(await screen.findByText('First agent')).toBeTruthy();
+    expect(api.requests.length).toBeGreaterThan(0);
+  });
+
   test('shows a clear button after typing in the agents search field', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([
@@ -2554,7 +2587,7 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Create agent' })[0]);
     expect(screen.getByRole('main', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(Boolean(screen.queryByRole('main', { name: 'Create agent' }))).toBe(true);

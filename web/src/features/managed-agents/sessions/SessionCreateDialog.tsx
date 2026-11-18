@@ -139,6 +139,7 @@ export function SessionCreateDialog({
                   value={values.agentId}
                   defaultFirst
                   manage
+                  showEmptyHint
                   onChange={(agentId) => patch({ agentId })}
                 />
               )}

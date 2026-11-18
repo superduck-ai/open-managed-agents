@@ -62,6 +62,7 @@ export function DeploymentFormFields({
             workspaceId={workspaceId}
             value={values.agentId}
             manage
+            showEmptyHint
             onChange={(agentId) => onChange({ agentId })}
           />
         )}

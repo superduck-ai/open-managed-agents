@@ -128,7 +128,7 @@ export function SkillDrawer({
           showCloseButton={false}
           showOverlay={false}
           side="right"
-          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
+          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 shadow-2xl ring-[0.5px] ring-border sm:max-w-[480px]"
         >
           <SkillDrawerHeader
             skill={skill}

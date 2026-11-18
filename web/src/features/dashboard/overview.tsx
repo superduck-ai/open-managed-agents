@@ -97,7 +97,7 @@ function OverviewStart({
   const text = (chinese: string, english: string) => (zh ? chinese : english);
   if (!data || data.session_count > 0) return null;
   return (
-    <section className="flex min-h-52 flex-col items-center justify-center rounded-lg border-[0.5px] border-border px-6 py-7 text-center">
+    <section className="flex min-h-40 flex-col items-center justify-center rounded-lg border-[0.5px] border-border px-6 py-6 text-center">
       {data.agent_count === 0 && needsModels ? (
         <LLMProviderRequired
           compact
@@ -133,6 +133,7 @@ export function OverviewPage() {
   const workspacePath = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
   const { overview, data, ready, overviewAgents, selectedAgent, points, needsModels, period, setPeriod, setAgent } =
     useOverview(workspaceId);
+  const coldStart = Boolean(data && data.agent_count === 0 && data.session_count === 0);
   const zh = locale === 'zh-CN';
   const text = (chinese: string, english: string) => (zh ? chinese : english);
 
@@ -230,72 +231,82 @@ export function OverviewPage() {
 
         <OverviewStart data={data} needsModels={needsModels} workspaceId={workspaceId} workspacePath={workspacePath} />
 
-        <section
-          className="rounded-lg border-[0.5px] border-border px-5 pt-4 pb-3"
-          aria-label={text('会话趋势', 'Session activity')}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-medium">{text('会话趋势', 'Session activity')}</h2>
-            {ready ? (
-              <Select
-                value={selectedAgent}
-                onValueChange={(value) => value && setAgent(value)}
-                items={[
-                  { value: 'all', label: text('全部智能体', 'All agents') },
-                  ...overviewAgents.map(({ agent_id, name }) => ({ value: agent_id, label: name })),
-                ]}
-              >
-                <SelectTrigger size="sm" aria-label={text('趋势智能体', 'Trend agent')}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{text('全部智能体', 'All agents')}</SelectItem>
-                  {overviewAgents.map(({ agent_id, name }) => (
-                    <SelectItem key={agent_id} value={agent_id}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
-          </div>
-          {ready ? (
-            <ChartContainer
-              config={{ sessions: { label: text('会话数', 'Sessions'), color: 'var(--chart-1)' } }}
-              className="mt-6 h-52 w-full aspect-auto"
-              aria-label={text(
-                `过去 ${period} 天每日创建的会话数`,
-                `Daily sessions created in the past ${period} days`,
-              )}
-            >
-              <AreaChart data={points} accessibilityLayer margin={{ left: -15, right: 8, top: 8, bottom: 0 }}>
-                <CartesianGrid vertical={false} stroke="var(--border)" />
-                <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={36} tickMargin={10} />
-                <YAxis tickLine={false} axisLine={false} allowDecimals={false} tickMargin={10} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Area
-                  type="monotone"
-                  dataKey="sessions"
-                  stroke="var(--chart-1)"
-                  strokeWidth={1.5}
-                  fill="var(--violet-a3)"
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ChartContainer>
-          ) : (
-            <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-muted-foreground">
-              <Activity className="size-6" strokeWidth={1.5} aria-hidden />
-              <p className="text-sm">
-                {overview.isPending
-                  ? text('正在加载运行数据', 'Loading activity data')
-                  : overview.isError
-                    ? text('运行数据暂不可用', 'Activity data is unavailable')
-                    : text('暂无会话数据', 'No session data')}
-              </p>
+        {coldStart ? (
+          <section
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border-[0.5px] border-border px-5 py-3 text-sm"
+            aria-label={text('会话趋势', 'Session activity')}
+          >
+            <h2 className="font-medium">{text('会话趋势', 'Session activity')}</h2>
+            <span className="text-xs text-muted-foreground">{text('暂无会话数据', 'No session data')}</span>
+          </section>
+        ) : (
+          <section
+            className="rounded-lg border-[0.5px] border-border px-5 pt-4 pb-3"
+            aria-label={text('会话趋势', 'Session activity')}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-medium">{text('会话趋势', 'Session activity')}</h2>
+              {ready ? (
+                <Select
+                  value={selectedAgent}
+                  onValueChange={(value) => value && setAgent(value)}
+                  items={[
+                    { value: 'all', label: text('全部智能体', 'All agents') },
+                    ...overviewAgents.map(({ agent_id, name }) => ({ value: agent_id, label: name })),
+                  ]}
+                >
+                  <SelectTrigger size="sm" aria-label={text('趋势智能体', 'Trend agent')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{text('全部智能体', 'All agents')}</SelectItem>
+                    {overviewAgents.map(({ agent_id, name }) => (
+                      <SelectItem key={agent_id} value={agent_id}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
             </div>
-          )}
-        </section>
+            {ready ? (
+              <ChartContainer
+                config={{ sessions: { label: text('会话数', 'Sessions'), color: 'var(--chart-1)' } }}
+                className="mt-6 h-52 w-full aspect-auto"
+                aria-label={text(
+                  `过去 ${period} 天每日创建的会话数`,
+                  `Daily sessions created in the past ${period} days`,
+                )}
+              >
+                <AreaChart data={points} accessibilityLayer margin={{ left: -15, right: 8, top: 8, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="date" tickLine={false} axisLine={false} minTickGap={36} tickMargin={10} />
+                  <YAxis tickLine={false} axisLine={false} allowDecimals={false} tickMargin={10} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Area
+                    type="monotone"
+                    dataKey="sessions"
+                    stroke="var(--chart-1)"
+                    strokeWidth={1.5}
+                    fill="var(--violet-a3)"
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            ) : (
+              <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-muted-foreground">
+                <Activity className="size-6" strokeWidth={1.5} aria-hidden />
+                <p className="text-sm">
+                  {overview.isPending
+                    ? text('正在加载运行数据', 'Loading activity data')
+                    : overview.isError
+                      ? text('运行数据暂不可用', 'Activity data is unavailable')
+                      : text('暂无会话数据', 'No session data')}
+                </p>
+              </div>
+            )}
+          </section>
+        )}
 
         {ready ? (
           <OverviewOperations

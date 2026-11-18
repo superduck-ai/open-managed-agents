@@ -196,7 +196,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 	}
 	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared)
 	if err != nil {
-		if mapped, ok := mapFileResourcePersistenceError(err); ok {
+		if mapped, ok := mapSessionCreateError(err); ok {
 			return db.Session{}, mapped
 		}
 		return db.Session{}, internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))

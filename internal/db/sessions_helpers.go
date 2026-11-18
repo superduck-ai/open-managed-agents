@@ -90,8 +90,11 @@ func insertSessionTx(
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}
-		if !found || identity.OrganizationUUID != session.OrganizationUUID || !identity.Enabled {
-			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrPreconditionFailed
+		if !found || identity.OrganizationUUID != session.OrganizationUUID {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrConsoleIdentityNotFound
+		}
+		if !identity.Enabled {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrConsoleIdentityDisabled
 		}
 		err = bindSessionIdentityTx(ctx, executor, InsertSessionIdentityParams{
 			UUID: uuid.NewV4().String(), OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,

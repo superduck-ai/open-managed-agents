@@ -48,7 +48,7 @@ func TestCreateConsoleSessionIdentityIsAtomicPostgres(t *testing.T) {
 	if err := store.SetBusinessIdentityEnabled(ctx, workspace, identity.ExternalID, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil); !errors.Is(err, ErrPreconditionFailed) {
+	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil); !errors.Is(err, ErrConsoleIdentityDisabled) {
 		t.Fatalf("停用身份拒绝创建会话：%v", err)
 	}
 	var sessions, work int

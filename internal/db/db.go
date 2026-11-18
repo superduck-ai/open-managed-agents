@@ -32,6 +32,8 @@ var (
 	ErrSessionToolConfirmationInvalid = errors.New("tool confirmation requires a pending ask event")
 	ErrInvalidCursor                  = errors.New("invalid page cursor")
 	ErrPreconditionFailed             = errors.New("precondition failed")
+	ErrConsoleIdentityNotFound        = errors.New("console identity not found")
+	ErrConsoleIdentityDisabled        = errors.New("console identity disabled")
 	ErrDuplicate                      = errors.New("duplicate")
 	ErrVersionConflict                = errors.New("version conflict")
 	ErrIncompleteSecretEnvelope       = errors.New("incomplete vault credential secret envelope")

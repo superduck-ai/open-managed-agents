@@ -5,9 +5,10 @@ import "context"
 //go:generate go tool sqlmapgen -dir $PWD -mapper ChannelCredentialMapper -sql ./channel_credentials_mapper.xml -out ./channel_credentials_mapper.sqlmap.gen.go -dialect postgres
 
 type channelCredentialRow struct {
-	ExternalID string `db:"external_id"`
-	Envelope   string `db:"envelope"`
-	Status     string `db:"status"`
+	ExternalID      string `db:"external_id"`
+	Envelope        string `db:"envelope"`
+	Status          string `db:"status"`
+	RuntimeUserUUID string `db:"runtime_user_uuid"`
 }
 
 type insertChannelCredentialParams struct {

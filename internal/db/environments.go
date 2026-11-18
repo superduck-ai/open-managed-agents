@@ -391,13 +391,14 @@ func (d *DB) StopEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 	return row.work(), mapNoRows(err)
 }
 
-func (d *DB) RequeueEnvironmentWorkIfRecoverable(ctx context.Context, work EnvironmentWork, retryAt time.Time) (bool, error) {
+func (d *DB) RequeueEnvironmentWorkIfRecoverable(ctx context.Context, work EnvironmentWork, retryAt time.Time, allowInitial bool) (bool, error) {
 	mapper := NewEnvironmentWorkMapper(d.mapperDB)
 	rowsAffected, err := mapper.RequeueIfRecoverable(ctx, environmentWorkRecoveryRetryParams{
 		OrganizationUUID: work.OrganizationUUID,
 		WorkspaceUUID:    work.WorkspaceUUID,
 		EnvironmentUUID:  work.EnvironmentUUID,
 		WorkUUID:         work.UUID,
+		AllowInitial:     allowInitial,
 		RetryAt:          retryAt,
 	})
 	return rowsAffected == 1, err

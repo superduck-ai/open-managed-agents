@@ -10,11 +10,11 @@ import { Button } from '../../../shared/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
-import { channelApi, type Channel } from './api';
+import { channelApi, channelVaultIds, channelResourceValues, type Channel, type ChannelCheck } from './api';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { PairingsDialog } from './PairingsDialog';
 import { channelDetailPath, channelEditPath, channelSessionsTabPath, channelsListPath } from './paths';
-import { channelConnectionStatus, channelConnectionStatusNotice } from './status';
+
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import { listChannelEnvironments } from './channelEnvironments';
 import { useChannelResources } from './channelResources';
@@ -110,10 +110,25 @@ export function ChannelDetailContent({
   });
 
   const channel = query.data?.channel;
-  const runConnectionCheck = () => {
-    if (!channel) return;
-    toast.message(channelConnectionStatusNotice(channelConnectionStatus(channel), msg));
-  };
+  const connectionCheck = useMutation({
+    mutationFn: async () => {
+      const checked = await channelApi<ChannelCheck>(agentId, workspaceId, `/${channelId}/check`);
+      await query.refetch({ throwOnError: true });
+      return checked;
+    },
+    onSuccess: (checked) => {
+      if (checked.ok)
+        toast.message(msg('managedAgents.channels.preflightPassed', '连接与配置预检通过；尚未执行模型或沙箱任务'));
+      else
+        toast.error(
+          checked.checks
+            .filter((item) => !item.ok)
+            .map((item) => item.message)
+            .join('；'),
+        );
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  });
 
   return (
     <section className="min-w-0 text-foreground">
@@ -155,13 +170,17 @@ export function ChannelDetailContent({
                 <div>
                   <dt className="inline">{msg('managedAgents.channels.columnAgent', '智能体')}：</dt>
                   <dd className="inline">
-                    {query.data?.agentName} · {msg('managedAgents.channels.latestVersion', '默认最新版本')}
+                    {query.data?.agentName} ·{' '}
+                    {channelVersionLabel(
+                      channel.agent_version,
+                      msg('managedAgents.channels.latestVersion', '默认最新版本'),
+                    )}
                   </dd>
                 </div>
               </dl>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={runConnectionCheck}>
+              <Button variant="outline" disabled={connectionCheck.isPending} onClick={() => connectionCheck.mutate()}>
                 {msg('managedAgents.channels.connectionCheck', '连接检测')}
               </Button>
               <Button variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate(!channel.enabled)}>
@@ -197,7 +216,7 @@ export function ChannelDetailContent({
                 onEdit={() => onNavigate(channelEditPath(workspaceId, agentId, channelId))}
               >
                 <DetailRow label={msg('managedAgents.channels.identityType', '身份类型')}>
-                  {msg('managedAgents.channels.identitySummary', '群聊 Bot · 单聊 User')}
+                  {msg('managedAgents.channels.identitySummary', '群聊 Bot · 单聊 Bot')}
                 </DetailRow>
                 <DetailRow label={msg('managedAgents.channels.replyDisplay', '回复展示')}>
                   <div className="space-y-1 text-sm">
@@ -240,7 +259,10 @@ export function ChannelDetailContent({
                   {query.data?.agentName}
                 </DetailRow>
                 <DetailRow label={msg('managedAgents.channels.agentVersionStrategy', '智能体版本策略')}>
-                  {msg('managedAgents.channels.keepLatest', '保持最新（仅对新会话生效）')}
+                  {channelVersionLabel(
+                    channel.agent_version,
+                    msg('managedAgents.channels.keepLatest', '保持最新（仅对新会话生效）'),
+                  )}
                 </DetailRow>
                 <DetailRow label={msg('managedAgents.channels.columnEnvironment', '环境')}>
                   {query.data?.environmentName || '—'}
@@ -303,11 +325,26 @@ function ChannelMountedResources({ workspaceId, channel }: { workspaceId: string
           none}
       </DetailRow>
       <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>
-        {resources.data?.vaults.find((item) => item.id === channel.vault_id)?.label || channel.vault_id || none}
+        {channelVaultIds(channel)
+          .map((id) => resources.data?.vaults.find((item) => item.id === id)?.label || id)
+          .join('、') || none}
+      </DetailRow>
+      <DetailRow label={msg('managedAgents.channels.mountedFiles', '挂载文件')}>
+        {channelResourceValues(channel)
+          .filter((resource) => resource.type === 'file')
+          .map((resource) => `${resource.file_id} · ${resource.mount_path || ''}`)
+          .join('、') || none}
       </DetailRow>
       <DetailRow label={msg('managedAgents.channels.mountedGit', '挂载 Git 仓库')}>
-        {channel.git_repository?.url || none}
+        {channelResourceValues(channel)
+          .filter((resource) => resource.type === 'github_repository')
+          .map((resource) => resource.url)
+          .join('、') || none}
       </DetailRow>
     </>
   );
+}
+
+function channelVersionLabel(version: number | null | undefined, latest: string) {
+  return version ? `v${version}` : latest;
 }

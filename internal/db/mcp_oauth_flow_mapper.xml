@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="MCPOAuthFlowMapper">
     <sql id="columns">
-        uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+        continuation, uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
         user_uuid, COALESCE(user_external_id, '') AS user_external_id,
         COALESCE(platform_session_external_id, '') AS platform_session_external_id,
         mcp_server_url, redirect_url, display_name, source, authorization_endpoint, token_endpoint,
@@ -16,7 +16,7 @@
 
     <insert id="Insert" result="returning" resultType="mcpOAuthFlowRow">
         INSERT INTO mcp_oauth_flows (
-            uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+            continuation, uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
             user_uuid, user_external_id, platform_session_external_id, mcp_server_url,
             redirect_url, display_name, source, authorization_endpoint, token_endpoint,
             registration_endpoint, issuer, resource, scope, client_id, client_credential_source,
@@ -24,7 +24,7 @@
             ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version,
             status, created_at, updated_at, expires_at
         ) VALUES (
-            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.Continuation,sensitive=true}, #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.VaultUUID}, #{params.VaultExternalID}, #{params.UserUUID},
             NULLIF(#{params.UserExternalID}, ''), NULLIF(#{params.PlatformSessionExternalID}, ''),
             #{params.MCPServerURL}, #{params.RedirectURL}, #{params.DisplayName}, #{params.Source},
@@ -47,6 +47,11 @@
         WHERE external_id = #{externalID}
     </select>
 
+    <update id="Claim" result="rows">
+        UPDATE mcp_oauth_flows SET status = 'processing', updated_at = #{claimedAt}
+        WHERE external_id = #{externalID,sensitive=true} AND status = 'pending' AND expires_at > #{claimedAt}
+    </update>
+
     <update id="Complete" result="rows">
         UPDATE mcp_oauth_flows
         SET status = 'completed', credential_external_id = #{credentialExternalID}, error_code = NULL,
@@ -54,7 +59,7 @@
             format_version = NULL, key_provider = NULL, key_version = NULL,
             completed_at = #{completedAt}, updated_at = #{completedAt}
         WHERE external_id = #{externalID}
-        AND status = 'pending'
+        AND status IN ('pending', 'processing')
     </update>
 
     <update id="Fail" result="rows">
@@ -64,6 +69,6 @@
             format_version = NULL, key_provider = NULL, key_version = NULL,
             updated_at = #{failedAt}
         WHERE external_id = #{externalID}
-        AND status = 'pending'
+        AND status IN ('pending', 'processing')
     </update>
 </mapper>

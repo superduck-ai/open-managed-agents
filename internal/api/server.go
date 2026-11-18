@@ -4,19 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/nats-io/nats.go"
-	"github.com/riverqueue/river"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
+	"github.com/riverqueue/river"
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/channels"
+	channelcontracts "github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -57,9 +61,6 @@ import (
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/redis/go-redis/v9"
 )
 
 type Server struct {
@@ -92,6 +93,7 @@ type Server struct {
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
 	workspaceChannels    http.Handler
+	channelService       *channels.Service
 	tunnels              *tunnelsapi.Handler
 	tunnelIngress        *tunnelsapi.IngressHandler
 	tunnelBroker         *tunnelsapi.Broker
@@ -181,8 +183,15 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	channelLogger := componentLogger("channels")
-	agentChannels := channels.NewHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
-	workspaceChannels := channels.NewWorkspaceHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
+	channelService := channels.NewService(deps.Config, deps.DB, channelLogger, deps.VaultSecrets, channels.Dependencies{
+		Adapters:         map[string]channelcontracts.AdapterFactory{"feishu": feishu.New},
+		Registrar:        feishu.Registrar{},
+		TokenURL:         feishu.TokenURL,
+		ValidAppID:       feishu.ValidAppID,
+		CheckCredentials: feishu.MatchCredentials,
+	})
+	agentChannels := channelService.AgentHandler()
+	workspaceChannels := channelService.WorkspaceHandler()
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
 		lease, err := vaultsapi.NewRedisOAuthRefreshLease(deps.Redis)
@@ -210,6 +219,7 @@ func NewServer(deps ServerDeps) *Server {
 		)),
 		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
 		workspaceChannels: workspaceChannels,
+		channelService:    channelService,
 		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
 		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
@@ -220,12 +230,15 @@ func NewServer(deps ServerDeps) *Server {
 		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
 		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
 		models:            modelsapi.NewHandler(deps.DB),
-		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
+		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService),
 		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,
 	}
+	channelService.WithSessionEvents(s.subscribeChannelEvents).WithSessionAttachments(s.putChannelAttachment)
+	s.codeSessions.WithOAuthCredentials(s.sessions.WaitForOAuthCredential)
+	channelService.WithOAuthProviders(envOAuthProviders, s.startChannelMCPOAuth)
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
@@ -356,6 +369,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
+	router.Get("/oauth/channels/{channel_id}/sessions/{session_id}/requests/{request_id}", s.handleChannelOAuthStart)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
@@ -700,4 +714,18 @@ func isEnvironmentWorkPath(path string) bool {
 
 func isEnvironmentCredentialPath(path string) bool {
 	return isEnvironmentWorkPath(path) || strings.HasPrefix(path, "/v1/sessions/") || path == "/v1/skills" || strings.HasPrefix(path, "/v1/skills/")
+}
+
+func (s *Server) StartChannels(ctx context.Context) {
+	if s == nil || s.channelService == nil {
+		return
+	}
+	s.channelService.Start(ctx)
+}
+
+func (s *Server) StopChannels() {
+	if s == nil || s.channelService == nil {
+		return
+	}
+	s.channelService.Stop()
 }

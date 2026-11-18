@@ -31,6 +31,9 @@ var errEnvOAuthInjectionLocation = errors.New("auth.injection_location must enab
 
 // InjectionPublicMessage exposes the recovery action without leaking private causes.
 func InjectionPublicMessage(err error) string {
+	if errors.Is(err, ErrCredentialAuthorizationManaged) {
+		return ErrCredentialAuthorizationManaged.Error()
+	}
 	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
 		return ErrMCPOAuthReauthorizationRequired.Error()
 	}

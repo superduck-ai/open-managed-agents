@@ -38,7 +38,18 @@ func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	cipher := secrets.NewService(provider)
-	input := platform.CreateConsoleAPIKeyInput{OrgUUID: identity.OrganizationUUID, WorkspaceUUID: identity.Workspaces[0].UUID}
+	member, err := store.GetActivePlatformUserByEmail(ctx, identity.OrganizationUUID, identity.User.Email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := platform.CreateConsoleAPIKeyInput{OrgUUID: identity.OrganizationUUID, WorkspaceUUID: identity.Workspaces[0].UUID, RuntimeUserUUID: member.UUID}
+	t.Run("后台不能创建无用户的凭据", func(t *testing.T) {
+		anonymous := input
+		anonymous.RuntimeUserUUID = ""
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, anonymous, cipher); !errors.Is(err, ErrChannelCredentialUserRequired) {
+			t.Fatalf("后台必须复用已绑定身份: %v", err)
+		}
+	})
 	t.Run("跨组织不能签发工作区身份", func(t *testing.T) {
 		wrong := input
 		wrong.OrgUUID = otherIdentity.OrganizationUUID
@@ -102,6 +113,36 @@ func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 		keys, err := store.ListConsoleAPIKeys(ctx, input.OrgUUID, &input.WorkspaceUUID)
 		if err != nil || len(keys) != 1 {
 			t.Fatalf("专用 Key 数量=%d，错误=%v", len(keys), err)
+		}
+	})
+	t.Run("补齐旧凭据身份但不轮换或重新绑定", func(t *testing.T) {
+		if _, err := database.ExecContext(ctx, `UPDATE api_keys SET runtime_user_uuid=NULL WHERE workspace_uuid=$1`, input.WorkspaceUUID); err != nil {
+			t.Fatal(err)
+		}
+		anonymous := input
+		anonymous.RuntimeUserUUID = ""
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, anonymous, cipher); !errors.Is(err, ErrChannelCredentialUserRequired) {
+			t.Fatalf("旧空身份不能被后台静默使用: %v", err)
+		}
+		key, err := store.EnsureChannelWorkspaceCredential(ctx, input, cipher)
+		if err != nil || key != first {
+			t.Fatalf("补齐身份不能轮换凭据: %v", err)
+		}
+		otherMember, err := store.GetActivePlatformUserByEmail(ctx, otherIdentity.OrganizationUUID, otherIdentity.User.Email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := input
+		other.RuntimeUserUUID = otherMember.UUID
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, other, cipher); err != nil {
+			t.Fatal(err)
+		}
+		row, found, err := NewChannelCredentialMapper(store.mapperDB).Find(ctx, input.OrgUUID, input.WorkspaceUUID)
+		if err != nil || !found || row.RuntimeUserUUID != member.UUID {
+			t.Fatalf("既有身份不得被后续操作人覆盖: %+v, %v", row, err)
+		}
+		if key, err := store.EnsureChannelWorkspaceCredential(ctx, anonymous, cipher); err != nil || key != first {
+			t.Fatalf("已绑定凭据应支持后台重启复用: %v", err)
 		}
 	})
 	t.Run("迁移整份信封后只保留新 Provider 仍可读取凭据", func(t *testing.T) {

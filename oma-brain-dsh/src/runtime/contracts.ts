@@ -125,6 +125,7 @@ export type ToolExecutionContext = Pick<
 >;
 
 export interface ToolApproval {
+  kind?: "oauth";
   callId: string;
   toolName: string;
   input: Payload;

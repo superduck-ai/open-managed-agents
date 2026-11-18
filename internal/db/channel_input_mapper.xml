@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ChannelInputMapper">
+  <sql id="columns">i.uuid, i.message_id, i.scope_key, i.payload::text AS payload, i.state,
+    i.session_external_id, COALESCE(i.prepared_content::text, '') AS prepared_content,
+    i.input_event_id, i.lease_owner, i.lease_until</sql>
+  <sql id="scope">i.organization_uuid=#{scope.OrganizationUUID} AND i.workspace_uuid=#{scope.WorkspaceUUID}
+    AND i.channel_uuid=#{scope.ChannelUUID} AND i.channel_type=#{scope.ChannelType} AND i.account_id=#{scope.AccountID}</sql>
+  <sql id="owned"><include refid="scope"/> AND i.uuid=#{inputUUID} AND i.lease_owner=#{owner} AND i.lease_until&gt;now()</sql>
+  <select id="Insert" result="optional">
+    WITH changed AS (
+      INSERT INTO channel_inputs(organization_uuid,workspace_uuid,channel_uuid,channel_type,account_id,message_id,scope_key,payload)
+      SELECT #{scope.OrganizationUUID},#{scope.WorkspaceUUID},c.uuid,#{scope.ChannelType},#{scope.AccountID},#{input.MessageID},#{input.ScopeKey},#{input.Payload,sensitive=true}::jsonb
+      FROM channels c WHERE c.organization_uuid=#{scope.OrganizationUUID} AND c.workspace_uuid=#{scope.WorkspaceUUID}
+        AND c.uuid=#{scope.ChannelUUID} AND c.channel_type=#{scope.ChannelType} AND c.app_id=#{scope.AccountID}
+        AND c.enabled AND c.binding_status='bound' AND c.deleted_at IS NULL
+      ON CONFLICT(channel_uuid,channel_type,account_id,message_id) DO NOTHING
+      RETURNING uuid,message_id,scope_key,payload,state,session_external_id,prepared_content,input_event_id,lease_owner,lease_until
+    ) SELECT <include refid="columns"/> FROM changed i
+  </select>
+  <select id="Claim" result="optional">
+    WITH changed AS (
+      UPDATE channel_inputs i SET state=CASE WHEN state='received' THEN 'buffering' ELSE state END,
+        lease_owner=#{owner},lease_until=now()+interval '30 seconds',updated_at=now()
+      WHERE <include refid="scope"/> AND i.uuid=#{inputUUID} AND i.lease_until&lt;=now()
+        AND i.state IN ('received','buffering','prepared','accepted')
+      RETURNING uuid,message_id,scope_key,payload,state,session_external_id,prepared_content,input_event_id,lease_owner,lease_until
+    ) SELECT <include refid="columns"/> FROM changed i
+  </select>
+  <select id="ListRecoverable">
+    SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/>
+      AND i.state IN ('received','buffering','prepared','accepted') AND i.lease_until&lt;=now()
+    ORDER BY i.created_at,i.uuid LIMIT 100
+  </select>
+  <select id="LockSources">
+    SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/>
+      AND i.scope_key=#{batch.ScopeKey} AND i.state='buffering' AND i.lease_owner=#{owner} AND i.lease_until&gt;now()
+      AND i.message_id IN <foreach collection="batch.MessageIDs" item="id" open="(" separator="," close=")">#{id}</foreach>
+    ORDER BY i.created_at,i.uuid FOR UPDATE
+  </select>
+  <update id="GroupSources" result="exec">
+    UPDATE channel_inputs i SET state='grouped',parent_uuid=#{anchorUUID},lease_owner='',updated_at=now()
+    WHERE <include refid="scope"/> AND i.scope_key=#{batch.ScopeKey} AND i.lease_owner=#{owner} AND i.uuid&lt;&gt;#{anchorUUID}
+      AND i.message_id IN <foreach collection="batch.MessageIDs" item="id" open="(" separator="," close=")">#{id}</foreach>
+  </update>
+  <select id="Prepare" result="optional">
+    WITH changed AS (
+      UPDATE channel_inputs i SET state='prepared',payload=#{batch.Payload,sensitive=true}::jsonb,lease_until=now()+interval '30 seconds',updated_at=now()
+      WHERE <include refid="owned"/> AND i.state='buffering'
+      RETURNING uuid,message_id,scope_key,payload,state,session_external_id,prepared_content,input_event_id,lease_owner,lease_until
+    ) SELECT <include refid="columns"/> FROM changed i
+  </select>
+  <select id="Advance" result="optional">
+    WITH changed AS (
+      UPDATE channel_inputs i SET state=#{change.State},session_external_id=#{change.SessionExternalID},
+        payload=CASE WHEN #{change.State}='accepted' THEN payload-'content'-'resources' ELSE payload END,
+        prepared_content=NULLIF(#{change.PreparedContent,sensitive=true},'')::jsonb,
+        input_event_id=#{change.InputEventID},lease_until=now()+interval '30 seconds',updated_at=now()
+      WHERE <include refid="owned"/> AND i.state IN ('prepared','accepted')
+      RETURNING uuid,message_id,scope_key,payload,state,session_external_id,prepared_content,input_event_id,lease_owner,lease_until
+    ), sources AS (
+      UPDATE channel_inputs i SET payload=payload-'content'-'resources',prepared_content=NULL,updated_at=now()
+      WHERE <include refid="scope"/> AND i.parent_uuid=#{inputUUID} AND #{change.State}='accepted' AND EXISTS(SELECT 1 FROM changed)
+    ) SELECT <include refid="columns"/> FROM changed i
+  </select>
+  <select id="Complete" result="optional">
+    WITH completed AS (
+      UPDATE channel_inputs i SET state='handed_off',payload=payload-'content'-'resources',prepared_content=NULL,
+        lease_owner='',lease_until=now(),updated_at=now()
+      WHERE <include refid="owned"/> AND i.state IN ('prepared','accepted','command_sending') RETURNING uuid
+    ), sources AS (
+      UPDATE channel_inputs i SET state='handed_off',payload=payload-'content'-'resources',prepared_content=NULL,updated_at=now()
+      WHERE <include refid="scope"/> AND i.parent_uuid IN (SELECT uuid FROM completed)
+    ) SELECT uuid::text AS uuid FROM completed
+  </select>
+  <update id="Release" result="exec">
+    UPDATE channel_inputs i SET lease_owner='',lease_until=now()+interval '30 seconds',updated_at=now()
+    WHERE <include refid="scope"/> AND i.uuid=#{inputUUID} AND i.lease_owner=#{owner}
+      AND i.state IN ('buffering','prepared','accepted','command_sending')
+  </update>
+  <update id="Renew" result="exec">
+    UPDATE channel_inputs i SET lease_until=now()+interval '30 seconds'
+    WHERE <include refid="scope"/> AND i.lease_owner=#{owner} AND i.lease_until&gt;now()
+      AND i.state IN ('prepared','accepted','command_sending')
+  </update>
+</mapper>

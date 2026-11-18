@@ -41,6 +41,9 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
+	if err := rejectAcceptedToolControlsTx(ctx, executor, session, primary, worker, activeInputs); err != nil {
+		return sessionEventBatchResult{}, err
+	}
 	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	for _, event := range events {
 		settled := settledInterrupts[event.ExternalID] || idleSessionInterrupt(primary, worker, event)

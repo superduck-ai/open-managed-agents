@@ -18,7 +18,7 @@ const { I18nProvider } = await import('../../shared/i18n');
 const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { RouterProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
+const { RouterProvider, RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
   await import('@tanstack/react-router');
 const { useEffect } = await import('react');
 
@@ -68,11 +68,12 @@ export function render(
   if (queryOptions.seedModels !== false) {
     seedCreateAgentModels(queryClient, queryOptions.workspaceId ?? 'default', queryOptions.models);
   }
+  const router = createRouter({ history: createBrowserHistory({ window }), routeTree: createRootRoute() });
   return testingLibrary.render(
     <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
       <QueryClientProvider client={queryClient}>
         <Toaster portal={false} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
-        {ui}
+        <ManagedAgentsTestRouterProvider router={router}>{ui}</ManagedAgentsTestRouterProvider>
       </QueryClientProvider>
     </AuthContext.Provider>,
     options,
@@ -215,9 +216,19 @@ function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string
   queryClient.setQueryData(['agent-quickstart', 'models', workspaceId], values);
 }
 
-function ManagedAgentsTestRouterProvider({ router }: { router: AnyRouter }) {
+function ManagedAgentsTestRouterProvider({
+  router,
+  children,
+}: {
+  router: AnyRouter;
+  children?: Parameters<typeof testingLibrary.render>[0];
+}) {
   useEffect(() => () => router.history.destroy(), [router]);
-  return <RouterProvider router={router} />;
+  return children === undefined ? (
+    <RouterProvider router={router} />
+  ) : (
+    <RouterContextProvider router={router}>{children}</RouterContextProvider>
+  );
 }
 
 export type AgentFixture = {

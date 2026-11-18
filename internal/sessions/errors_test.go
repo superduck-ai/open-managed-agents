@@ -19,6 +19,7 @@ func TestMapSessionLoadError(t *testing.T) {
 		{name: "terminated interrupt target", cause: db.ErrSessionInterruptTargetInvalid, kind: apperr.InvalidArgument, message: "interrupt target is terminated or invalid"},
 		{name: "non-ask confirmation", cause: db.ErrSessionToolConfirmationInvalid, kind: apperr.InvalidArgument, message: "tool confirmation requires a pending ask event"},
 		{name: "input state conflict", cause: db.ErrSessionInputConflict, kind: apperr.Conflict, message: "Session cannot accept this input now"},
+		{name: "请求标识冲突", cause: db.ErrSessionInputRequestConflict, kind: apperr.Conflict, message: "Idempotency-Key was already used with different events"},
 		{name: "not found", cause: db.ErrNotFound, kind: apperr.NotFound, message: "Session not found: session_test"},
 		{name: "invalid state", cause: db.ErrInvalidState, kind: apperr.InvalidArgument, message: "session state does not allow this operation"},
 		{name: "file path conflict", cause: db.ErrFilestorePathExists, kind: apperr.Conflict, message: "File resource mount_path conflicts with the session filesystem"},

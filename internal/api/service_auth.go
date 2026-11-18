@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -70,17 +71,19 @@ func (s *Server) authenticateFilestore(r *http.Request) (filestoreapi.Principal,
 }
 
 func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (auth.Principal, bool, *httpapi.Error) {
-	// workspace API key 始终优先；只有查不到普通 key 时，才尝试用途受限的凭证。
-	// 这样 OAuth-compatible token 不会意外获得 workspace API key 的完整权限。
+	return s.authenticateWorkspaceAPIKeyContext(r.Context(), apiKey)
+}
+
+func (s *Server) authenticateWorkspaceAPIKeyContext(ctx context.Context, apiKey string) (auth.Principal, bool, *httpapi.Error) {
 	if s.db == nil {
 		return auth.Principal{}, false, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	key, err := s.db.GetAPIKey(r.Context(), auth.HashAPIKey(apiKey))
+	key, err := s.db.GetAPIKey(ctx, auth.HashAPIKey(apiKey))
 	if errors.Is(err, db.ErrNotFound) {
 		return auth.Principal{}, false, nil
 	}
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "authenticate api key", "error", err)
+		s.logger.ErrorContext(ctx, "authenticate api key", "error", err)
 		return auth.Principal{}, false, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	return auth.Principal{

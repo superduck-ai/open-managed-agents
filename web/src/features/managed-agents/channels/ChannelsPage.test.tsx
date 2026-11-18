@@ -130,6 +130,7 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
             include_tool_calls: true,
             reply_in_thread: true,
             pending_pairings: 0,
+            agent_version: 7,
             agent_id: 'agent-1',
             agent_name: '客服助手',
             environment_id: 'env_1',
@@ -150,6 +151,7 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
   expect(await screen.findByText('飞书渠道')).toBeTruthy();
   expect(screen.getByText('已连通')).toBeTruthy();
   expect(screen.getByText('客服助手')).toBeTruthy();
+  expect(screen.getByText('v7')).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: '创建时间' })).toBeTruthy();
   expect(
     screen.getByText(

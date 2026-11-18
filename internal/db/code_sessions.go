@@ -358,14 +358,18 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 	}, nil
 }
 
-// GetCodeSessionVaultIDs loads parent-session vault_ids for an active code session
-// scoped to the authenticated organization/workspace.
-func (d *DB) GetCodeSessionVaultIDs(
+type CredentialScope struct {
+	VaultIDs     []string
+	OAuthVaultID string
+	PinBindings  bool
+}
+
+func (d *DB) GetCodeSessionCredentialScope(
 	ctx context.Context,
 	codeSessionExternalID string,
 	organizationUUID string,
 	workspaceUUID string,
-) ([]string, error) {
+) (CredentialScope, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
 	row, found, err := mapper.FindVaultIDs(
 		ctx,
@@ -374,12 +378,16 @@ func (d *DB) GetCodeSessionVaultIDs(
 		codeSessionExternalID,
 	)
 	if err != nil {
-		return nil, err
+		return CredentialScope{}, err
 	}
 	if !found {
-		return nil, ErrNotFound
+		return CredentialScope{}, ErrNotFound
 	}
-	return decodeVaultIDList(row.VaultIDs)
+	if row.PinBindings && !row.VaultsActive {
+		return CredentialScope{}, ErrInvalidState
+	}
+	ids, err := decodeVaultIDList(row.VaultIDs)
+	return CredentialScope{VaultIDs: ids, OAuthVaultID: row.OAuthVaultID, PinBindings: row.PinBindings}, err
 }
 
 func decodeVaultIDList(raw []byte) ([]string, error) {

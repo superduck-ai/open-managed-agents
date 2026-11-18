@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -17,12 +18,16 @@ const (
 )
 
 func (h *Handler) authorizeSession(r *http.Request, sessionID string, access sessionAccess) (db.Session, error) {
-	principal, ok := auth.PrincipalFromContext(r.Context())
+	return h.authorizeSessionContext(r.Context(), sessionID, access)
+}
+
+func (h *Handler) authorizeSessionContext(ctx context.Context, sessionID string, access sessionAccess) (db.Session, error) {
+	principal, ok := auth.PrincipalFromContext(ctx)
 	if !ok {
 		return db.Session{}, sessionAuthenticationRequired()
 	}
 
-	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	session, found, err := h.db.GetSession(ctx, principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return db.Session{}, mapSessionLoadError(err, sessionID)
 	}

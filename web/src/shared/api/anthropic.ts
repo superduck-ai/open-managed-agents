@@ -343,6 +343,17 @@ export const anthropicBetaApi = {
         }),
       );
     },
+    qr<T>(workspaceId: string, channelId: string, agentId?: string) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: `/v1/channels/${encodeURIComponent(channelId)}/qr`,
+          method: 'get',
+          query: { beta: true, ...(agentId ? { agent_id: agentId } : {}) },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+        }),
+      );
+    },
     list<T>(workspaceId: string) {
       return sdkCall(() =>
         getAnthropicClient().request<T>({

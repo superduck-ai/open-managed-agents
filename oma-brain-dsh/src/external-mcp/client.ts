@@ -20,10 +20,12 @@ export class ExternalMcpClient {
   private transport: SSEClientTransport | StreamableHTTPClientTransport;
   private readonly options;
   private authenticationRejected = false;
+  private oauthRejected = false;
   private rejectedCallSession = false;
   private notForwarded?: string;
 
   get authenticationFailed(): boolean { return this.authenticationRejected; }
+  get oauthRequired(): boolean { return this.oauthRejected; }
 
   constructor(readonly server: ExternalServer, fetcher: typeof fetch = fetch) {
     traceHooks.registerMcpServer(server.prefix, server.name);
@@ -40,6 +42,7 @@ export class ExternalMcpClient {
           throw error;
         }
         if (response.status === 401 || response.status === 403) this.authenticationRejected = true;
+        if (response.status === 401 && /\bBearer\b/i.test(response.headers.get("WWW-Authenticate") ?? "")) this.oauthRejected = true;
         if (this.isRejectedSessionCall(response, init)) this.rejectedCallSession = true;
         if (toolCall && response.headers.get("X-Oma-Mcp-Not-Forwarded") === "true")
           this.notForwarded = await notForwardedDetail(response.clone());
@@ -76,6 +79,7 @@ export class ExternalMcpClient {
         remoteName: tool.name,
         description: tool.description ?? tool.name,
         inputSchema: tool.inputSchema,
+        ...(tool.annotations?.readOnlyHint === true ? { readOnly: true } : {}),
       }));
   }
 
@@ -88,8 +92,10 @@ export class ExternalMcpClient {
     args: Payload,
     signal: AbortSignal,
     authenticationFailure?: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>,
+    authorize?: () => Promise<void>,
   ): Promise<Payload> {
     this.authenticationRejected = false;
+    this.oauthRejected = false;
     this.notForwarded = undefined;
     try {
       return object(
@@ -98,6 +104,18 @@ export class ExternalMcpClient {
     } catch (error) {
       signal.throwIfAborted();
       if (this.authenticationRejected) {
+        if (this.oauthRejected && authorize) {
+          const mayRetry = tool.readOnly === true || this.notForwarded !== undefined;
+          await authorize();
+          if (mayRetry) {
+            const tools = await this.reconnect(signal);
+            const current = tools.find(candidate => candidate.remoteName === tool.remoteName);
+            if (!current || !isDeepStrictEqual(current.inputSchema, tool.inputSchema) || tool.readOnly && !current.readOnly)
+              return { isError: true, content: [{ type: "text", text: "授权后工具定义已变化，原操作未重放。" }] };
+            return this.call(tool, args, signal, authenticationFailure);
+          }
+          return { isError: true, content: [{ type: "text", text: "授权已恢复，但原操作结果未知；请先核对外部状态，不要重复执行写操作。" }] };
+        }
         await authenticationFailure?.(this.server.name, "tool_call");
         return {
           isError: true,
@@ -168,6 +186,18 @@ export class ExternalMcpClient {
 
   async close(): Promise<void> {
     await this.client.close();
+  }
+
+  async reconnect(signal: AbortSignal): Promise<RemoteTool[]> {
+    await this.client.close();
+    signal.throwIfAborted();
+    this.authenticationRejected = false;
+    this.oauthRejected = false;
+    this.client = this.createClient();
+    this.transport = this.server.type === "sse"
+      ? new SSEClientTransport(this.server.url, this.options)
+      : new StreamableHTTPClientTransport(this.server.url, this.options);
+    return this.discover(signal);
   }
 }
 

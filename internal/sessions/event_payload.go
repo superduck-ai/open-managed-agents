@@ -311,8 +311,8 @@ type eventCursor struct {
 	Order      string `json:"order"`
 }
 
-func encodeEventCursor(event db.SessionEvent, order string) string {
-	data, _ := json.Marshal(eventCursor{ExternalID: event.ExternalID, Order: order})
+func EncodeEventCursor(eventID, order string) string {
+	data, _ := json.Marshal(eventCursor{ExternalID: eventID, Order: order})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 

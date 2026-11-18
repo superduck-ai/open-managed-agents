@@ -55,7 +55,10 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 		return err
 	}
 	setMappingValue(root, "storage", "s3", "endpoint", endpoint)
-	e2bURL := "http://127.0.0.1:" + strconv.Itoa(runtime.E2BPort)
+	e2bURL := spec.LocalE2BAPIURL
+	if e2bURL == "" {
+		e2bURL = "http://127.0.0.1:" + strconv.Itoa(runtime.E2BPort)
+	}
 	setMappingValue(root, "e2b", "api_url", e2bURL)
 	setMappingValue(root, "e2b", "sandbox_url", e2bURL)
 	setMappingValue(root, "e2b", "local_service_host", "127.0.0.1")

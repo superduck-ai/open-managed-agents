@@ -136,6 +136,9 @@ func (i *Injector) finishFailedMCPOAuthExchange(
 		return token, current, nil
 	}
 	if permanentOAuthRefreshFailure(exchangeErr) && ctx.Err() == nil {
+		if err := store.ClearVaultCredentialSecret(ctx, *current); err != nil {
+			return "", nil, errors.Join(exchangeErr, err)
+		}
 		i.enqueueRefreshFailure(ctx, *current)
 	}
 	return "", nil, exchangeErr

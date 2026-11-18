@@ -4,6 +4,11 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="SessionEventMapper">
+    <select id="FindByUUID" resultType="sessionEventRow">
+        SELECT <include refid="columns"/> FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+        AND uuid = #{eventUUID} AND deleted_at IS NULL
+    </select>
     <sql id="columns">
         uuid,
         external_id,
@@ -147,6 +152,17 @@
         ORDER BY COALESCE(session_events.processed_at, session_events.created_at)
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="HasAcceptedToolControl" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND session_external_id = #{sessionExternalID}
+            AND deleted_at IS NULL
+            AND event_type IN ('user.tool_confirmation', 'user.custom_tool_result')
+            AND tool_use_id IN (#{publicID}, #{historyID})
+        )
     </select>
 
     <select id="ChildSessionToolUseIDs" resultType="string">

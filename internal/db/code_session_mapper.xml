@@ -158,7 +158,16 @@
     </select>
 
     <select id="FindVaultIDs" resultType="codeSessionVaultIDsRow">
-        SELECT s.vault_ids
+        SELECT s.vault_ids, COALESCE(s.metadata->>'oauth_vault_id', '') AS oauth_vault_id,
+               COALESCE(s.metadata->>'credential_binding_mode', '') = 'first_vault' AS pin_bindings,
+               NOT EXISTS (
+                   SELECT 1 FROM jsonb_array_elements_text(s.vault_ids) AS mounted(vault_id)
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM vaults v WHERE v.external_id = mounted.vault_id
+                       AND v.organization_uuid = s.organization_uuid AND v.workspace_uuid = s.workspace_uuid
+                       AND v.archived_at IS NULL AND v.deleted_at IS NULL
+                   )
+               ) AS vaults_active
         FROM code_sessions cs
         JOIN sessions s ON s.uuid = cs.session_uuid
             AND s.external_id = cs.session_external_id

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SessionInputRequestMapper">
+  <select id="Find" result="optional">
+    SELECT fingerprint, event_ids::text AS event_ids, settled_input_event_ids::text AS settled_input_event_ids, handoff_completed
+    FROM session_input_requests
+    WHERE organization_uuid = #{session.OrganizationUUID}
+      AND workspace_uuid = #{session.WorkspaceUUID}
+      AND session_uuid = #{session.UUID}
+      AND request_key = #{request.Key}
+  </select>
+  <insert id="Insert" result="exec">
+    INSERT INTO session_input_requests
+      (organization_uuid, workspace_uuid, session_uuid, request_key, fingerprint, event_ids, settled_input_event_ids)
+    VALUES (#{session.OrganizationUUID}, #{session.WorkspaceUUID}, #{session.UUID}, #{request.Key}, #{request.Fingerprint},
+      #{row.EventIDs}::jsonb, #{row.SettledInputEventIDs}::jsonb)
+  </insert>
+  <update id="CompleteHandoff" result="rows">
+    UPDATE session_input_requests SET handoff_completed = true
+    WHERE organization_uuid = #{session.OrganizationUUID}
+      AND workspace_uuid = #{session.WorkspaceUUID}
+      AND session_uuid = #{session.UUID}
+      AND request_key = #{request.Key}
+      AND fingerprint = #{request.Fingerprint}
+  </update>
+</mapper>

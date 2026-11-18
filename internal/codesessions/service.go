@@ -461,7 +461,7 @@ func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (pr
 	if err != nil {
 		return nil, errors.New("payload is an invalid control_request")
 	}
-	if controlRequest.Request.Subtype != "can_use_tool" {
+	if controlRequest.Request.Subtype != "can_use_tool" && controlRequest.Request.Subtype != "request_oauth" {
 		return preparedNoopAction{}, nil
 	}
 	return preparedControlAction{

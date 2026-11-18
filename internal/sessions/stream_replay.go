@@ -56,9 +56,9 @@ func (c *streamConnection) rememberReplay(cursorID string, replay []sessionStrea
 	if cursorID == "" {
 		return
 	}
-	c.replayedEventIDs = make(map[string]struct{}, len(replay)+1)
-	c.replayedEventIDs[cursorID] = struct{}{}
+	c.replayedEventIDs = make(map[string]bool, len(replay)+1)
+	c.replayedEventIDs[cursorID] = false
 	for _, event := range replay {
-		c.replayedEventIDs[event.ExternalID] = struct{}{}
+		c.replayedEventIDs[event.ExternalID] = !event.ProcessedAt.IsZero()
 	}
 }

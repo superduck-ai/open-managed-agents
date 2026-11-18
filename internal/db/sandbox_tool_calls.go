@@ -93,18 +93,27 @@ func (d *DB) GetSandboxToolCall(ctx context.Context, scope SandboxToolCallScope)
 	var result SandboxToolCall
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewSandboxToolCallMapper(executor)
-		_, found, err := lockToolCallWorker(ctx, mapper, scope)
+		guard := lockToolCallWorker
+		mismatch := ErrWorkerEpochMismatch
+		sandbox := scope.WorkerEpoch == 0 && scope.SandboxUUID != ""
+		if sandbox {
+			guard, mismatch = lockToolCallSandbox, ErrToolCallSandboxRetired
+		}
+		_, found, err := guard(ctx, mapper, scope)
 		if err != nil {
 			return err
 		}
 		if !found {
-			return ErrWorkerEpochMismatch
+			return mismatch
 		}
 		row, found, err := mapper.Find(ctx, scope)
 		if err != nil {
 			return err
 		}
 		if !found {
+			return ErrNotFound
+		}
+		if sandbox && (row.SandboxUUID == nil || *row.SandboxUUID != scope.SandboxUUID) {
 			return ErrNotFound
 		}
 		result = row.model()
@@ -200,7 +209,7 @@ func requeueSandboxToolCall(row *sandboxToolCallRow) {
 }
 
 func expireSandboxToolCall(row *sandboxToolCallRow, now time.Time) {
-	if !row.DeadlineAt.After(now) {
+	if row.OAuthWaitStartedAt == nil && !row.DeadlineAt.After(now) {
 		stopSandboxToolCall(row, "deadline", now)
 	}
 	switch row.State {
@@ -349,6 +358,16 @@ func applySandboxToolCallReport(row *sandboxToolCallRow, report SandboxToolCallR
 	switch report.Event {
 	case "inspect":
 		return nil
+	case "oauth_wait":
+		if row.State != "running" || row.OAuthWaitStartedAt != nil {
+			return ErrToolCallConflict
+		}
+		row.OAuthWaitStartedAt = &now
+	case "oauth_resume":
+		if row.OAuthWaitStartedAt != nil {
+			row.DeadlineAt = row.DeadlineAt.Add(now.Sub(*row.OAuthWaitStartedAt))
+			row.OAuthWaitStartedAt = nil
+		}
 	case "started", "heartbeat":
 		if row.State == "dispatched" && report.Event == "started" {
 			row.State = "running"

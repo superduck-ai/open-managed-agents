@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 )
 
 func TestCheckAppCredentials(t *testing.T) {
@@ -23,12 +23,14 @@ func TestCheckAppCredentials(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"t-secret","expire":7200}`))
 	}))
 	defer upstream.Close()
-	previous := feishuTokenURL
-	feishuTokenURL = upstream.URL
-	t.Cleanup(func() { feishuTokenURL = previous })
+	previous := feishu.TokenURL
+	feishu.TokenURL = upstream.URL
+	t.Cleanup(func() { feishu.TokenURL = previous })
 
 	router := chi.NewRouter()
-	router.Mount("/channels", NewWorkspaceHandler(config.ChannelBridgeConfig{}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	service := testLocalService(&fakeLocalStore{}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service.client = upstream.Client()
+	router.Mount("/channels", newLocalHandler(service, nil).workspaceRouter())
 
 	ok := credentialCheckRequest(t, router, `{"app_id":"cli_aa6c7433e1b8dbf1","app_secret":"good-secret"}`, true)
 	if ok.Code != http.StatusOK || strings.Contains(ok.Body.String(), "tenant_access_token") || strings.Contains(ok.Body.String(), "good-secret") {

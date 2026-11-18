@@ -1,21 +1,25 @@
-import { gitResourceBody } from '../resources/git-resource';
+import { gitResourceBody, resourceFormValues } from '../resources/git-resource';
+import { sessionFileResourcePayload } from '../sessions/file-resource-form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
-import { channelApi, type Channel, type ChannelQr } from './api';
+import { channelApi, channelVaultIds, channelResourceValues, type Channel, type ChannelQr } from './api';
 import {
   StepConnect,
   StepMa,
   StepStrategy,
   WizardSideCards,
   WizardStepper,
+  type WizardSideResource,
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
 import { channelTargetsReady, channelWizardStepReady, wizardStepAllowed } from './channelInput';
+import { useChannelResources } from './channelResources';
 import { useChannelAuthorization } from './useChannelAuthorization';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listAllWorkspaceAgents } from './workspaceChannels';
@@ -54,7 +58,7 @@ function WizardStepFields({
   onGenerateQr: (openAuthorization?: boolean) => void;
   showQr: boolean;
 }) {
-  if (step === 2) return <StepStrategy value={value} onChange={onChange} />;
+  if (step === 2) return <StepStrategy value={value} onChange={onChange} modeLocked={Boolean(saved)} />;
   if (step === 3) {
     return (
       <StepMa
@@ -109,9 +113,6 @@ export function ChannelWizardFormPage({
   const [error, setError] = useState('');
   const [pollError, setPollError] = useState('');
   const [value, setValue] = useState<WizardValue>(initialValue);
-  const savedEnvironment = useRef(
-    initialChannel ? { agentId: initialValue.agentId, environmentId: initialValue.environmentId } : null,
-  );
   const onAuthorized = useCallback((appId: string) => {
     setValue((current) => ({ ...current, app_id: appId, app_secret: '' }));
   }, []);
@@ -167,7 +168,7 @@ export function ChannelWizardFormPage({
           void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, saved.id] });
           return;
         }
-        const next = await channelApi<ChannelQr>(targetAgentId, workspaceId, `/${saved.id}/qr`);
+        const next = await anthropicBetaApi.channels.qr<ChannelQr>(workspaceId, saved.id, targetAgentId);
         if (!controller.signal.aborted) {
           setQr(next);
           setPollError('');
@@ -188,6 +189,7 @@ export function ChannelWizardFormPage({
 
   const agents = useMemo(() => agentsQuery.data ?? [], [agentsQuery.data]);
   const environments = useMemo(() => environmentsQuery.data ?? [], [environmentsQuery.data]);
+  const channelResources = useChannelResources(workspaceId);
   const agentLocked = Boolean(saved);
 
   const access = useMemo(() => ({ binding, saved, qrStatus: qr?.status ?? null }), [binding, saved, qr?.status]);
@@ -209,15 +211,9 @@ export function ChannelWizardFormPage({
     setSaving(true);
     setError('');
     try {
-      if (
-        savedEnvironment.current?.agentId !== targetAgentId ||
-        savedEnvironment.current?.environmentId !== value.environmentId
-      ) {
-        await channelApi(targetAgentId!, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
-        savedEnvironment.current = { agentId: targetAgentId, environmentId: value.environmentId };
-      }
       const next = await channelApi<Channel>(targetAgentId!, workspaceId, saved ? `/${saved.id}` : '', 'POST', {
         ...channelPayload(value, binding),
+        environment_id: value.environmentId,
         ...(binding === 'qr' && authorization ? { authorization_id: authorization.id } : {}),
       });
       setSaved(next);
@@ -229,8 +225,7 @@ export function ChannelWizardFormPage({
         ...current,
         app_secret: '',
         agentId: targetAgentId!,
-        git_repository: next.git_repository,
-        gitResource: current.gitResource ? { ...current.gitResource, authorizationToken: '' } : null,
+        ...resourceFormValues(channelResourceValues(next)),
       }));
       void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
       void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
@@ -242,13 +237,34 @@ export function ChannelWizardFormPage({
     }
   };
 
-  const targetNames = useMemo(
-    () => ({
+  const targetNames = useMemo(() => {
+    const resources: WizardSideResource[] = [];
+    const environment = environments.find((item) => item.id === value.environmentId);
+    if (environment) resources.push({ kind: 'environment', label: environment.name });
+    const memoryName = channelResources.data?.memoryStores.find((item) => item.id === value.memory_store_id)?.label;
+    if (value.memory_store_id) resources.push({ kind: 'memory', label: memoryName ?? value.memory_store_id });
+    for (const vaultId of channelVaultIds(value)) {
+      const vaultName = channelResources.data?.vaults.find((item) => item.id === vaultId)?.label;
+      resources.push({ kind: 'vault', label: vaultName ?? vaultId });
+    }
+    for (const file of value.fileResources) resources.push({ kind: 'file', label: file.fileId });
+    for (const git of value.gitResources) if (git.url) resources.push({ kind: 'git', label: git.url });
+    return {
       agentName: agents.find((agent) => agent.id === value.agentId)?.name ?? '',
-      environmentName: environments.find((environment) => environment.id === value.environmentId)?.name ?? '',
-    }),
-    [agents, environments, value.agentId, value.environmentId],
-  );
+      resources,
+    };
+  }, [
+    agents,
+    environments,
+    channelResources.data,
+    value.agentId,
+    value.environmentId,
+    value.memory_store_id,
+    value.vault_id,
+    value.vault_ids,
+    value.gitResources,
+    value.fileResources,
+  ]);
   const visibleError = [
     error,
     pollError,
@@ -385,9 +401,12 @@ function channelPayload(value: WizardValue, binding: string) {
   return {
     name: value.name.trim(),
     mode: value.mode,
+    agent_version: value.agent_version ?? null,
     memory_store_id: value.memory_store_id ?? null,
-    vault_id: value.vault_id ?? null,
-    git_repository: value.gitResource ? gitResourceBody(value.gitResource) : null,
+    vault_ids: channelVaultIds(value),
+    resources: value.resourcesChanged
+      ? [...value.fileResources.map(sessionFileResourcePayload), ...value.gitResources.map(gitResourceBody)]
+      : value.originalResources.map(({ tokenConfigured: _configured, ...resource }) => resource),
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,

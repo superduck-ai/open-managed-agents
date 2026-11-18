@@ -81,6 +81,7 @@ type environmentWorkHeartbeatParams struct {
 }
 
 type environmentWorkRecoveryRetryParams struct {
+	AllowInitial     bool
 	OrganizationUUID string
 	WorkspaceUUID    string
 	EnvironmentUUID  string

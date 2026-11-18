@@ -442,10 +442,8 @@ telemetry:
     stale_running_after: 10m
     stuck_starting_after: 10m
 
-# 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
-channel_bridge:
-  url: ""
-  token: ""
+channels:
+  oma_url: ""
 web_tools:
   search_provider: ""
   providers: {}

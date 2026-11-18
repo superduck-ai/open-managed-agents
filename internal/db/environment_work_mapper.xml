@@ -318,6 +318,15 @@
           AND state IN ('starting', 'active')
           AND deleted_at IS NULL
           AND EXISTS (
+              SELECT 1 FROM sessions session
+              WHERE session.uuid = environment_work.session_uuid
+                AND session.organization_uuid = environment_work.organization_uuid
+                AND session.workspace_uuid = environment_work.workspace_uuid
+                AND session.status != 'terminated'
+                AND session.archived_at IS NULL
+                AND session.deleted_at IS NULL
+          )
+          AND (#{params.AllowInitial} OR EXISTS (
               SELECT 1
               FROM code_sessions code_session
               WHERE code_session.organization_uuid = environment_work.organization_uuid
@@ -326,7 +335,7 @@
                 AND code_session.session_uuid = environment_work.session_uuid
                 AND code_session.status = 'active'
                 AND code_session.deleted_at IS NULL
-          )
+          ))
     </update>
 
     <select id="Heartbeat" resultType="environmentWorkMapperRow">

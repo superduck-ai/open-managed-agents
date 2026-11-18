@@ -1,9 +1,10 @@
-import { GitRepositoryFields } from '../resources/GitRepositoryFields';
-import { emptyGitResource } from '../resources/git-resource';
+import { ManagedResourceFields } from '../resources/ManagedResourceFields';
+import type { resourceFormValues } from '../resources/git-resource';
 import { useId, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Bot, Check, Cloud, ExternalLink, LoaderCircle } from 'lucide-react';
+import { Check, ExternalLink, GitBranch, FileText, LoaderCircle } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
+import { productIcons } from '../../../shared/icons/product-icons';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
@@ -13,18 +14,19 @@ import { Switch } from '../../../shared/ui/switch';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import type { Channel, ChannelInput, ChannelQr } from './api';
 import { ChannelResourceFields } from './ChannelResourceFields';
+import { ChannelAgentVersionField } from './ChannelAgentVersionField';
 import { ChannelCredentials } from './ChannelFields';
 import feishuLogo from './feishu.ico';
 
 export type WizardStep = 1 | 2 | 3;
 export type ChannelTypeOption = 'feishu';
 
-export type WizardValue = ChannelInput & {
-  channelType: ChannelTypeOption;
-  agentId: string;
-  environmentId: string;
-  gitResource?: import('../types').GitRepositoryResourceFormValue | null;
-};
+export type WizardValue = ChannelInput &
+  ReturnType<typeof resourceFormValues> & {
+    channelType: ChannelTypeOption;
+    agentId: string;
+    environmentId: string;
+  };
 
 export function WizardStepper({
   step,
@@ -79,7 +81,22 @@ export function WizardStepper({
   );
 }
 
-export function WizardSideCards({ agentName, environmentName }: { agentName: string; environmentName: string }) {
+export type WizardSideResourceKind = 'environment' | 'memory' | 'vault' | 'git' | 'file';
+
+export type WizardSideResource = {
+  kind: WizardSideResourceKind;
+  label: string;
+};
+
+const sideResourceIcons = {
+  environment: productIcons.environments,
+  memory: productIcons.memory,
+  vault: productIcons.vaults,
+  git: GitBranch,
+  file: FileText,
+} as const;
+
+export function WizardSideCards({ agentName, resources }: { agentName: string; resources: WizardSideResource[] }) {
   const { msg } = useI18n();
   return (
     <>
@@ -91,7 +108,7 @@ export function WizardSideCards({ agentName, environmentName }: { agentName: str
           <CardContent>
             <div className="flex min-w-0 items-center gap-3 py-2">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                <Bot className="size-4" aria-hidden />
+                <productIcons.agents className="size-4" aria-hidden />
               </span>
               <span className="min-w-0 flex-1 truncate" title={agentName}>
                 {agentName}
@@ -105,14 +122,25 @@ export function WizardSideCards({ agentName, environmentName }: { agentName: str
           <CardTitle className="text-sm">{msg('managedAgents.channels.resources', '资源')}</CardTitle>
         </CardHeader>
         <CardContent>
-          {environmentName ? (
-            <div className="flex min-w-0 items-center gap-3 py-2">
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                <Cloud className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate" title={environmentName}>
-                {environmentName}
-              </span>
+          {resources.length > 0 ? (
+            <div className="space-y-1">
+              {resources.map((resource) => {
+                const Icon = sideResourceIcons[resource.kind];
+                return (
+                  <div
+                    key={`${resource.kind}:${resource.label}`}
+                    data-resource-kind={resource.kind}
+                    className="flex min-w-0 items-center gap-3 py-2"
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                      <Icon className="size-4" aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" title={resource.label}>
+                      {resource.label}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">{msg('managedAgents.channels.noResources', '暂无关联资源')}</p>
@@ -303,10 +331,39 @@ function QrBindPanel({
   );
 }
 
-export function StepStrategy({ value, onChange }: { value: WizardValue; onChange: (value: WizardValue) => void }) {
+export function StepStrategy<T extends ChannelInput>({
+  value,
+  onChange,
+  modeLocked,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  modeLocked: boolean;
+}) {
   const { msg } = useI18n();
+  const modeId = useId();
   return (
     <div className="space-y-5">
+      <div className="space-y-2">
+        <Label htmlFor={modeId}>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
+        <Select
+          value={value.mode}
+          disabled={modeLocked}
+          onValueChange={(mode) => onChange({ ...value, mode: mode === 'pairing' ? 'pairing' : 'open' })}
+          items={[
+            { value: 'open', label: msg('managedAgents.channels.open', '开放模式') },
+            { value: 'pairing', label: msg('managedAgents.channels.pairing', '配对模式') },
+          ]}
+        >
+          <SelectTrigger id={modeId} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="open">{msg('managedAgents.channels.open', '开放模式')}</SelectItem>
+            <SelectItem value="pairing">{msg('managedAgents.channels.pairing', '配对模式')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <div className="space-y-2">
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.identityReply', '身份与回复')}
@@ -339,16 +396,10 @@ export function StepStrategy({ value, onChange }: { value: WizardValue; onChange
           </div>
           <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-3 border-t-[0.5px] border-border px-2.5 py-2">
             <span>{msg('managedAgents.channels.directChat', '单聊')}</span>
-            <span>{msg('managedAgents.channels.identityUser', 'User')}</span>
+            <span>{msg('managedAgents.channels.identityBot', 'Bot')}</span>
             <span className="text-muted-foreground">—</span>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">
-          {msg(
-            'managedAgents.channels.identityHint',
-            '身份设定由飞书桥接默认处理（群聊 Bot / 单聊 User）；回复方式会写入话题策略。',
-          )}
-        </p>
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.replyDisplay', '回复展示')}</Label>
@@ -362,8 +413,8 @@ export function StepStrategy({ value, onChange }: { value: WizardValue; onChange
           <ToggleCardRow
             title={msg('managedAgents.channels.tools', '展示工具调用')}
             description={msg(
-              'managedAgents.channels.toolsVolcHint',
-              '在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。',
+              'managedAgents.channels.toolDetailsHint',
+              '展示工具名称、执行状态以及可展开的输入和输出。',
             )}
             checked={value.include_tool_calls}
             onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
@@ -389,7 +440,6 @@ export function StepMa({
   environments: EnvironmentApiResponse[];
   agentLocked: boolean;
 }) {
-  const { msg } = useI18n();
   return (
     <div className="space-y-5">
       <ChannelTargetFields
@@ -399,36 +449,14 @@ export function StepMa({
         environments={environments}
         agentLocked={agentLocked}
       />
-      <div className="space-y-2">
-        <Label>
-          <span className="text-destructive">*</span> {msg('managedAgents.channels.agentVersion', '智能体版本')}
-        </Label>
-        <Select
-          value="latest"
-          items={[{ value: 'latest', label: msg('managedAgents.channels.latestVersionShort', '默认最新') }]}
-        >
-          <SelectTrigger className="h-10 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="latest">{msg('managedAgents.channels.latestVersionShort', '默认最新')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <ChannelAgentVersionField
+        workspaceId={workspaceId}
+        agentId={value.agentId}
+        value={value.agent_version}
+        onChange={(agentVersion) => onChange({ ...value, agent_version: agentVersion })}
+      />
       <ChannelResourceFields workspaceId={workspaceId} value={value} onChange={onChange} />
-      {value.gitResource ? (
-        <GitRepositoryFields
-          resource={value.gitResource}
-          index={0}
-          tokenConfigured={value.git_repository?.tokenConfigured && value.git_repository.url === value.gitResource.url}
-          onChange={(gitResource) => onChange({ ...value, gitResource })}
-          onRemove={() => onChange({ ...value, gitResource: null })}
-        />
-      ) : (
-        <Button type="button" variant="outline" onClick={() => onChange({ ...value, gitResource: emptyGitResource() })}>
-          {msg('managedAgents.git.add', '添加 Git 仓库')}
-        </Button>
-      )}
+      <ManagedResourceFields values={value} onChange={onChange} workspaceId={workspaceId} embedded />
     </div>
   );
 }
@@ -456,7 +484,7 @@ function ChannelTargetFields({
         <Select
           value={value.agentId || null}
           disabled={agentLocked}
-          onValueChange={(next) => onChange({ ...value, agentId: next ?? '' })}
+          onValueChange={(next) => onChange({ ...value, agentId: next ?? '', agent_version: null })}
           items={agents.map((agent) => ({ value: agent.id, label: `${agent.name} (${agent.id})` }))}
         >
           <SelectTrigger className="h-10 w-full">

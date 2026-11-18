@@ -166,7 +166,7 @@ func TestPutSessionAttachmentStoresHiddenOwnedFile(t *testing.T) {
 	sum := sha256.Sum256([]byte("png-bytes"))
 	if string(uploaded) != "png-bytes" || putInput.Path != target.Path || putInput.OverwriteExisting ||
 		putInput.Blob.MediaType != "image/png" || putInput.Blob.SizeBytes != 9 || putInput.Blob.SHA256 != hex.EncodeToString(sum[:]) ||
-		putInput.Blob.Downloadable || putInput.WorkspaceStorageLimitBytes != 0 || putInput.OrphanCleanupJobExternalID != "cleanup_attachment" {
+		putInput.Blob.Downloadable || putInput.WorkspaceStorageLimitBytes != 4096 || putInput.OrphanCleanupJobExternalID != "cleanup_attachment" {
 		t.Fatalf("put input = %+v, uploaded %q", putInput, uploaded)
 	}
 }

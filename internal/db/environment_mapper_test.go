@@ -272,11 +272,12 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			wantID:    "EnvironmentWorkMapper.RequeueIfRecoverable", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.RetryAt", "params.RetryAt", "params.OrganizationUUID", "params.WorkspaceUUID",
-				"params.EnvironmentUUID", "params.WorkUUID",
+				"params.EnvironmentUUID", "params.WorkUUID", "params.AllowInitial",
 			},
 			wantSQLFragments: []string{
 				"state = 'queued'", "queued_at = $1", "claim_expires_at = $2", "state IN ('starting', 'active')",
 				"EXISTS", "code_session.session_uuid = environment_work.session_uuid",
+				"session.status != 'terminated'", "session.archived_at IS NULL", "session.deleted_at IS NULL",
 			},
 		}},
 		{"heartbeat", mapperBuilderContract{

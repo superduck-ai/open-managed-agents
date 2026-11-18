@@ -11,6 +11,8 @@ import (
 )
 
 type SessionEventChanges struct {
+	Replayed              bool
+	InputHandoffCompleted bool
 	Events                []SessionEvent
 	SettledInputEventIDs  []string
 	RetiredCodeSessionIDs []string
@@ -18,7 +20,8 @@ type SessionEventChanges struct {
 
 func (c SessionEventChanges) WorkerInputEvents() []SessionEvent {
 	return slices.DeleteFunc(slices.Clone(c.Events), func(event SessionEvent) bool {
-		return event.EventType == "user.interrupt" && slices.Contains(c.SettledInputEventIDs, event.ExternalID)
+		tracked := event.EventType == "user.message" || event.EventType == "user.tool_confirmation"
+		return c.Replayed && tracked && !event.ProcessedAt.IsZero() || event.EventType == "user.interrupt" && slices.Contains(c.SettledInputEventIDs, event.ExternalID)
 	})
 }
 

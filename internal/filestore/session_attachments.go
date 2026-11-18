@@ -75,6 +75,7 @@ func (s *Service) PutSessionAttachment(ctx context.Context, target SessionAttach
 			S3ETag:           upload.ETag,
 			S3VersionID:      upload.VersionID,
 		},
+		WorkspaceStorageLimitBytes: s.cfg.Storage.WorkspaceLimitBytes,
 		OrphanCleanupJobExternalID: staged.CleanupJob.ExternalID,
 		Now:                        now,
 	})

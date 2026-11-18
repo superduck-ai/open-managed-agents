@@ -35,7 +35,7 @@ func TestMCPOAuthFlowMapperBuilders(t *testing.T) {
 		wantID:    "MCPOAuthFlowMapper.Insert",
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
-			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
+			"params.Continuation", "params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 			"params.VaultUUID", "params.VaultExternalID", "params.UserUUID", "params.UserExternalID",
 			"params.PlatformSessionExternalID", "params.MCPServerURL", "params.RedirectURL",
 			"params.DisplayName", "params.Source", "params.AuthorizationEndpoint", "params.TokenEndpoint",
@@ -45,8 +45,17 @@ func TestMCPOAuthFlowMapperBuilders(t *testing.T) {
 			"params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.Status",
 			"params.CreatedAt", "params.CreatedAt", "params.ExpiresAt",
 		},
-		wantSensitiveArgumentNames: []string{"params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
+		wantSensitiveArgumentNames: []string{"params.Continuation", "params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
 		wantSQLFragments:           []string{"INSERT INTO mcp_oauth_flows", "RETURNING"},
+	})
+
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: mCPOAuthFlowMapperClaimStatement,
+		bound:     buildMCPOAuthFlowMapperClaim(yourbatis.DialectPostgres, "flow_test", now),
+		wantID:    "MCPOAuthFlowMapper.Claim", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"claimedAt", "externalID", "claimedAt"},
+		wantSensitiveArgumentNames: []string{"externalID"},
+		wantSQLFragments:           []string{"status = 'processing'", "status = 'pending'", "expires_at > $3"},
 	})
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
@@ -55,6 +64,6 @@ func TestMCPOAuthFlowMapperBuilders(t *testing.T) {
 		wantID:            "MCPOAuthFlowMapper.Complete",
 		wantKind:          yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"credentialExternalID", "completedAt", "completedAt", "externalID"},
-		wantSQLFragments:  []string{"status = 'completed'", "ciphertext = NULL", "WHERE external_id = $4", "status = 'pending'"},
+		wantSQLFragments:  []string{"status = 'completed'", "ciphertext = NULL", "WHERE external_id = $4", "status IN ('pending', 'processing')"},
 	})
 }

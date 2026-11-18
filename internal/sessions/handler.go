@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
@@ -19,9 +20,10 @@ import (
 )
 
 const maxSessionBodySize = 4 << 20
-const maxSessionCreateBodySize = 32 << 20
+const maxSessionCreateBodySize = sessioncontract.MaxCreateBodyBytes
 
 type Handler struct {
+	attachments     codesessions.SessionAttachmentStore
 	secretService   *secrets.Service
 	eventPayloads   *eventpayload.Store
 	cfg             config.Config

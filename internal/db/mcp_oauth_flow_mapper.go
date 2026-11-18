@@ -9,6 +9,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper MCPOAuthFlowMapper -sql ./mcp_oauth_flow_mapper.xml -out ./mcp_oauth_flow_mapper.sqlmap.gen.go -dialect postgres
 
 type mcpOAuthFlowRow struct {
+	Continuation              sql.NullString `db:"continuation"`
 	UUID                      string         `db:"uuid"`
 	ExternalID                string         `db:"external_id"`
 	OrganizationUUID          string         `db:"organization_uuid"`
@@ -48,6 +49,7 @@ type mcpOAuthFlowRow struct {
 }
 
 type insertMCPOAuthFlowParams struct {
+	Continuation              *string
 	UUID                      string
 	ExternalID                string
 	OrganizationUUID          string
@@ -85,6 +87,7 @@ type insertMCPOAuthFlowParams struct {
 type MCPOAuthFlowMapper interface {
 	Insert(ctx context.Context, params insertMCPOAuthFlowParams) (mcpOAuthFlowRow, error)
 	FindByExternalID(ctx context.Context, externalID string) (mcpOAuthFlowRow, error)
+	Claim(ctx context.Context, externalID string, claimedAt time.Time) (int64, error)
 	Complete(ctx context.Context, externalID, credentialExternalID string, completedAt time.Time) (int64, error)
 	Fail(ctx context.Context, externalID, errorCode string, failedAt time.Time) (int64, error)
 }

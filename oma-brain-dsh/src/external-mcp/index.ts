@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { object } from "../json.ts";
 import { ToolExecution } from "../runtime/execution.ts";
+import { requestToolOAuth } from "../runtime/oauth.ts";
 import type { RemoteTool, ToolExecutionBridge, SandboxExecutor } from "../runtime/contracts.ts";
 import { externalServers } from "./config.ts";
 import { ExternalMcpClient } from "./client.ts";
@@ -20,7 +21,7 @@ interface McpRegistration {
 export class ExternalMcp {
   private clients: ExternalMcpClient[];
   private signature: string;
-  private discoveryFailed = false;
+  private readonly failedClients = new Set<ExternalMcpClient>();
   private readonly registrations = new Set<McpRegistration>();
   private closing?: Promise<void>;
   private discovery?: Promise<
@@ -50,9 +51,9 @@ export class ExternalMcp {
       for (const [index, outcome] of outcomes.entries()) {
         const client = this.clients[index]!;
         if (outcome.status === "rejected") {
-          this.discoveryFailed = true;
+          this.failedClients.add(client);
           if (client.authenticationFailed) {
-            await authenticationFailure(client.server.name);
+            if (!client.oauthRequired) await authenticationFailure(client.server.name);
           } else {
             await connectionFailure(client.server.name);
           }
@@ -100,10 +101,41 @@ export class ExternalMcp {
     const bindings = await (this.discovery ??= this.discover(signal, authenticationFailure, connectionFailure));
     signal.throwIfAborted();
     for (const { client, tool } of bindings) {
+      this.installTool(registration, client, tool);
+    }
+    for (const client of this.clients.filter(candidate => candidate.oauthRequired)) {
+      registration.disposers.push(ctx.tools.register({
+        name: `mcp__${client.server.prefix}__connect`,
+        description: `连接 ${client.server.name} 并发现可用工具。仅在本次任务需要该服务时调用；可能需要用户 OAuth 授权。`,
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        output: { schema: { type: "string" }, render: (_args, value) => [{ type: "text", text: String(value) }] },
+        isConcurrencySafe: () => false,
+        execute: async (_args, exec) => {
+          await requestToolOAuth(bridge, {
+            kind: "mcp_oauth", mcp_server_name: client.server.name, mcp_server_url: client.server.url.href,
+            parent_call_id: exec.callId, reason: "missing",
+          }, exec.signal);
+          const tools = await client.reconnect(exec.signal);
+          this.failedClients.delete(client);
+          this.discovery = Promise.resolve([...(await this.discovery ?? []).filter(binding => binding.client !== client), ...tools.map(tool => ({ client, tool }))]);
+          for (const tool of tools) this.installTool(registration, client, tool);
+          return JSON.stringify({ tools: tools.map(tool => ({ name: tool.name, description: tool.description })) });
+        },
+      }));
+    }
+  }
+
+  private installTool(registration: McpRegistration, client: ExternalMcpClient, tool: RemoteTool): void {
+    const { ctx, bridge, authenticationFailure, sandbox, threadId } = registration;
       const execution = new ToolExecution({
         provision: (signal) => client.provision(signal),
-        call: async (remote, args, signal) => persistToolOutput(
-          await client.call(remote, args, signal, authenticationFailure), sandbox, signal, { threadId },
+        call: async (remote, args, signal, _threadId, callId) => persistToolOutput(
+          await client.call(remote, args, signal, authenticationFailure, callId ? async () => {
+            await requestToolOAuth(bridge, {
+              kind: "mcp_oauth", mcp_server_name: client.server.name, mcp_server_url: client.server.url.href,
+              parent_call_id: callId, reason: "reauthorization_required",
+            }, signal);
+          } : undefined), sandbox, signal, { threadId },
         ),
       }, bridge);
       registration.disposers.push(ctx.tools.register({
@@ -117,19 +149,18 @@ export class ExternalMcp {
         isConcurrencySafe: () => false,
         execute: (args, exec) => execution.execute(tool, object(args), exec),
       }));
-    }
   }
 
   async update(config: unknown): Promise<void> {
     const signature = JSON.stringify(config ?? null);
-    if (signature === this.signature && !this.discoveryFailed) return;
+    if (signature === this.signature && this.failedClients.size === 0) return;
     const servers = externalServers(config);
     for (const registration of this.registrations) {
       for (const dispose of registration.disposers.splice(0)) dispose();
     }
     await this.close();
     this.clients = servers.map(server => new ExternalMcpClient(server, this.fetcher));
-    this.discoveryFailed = false;
+    this.failedClients.clear();
     this.closing = undefined;
     this.discovery = undefined;
     for (const registration of this.registrations) {

@@ -162,18 +162,31 @@ func (s *Store) GetSessionEvent(ctx context.Context, workspaceUUID, sessionID, e
 }
 
 func (s *Store) AppendSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false, nil)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false, nil, nil)
+}
+
+func (s *Store) AppendSessionInputRequest(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, request db.SessionInputRequest) (db.SessionEventChanges, error) {
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false, nil, &request)
+}
+
+func (s *Store) FindSessionInputRequest(ctx context.Context, session db.Session, request db.SessionInputRequest) (db.SessionEventChanges, bool, error) {
+	changes, found, err := s.database.FindSessionInputRequest(ctx, session, request)
+	if err != nil || !found {
+		return db.SessionEventChanges{}, false, err
+	}
+	changes.Events, err = s.RestorePublicPage(ctx, changes.Events)
+	return changes, true, err
 }
 
 func (s *Store) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true, nil)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true, nil, nil)
 }
 
 func (s *Store) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, transition db.SessionBudgetTransition) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, false, &transition)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, false, &transition, nil)
 }
 
-func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool, transition *db.SessionBudgetTransition) (db.SessionEventChanges, error) {
+func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool, transition *db.SessionBudgetTransition, request *db.SessionInputRequest) (db.SessionEventChanges, error) {
 	session, found, err := s.database.GetSession(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return db.SessionEventChanges{}, err
@@ -192,7 +205,9 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 		return db.SessionEventChanges{}, err
 	}
 	var changes db.SessionEventChanges
-	if transition != nil {
+	if request != nil {
+		changes, err = s.database.AppendSessionInputRequest(ctx, workspaceUUID, sessionID, prepared, outcomes, *request)
+	} else if transition != nil {
 		changes, err = s.database.AppendSessionBudgetReachedEvents(ctx, workspaceUUID, sessionID, prepared, *transition)
 	} else if ifAbsent {
 		changes, err = s.database.AppendSessionEventsIfAbsent(ctx, workspaceUUID, sessionID, prepared)
@@ -201,6 +216,10 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 	}
 	if err != nil {
 		return db.SessionEventChanges{}, err
+	}
+	if changes.Replayed {
+		changes.Events, err = s.RestorePublicPage(ctx, changes.Events)
+		return changes, err
 	}
 	originalUUIDs := make(map[string]string, len(events))
 	for _, event := range events {

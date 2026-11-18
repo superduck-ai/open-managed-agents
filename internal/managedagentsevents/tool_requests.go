@@ -32,16 +32,25 @@ func PendingToolEventIDs(raw []byte, primaryID, threadID string) ([]string, erro
 }
 
 func ResolvePendingToolEventID(raw []byte, codeSessionID, primaryID, threadID, eventID string) (string, error) {
-	requests, err := pendingToolRequests(raw, primaryID, threadID)
-	if err != nil {
+	references, err := PendingToolEventReferences(raw, codeSessionID, primaryID, threadID, eventID)
+	if err != nil || len(references) == 0 {
 		return "", err
 	}
+	return references[0], nil
+}
+
+func PendingToolEventReferences(raw []byte, codeSessionID, primaryID, threadID, eventID string) ([]string, error) {
+	requests, err := pendingToolRequests(raw, primaryID, threadID)
+	if err != nil {
+		return nil, err
+	}
 	for _, request := range requests {
-		if request.PublicEventID == eventID || ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID) == eventID {
-			return request.PublicEventID, nil
+		historyID := ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID)
+		if request.PublicEventID == eventID || historyID == eventID {
+			return []string{request.PublicEventID, historyID}, nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 func pendingToolRequests(raw []byte, primaryID, threadID string) ([]toolPermissionRequestMetadata, error) {

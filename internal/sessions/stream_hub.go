@@ -49,7 +49,7 @@ type streamConnection struct {
 	streamDeltaTypes   map[string]struct{}
 	activePreviewIDs   map[string]struct{}
 	finishedPreviewIDs map[string]struct{}
-	replayedEventIDs   map[string]struct{}
+	replayedEventIDs   map[string]bool
 }
 
 func newStreamHub() *streamHub {
@@ -144,8 +144,12 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
-		if _, replayed := c.replayedEventIDs[event.ExternalID]; replayed {
-			return false
+		if processed, replayed := c.replayedEventIDs[event.ExternalID]; replayed {
+			mutableInput := event.EventType == "user.message" || event.EventType == "user.tool_confirmation"
+			if !mutableInput || processed || event.ProcessedAt.IsZero() {
+				return false
+			}
+			c.replayedEventIDs[event.ExternalID] = true
 		}
 		delete(c.activePreviewIDs, event.ExternalID)
 		// Only preview subscribers can receive late deltas, so only they remember finished previews.
@@ -218,111 +222,60 @@ func (c *streamConnection) acceptsPreviewType(eventType string) bool {
 }
 
 func (h *Handler) streamEventsRoute(w http.ResponseWriter, r *http.Request) {
-	h.streamEvents(w, r, chi.URLParam(r, "session_id"), "", true)
+	h.streamEvents(w, r, chi.URLParam(r, "session_id"), "")
 }
 
 func (h *Handler) StreamEvents(w http.ResponseWriter, r *http.Request, sessionID string) {
-	h.streamEvents(w, r, sessionID, "", true)
+	h.streamEvents(w, r, sessionID, "")
 }
 
 func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request) {
-	sessionID := chi.URLParam(r, "session_id")
-	threadID := chi.URLParam(r, "thread_id")
-
-	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
-		h.errorAdapter.Write(w, r, err)
-		return
-	}
-	thread, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID)
-	if err != nil {
-		h.errorAdapter.Write(w, r, mapThreadLoadError(err, threadID))
-		return
-	}
-	h.streamEvents(w, r, sessionID, threadID, thread.ParentThreadUUID == nil)
+	h.streamEvents(w, r, chi.URLParam(r, "session_id"), chi.URLParam(r, "thread_id"))
 }
 
-func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string, primaryThread bool) {
+func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) {
 	ctx, cancel := httpapi.StreamContext(r.Context())
 	defer cancel()
 	r = r.WithContext(ctx)
-	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
-	if err != nil {
-		h.errorAdapter.Write(w, r, err)
-		return
-	}
-	streamDeltaTypes, err := requestedStreamDeltaTypes(r)
+	deltaTypes, err := requestedStreamDeltaTypes(r)
 	if err != nil {
 		h.errorAdapter.Write(w, r, invalidRequest(err))
 		return
-	}
-	subscribeThreadID := threadID
-	if subscribeThreadID == "" {
-		primary, err := h.ensurePrimarySessionThread(r.Context(), session)
-		if err != nil {
-			h.errorAdapter.Write(w, r, mapSessionLoadError(err, sessionID))
-			return
-		}
-		subscribeThreadID = primary.ExternalID
-		primaryThread = true
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
-	subID, ch := h.streams.subscribe(session.WorkspaceUUID, sessionID)
-	if err := h.eventBus.Subscribe(r.Context(), session.ExternalID); err != nil {
-		h.streams.unsubscribe(subID)
-		h.errorAdapter.Write(w, r, internalError("Could not subscribe to session event stream", err))
-		return
-	}
-	defer httpapi.ObserveSSEStream(r.Context(), "public")()
-	defer func() {
-		h.streams.unsubscribe(subID)
-		if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {
-			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
-		}
-	}()
-	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
-	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID)
+	subscription, err := h.SubscribeEvents(ctx, sessionID, StreamOptions{ThreadID: threadID, AfterEventID: strings.TrimSpace(r.Header.Get("Last-Event-ID")), DeltaTypes: deltaTypes})
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return
 	}
+	defer subscription.Close()
+	defer httpapi.ObserveSSEStream(ctx, "public")()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	fmt.Fprint(w, ": connected\n\n")
-	for _, event := range replay {
-		if connection.accepts(event) {
-			writeSSE(w, event, subscribeThreadID)
-		}
-	}
-	connection.rememberReplay(cursorID, replay)
 	flusher.Flush()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
+		event, err := subscription.receive(ctx, ticker.C)
+		if errors.Is(err, ErrStreamHeartbeat) {
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
-		case delivery, ok := <-ch:
-			if !ok {
-				return
-			}
-			event, accepted := connection.event(delivery)
-			if accepted {
-				writeSSE(w, event, subscribeThreadID)
-				flusher.Flush()
-			}
-			if event.EventType == "session.deleted" {
-				return
-			}
+			continue
+		}
+		if err != nil {
+			return
+		}
+		writeSSE(w, event, subscription.threadID)
+		flusher.Flush()
+		if event.EventType == "session.deleted" {
+			return
 		}
 	}
 }

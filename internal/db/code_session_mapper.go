@@ -139,7 +139,10 @@ type codeSessionNetworkPolicyContextRow struct {
 }
 
 type codeSessionVaultIDsRow struct {
-	VaultIDs []byte `db:"vault_ids"`
+	VaultIDs     []byte `db:"vault_ids"`
+	OAuthVaultID string `db:"oauth_vault_id"`
+	PinBindings  bool   `db:"pin_bindings"`
+	VaultsActive bool   `db:"vaults_active"`
 }
 
 type codeSessionWorkerLeaseRow struct {

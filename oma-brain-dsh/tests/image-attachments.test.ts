@@ -11,7 +11,7 @@ import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "../src/model-defaults.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/adapter.ts";
 import { omaModelOptions } from "../src/model.ts";
 import { OmaApi } from "../src/api.ts";
-import { Backend, textEvents } from "./backend.ts";
+import { Backend, textEvents, toolEvents } from "./backend.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { imagePricing, imagePlaceholder } from "../src/llm-ai-sdk/images.ts";
@@ -374,4 +374,32 @@ test("legacy custom image blocks have no request encoder compatibility", async (
       messages: [{ role: "user", content: [legacy] }] })) {}
   })()).rejects.toMatchObject({ code: "INVALID_ARGS", message: "Unsupported model input block: oma-image" });
   expect(f.backend.requests).toHaveLength(0);
+});
+
+test.each([false, true])("两张不同颜色图片经过完整会话链路后保持字节、顺序和历史独立，包含工具：%s", async withTool => {
+  const images = ["iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADGklEQVR4nO3OQQ0AMBAEofVvupUxjyNBAHsbnNUPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPIPQBWUwO8hhpVuIAAAAASUVORK5CYII=", "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADGklEQVR4nO3OQQ0AMBAEofVvupUxjyNBANseHNYPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPINQPIPMBO2oO8jAVKJAAAAAASUVORK5CYII="];
+  const backend = new Backend();
+  backend.a.launch.models!["test-model"]!.input_modalities = ["text", "image"];
+  backend.a.launch.tool_permissions = { bash: "allow" };
+  backend.modelScript = [...(withTool ? [toolEvents("cat /mnt/session/uploads/first/data.csv /mnt/session/uploads/second/data.csv")] : []), textEvents("first"), textEvents("second"), textEvents("third")];
+  const { session } = await openRuntime(backend);
+  await session.receive("two-colors", { content: [
+    { type: "text", text: "按顺序识别两张图片的主色" },
+    ...images.map(data => ({ type: "image", source: { type: "base64", media_type: "image/png", data } })),
+    ...(withTool ? [{ type: "text", text: "本轮附件（沙箱路径）：\n\"data.csv\"：/mnt/session/uploads/first/data.csv\n\"data.csv\"：/mnt/session/uploads/second/data.csv" }] : []),
+  ] });
+  await session.receive("two-colors-followup", { content: "继续核对前面的两张图片" });
+  await session.receive("two-colors-reversed", { content: [...images].reverse().map(data => ({
+    type: "image", source: { type: "base64", media_type: "image/png", data },
+  })) });
+  expect(backend.requests).toHaveLength(withTool ? 4 : 3);
+  expect(backend.executions).toHaveLength(withTool ? 1 : 0);
+  for (const [index, request] of backend.requests.entries()) {
+    const expected = index === (withTool ? 3 : 2) ? [...images, ...[...images].reverse()] : images;
+    const blocks = request.messages.flatMap((message: any) => message.content).filter((block: any) => block.type === "image");
+    expect(blocks).toHaveLength(expected.length);
+    expect(blocks.map((block: any) => block.source.media_type)).toEqual(expected.map(() => "image/png"));
+    expect(blocks.map((block: any) => block.source.data)).toEqual(expected);
+  }
+  expect(backend.imageObjects.size).toBe(2);
 });

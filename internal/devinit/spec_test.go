@@ -172,3 +172,17 @@ func TestLoadModelProvidersResolvesKeys(t *testing.T) {
 		t.Fatalf("Providers[1].APIKey = %q, want trimmed file-key", spec.Providers[1].APIKey)
 	}
 }
+
+func TestLoadSpecAcceptsLocalE2BAPIURL(t *testing.T) {
+	if _, err := LoadSpec(writeSpecFile(t, validSpec+"\nlocal_e2b_api_url: http://127.0.0.1:43268\n")); err != nil {
+		t.Fatalf("独立本地提供方地址应被接受: %v", err)
+	}
+}
+
+func TestLoadSpecRejectsInvalidLocalE2BAPIURL(t *testing.T) {
+	for _, endpoint := range []string{"not-a-url", "/relative", "ftp://localhost:43268", "http://user:password@localhost:43268", "http://localhost:43268?query=1", "http://localhost:43268#fragment"} {
+		if _, err := LoadSpec(writeSpecFile(t, validSpec+"\nlocal_e2b_api_url: "+endpoint+"\n")); err == nil {
+			t.Fatalf("非法本地提供方地址应在入口被拒绝: %s", endpoint)
+		}
+	}
+}

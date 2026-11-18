@@ -3,12 +3,11 @@ package sessions
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"testing"
 )
 
 func TestEventCursorBindsAscendingOrder(t *testing.T) {
-	raw := encodeEventCursor(db.SessionEvent{ExternalID: "event-test"}, "asc")
+	raw := EncodeEventCursor("event-test", "asc")
 	data, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +23,7 @@ func TestEventCursorBindsAscendingOrder(t *testing.T) {
 
 func TestEventCursorRejectsChangingOrder(t *testing.T) {
 	for _, original := range []string{"asc", "desc"} {
-		cursor := encodeEventCursor(db.SessionEvent{ExternalID: "event-test"}, original)
+		cursor := EncodeEventCursor("event-test", original)
 		for _, requested := range []string{"asc", "desc"} {
 			got, err := decodeEventCursor(cursor, requested)
 			if (err == nil) != (original == requested) {

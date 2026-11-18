@@ -14,6 +14,7 @@
     input,
     state,
     deadline_at,
+    oauth_wait_started_at,
     timeout_ms,
     lease_expires_at,
     cancel_requested_at,
@@ -76,6 +77,7 @@
     input,
     state,
     deadline_at,
+    oauth_wait_started_at,
     timeout_ms,
     lease_expires_at,
     cancel_requested_at,
@@ -108,6 +110,7 @@
     #{row.Input, sensitive=true},
     #{row.State},
     #{row.DeadlineAt},
+    #{row.OAuthWaitStartedAt},
     #{row.TimeoutMS},
     #{row.LeaseExpiresAt},
     #{row.CancelRequestedAt},
@@ -134,6 +137,7 @@
     attempt = #{row.Attempt},
     state = #{row.State},
     deadline_at = #{row.DeadlineAt},
+    oauth_wait_started_at = #{row.OAuthWaitStartedAt},
     lease_expires_at = #{row.LeaseExpiresAt},
     cancel_requested_at = #{row.CancelRequestedAt},
     cancel_reason = #{row.CancelReason},
@@ -164,10 +168,11 @@
  SELECT <include refid="columns"/> FROM sandbox_tool_calls
  WHERE (state IN ('pending','dispatched') AND deadline_at &lt;= #{now})
  OR (state = 'dispatched' AND lease_expires_at &lt;= #{now})
- OR (state = 'running' AND (deadline_at &lt;= #{now} OR lease_expires_at + INTERVAL '30 seconds' &lt;= #{now}))
+ OR (state = 'running' AND ((oauth_wait_started_at IS NULL AND deadline_at &lt;= #{now}) OR lease_expires_at + INTERVAL '30 seconds' &lt;= #{now}))
  OR (state = 'cancel_requested' AND (lease_expires_at + INTERVAL '30 seconds' &lt;= #{now} OR stop_grace_until &lt;= #{now}))
  ORDER BY LEAST(
     deadline_at,
+    oauth_wait_started_at,
     COALESCE(CASE WHEN state = 'dispatched' THEN lease_expires_at ELSE lease_expires_at + INTERVAL '30 seconds' END, deadline_at),
     COALESCE(stop_grace_until, deadline_at)
  ), id

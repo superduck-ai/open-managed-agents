@@ -8,7 +8,12 @@ import { emptyMemoryAttach, MAX_MEMORY_ATTACHES } from './memory-attach';
 import { GitRepositoryFields } from './GitRepositoryFields';
 import { emptyGitResource, resourceFormValues } from './git-resource';
 
-export function ManagedResourceFields({
+type ResourceFieldValues = Pick<
+  ManagedEntityFormValues,
+  'originalResources' | 'resourcesChanged' | 'fileResources' | 'gitResources' | 'memoryAttaches'
+>;
+
+export function ManagedResourceFields<T extends ResourceFieldValues>({
   values,
   onChange,
   workspaceId,
@@ -17,8 +22,8 @@ export function ManagedResourceFields({
   memoryStores,
   addButtonVariant = 'outline',
 }: {
-  values: ManagedEntityFormValues;
-  onChange: (values: ManagedEntityFormValues) => void;
+  values: T;
+  onChange: (values: T) => void;
   workspaceId: string;
   editing?: boolean;
   embedded?: boolean;
@@ -27,7 +32,7 @@ export function ManagedResourceFields({
 }) {
   const { msg } = useI18n();
   const replacingExistingResources = editing && values.originalResources.length > 0;
-  const patch = (value: Partial<ManagedEntityFormValues>) => onChange({ ...values, ...value, resourcesChanged: true });
+  const patch = (value: Partial<ResourceFieldValues>) => onChange({ ...values, ...value, resourcesChanged: true });
   return (
     <section className="space-y-3">
       {embedded ? null : (
@@ -93,6 +98,12 @@ export function ManagedResourceFields({
               key={index}
               resource={resource}
               index={index}
+              tokenConfigured={values.originalResources.some(
+                (previous) =>
+                  previous.type === 'github_repository' &&
+                  previous.url === resource.url &&
+                  previous.tokenConfigured === true,
+              )}
               onChange={(updated) =>
                 patch({ gitResources: values.gitResources.map((item, i) => (i === index ? updated : item)) })
               }

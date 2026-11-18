@@ -28,6 +28,18 @@ func (d *DB) EnsureChannelWorkspaceCredential(ctx context.Context, input platfor
 			if row.Status != "active" {
 				return ErrChannelCredentialInactive
 			}
+			if row.RuntimeUserUUID == "" {
+				if input.RuntimeUserUUID == "" {
+					return ErrChannelCredentialUserRequired
+				}
+				rows, err := NewAdminAPIKeyMapper(executor).BindEmptyRuntimeUser(ctx, input.OrgUUID, input.WorkspaceUUID, row.ExternalID, input.RuntimeUserUUID)
+				if err != nil {
+					return err
+				}
+				if rows != 1 {
+					return ErrNotFound
+				}
+			}
 			var envelope secrets.Envelope
 			if err := json.Unmarshal([]byte(row.Envelope), &envelope); err != nil {
 				return fmt.Errorf("%w: %w", ErrChannelCredentialUnreadable, err)
@@ -39,6 +51,9 @@ func (d *DB) EnsureChannelWorkspaceCredential(ctx context.Context, input platfor
 			}
 			rawKey = string(plaintext)
 			return nil
+		}
+		if input.RuntimeUserUUID == "" {
+			return ErrChannelCredentialUserRequired
 		}
 		externalID, keyUUID := consolePrefixedID("apikey", 18), uuid.NewV4().String()
 		binding.CredentialExternalID = externalID

@@ -24,7 +24,15 @@
 
 当前能作为兼容目标的行为是：创建 Session 时接受可选 `title`，未提供时允许返回 `null`；客户端可通过 Update Session 设置或清除标题，并从 Session 资源及 `session.updated` 观察变化。OMA 已有创建、更新与页面空标题回退路径；更新路由目前要求 Session 为 `idle`，这一额外限制应另行核对官方 Update Session 状态约束。不能因为 Claude Code 内部产生了标题辅助响应，就将其文本提升为 Managed Agents 的 Session 标题，也不能把它作为 Agent 对用户的回答。
 
-如果产品要提供“首条消息后自动命名”，应把它定义为 OMA 自己的可选策略，并另行验证 Claude Managed Agents 的真实服务端行为后再声明兼容。该策略应更新 Session 资源字段，并遵守显式标题优先、只填充空标题和并发条件更新；产生的标题不能以 `agent.message` 进入对话历史。
+## OMA 首条消息自动命名
+
+创建未命名的 Session 时，`title` 仍可为空。首条 `user.message` 写入时，oma-server 将事件 UUID 和会话范围放入 River 队列。此规则也适用于创建请求的 `initial_events`。Session 行锁决定首条消息的写入顺序，任务与消息一起提交。带有既有标题的会话跳过入队。
+
+标题 worker 使用 Session 快照中配置的模型，并按组织解析模型提供商。单独的提示词要求模型根据首条消息的文本生成同语言的单行标题。任务输入最多 4,000 个 Unicode 字符，输出标题最多 80 个 Unicode 字符。首条消息只有附件或缺少可用模型时，标题保持为空。每次模型请求最长 20 秒，失败最多尝试三次。标题调用独立于 Agent 的运行、事件和用量。这个设计参考了 DSH 的首条消息标题插件。[session-title-first-prompt-llm](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/session/session-title-first-prompt-llm)
+
+任务保存结果时只填写仍为空且未归档的标题。标题和 `session.updated` 事件在同一个事务中保存。提交后使用现有会话事件分发和 webhook 通知订阅者。详情页从 SSE 或补拉的事件识别标题变更，再读取 Session 当前标题。列表可见时后台刷新未命名会话。当前页有最近十分钟更新过的未命名会话时，每 5 秒刷新一次，其余情况每 30 秒刷新一次。已有历史消息的会话保留原有标题状态。
+
+定向集成测试使用真实 PostgreSQL、River 和可阻塞的假模型，检查模型等待期间用户消息仍可进入 Agent 队列，模型响应后详情 API、历史和 SSE 可读到新标题。
 
 ## OMA 本地复现与请求归属
 

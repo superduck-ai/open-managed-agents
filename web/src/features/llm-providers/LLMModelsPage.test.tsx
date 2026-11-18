@@ -732,8 +732,8 @@ describe('LLM models page', () => {
   });
 
   for (const [backend, label, path] of [
+    ['messages', 'Anthropic Messages', 'messages'],
     ['chat_completions', 'OpenAI Chat Completions', 'chat/completions'],
-    ['responses', 'OpenAI Responses', 'responses'],
   ] as const) {
     test(`creates and edits a ${label} provider and discovers using its backend`, async () => {
       resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
@@ -744,6 +744,7 @@ describe('LLM models page', () => {
       const dialog = screen.getByRole('dialog', { name: 'Add provider' });
       fireEvent.click(within(dialog).getByRole('tab', { name: 'Custom model API' }));
       fireEvent.click(within(dialog).getByRole('combobox', { name: 'API backend' }));
+      expect(screen.queryByRole('option', { name: 'OpenAI Responses' })).toBeNull();
       const option = await screen.findByRole('option', { name: label });
       fireEvent.pointerDown(option);
       fireEvent.mouseDown(option);
@@ -781,6 +782,27 @@ describe('LLM models page', () => {
       );
     });
   }
+
+  test('preserves an existing Responses provider without offering Responses as an option', async () => {
+    resetTestDom('https://oma.duck.ai/settings/llm');
+    const provider = { ...organizationProvider(), api_backend: 'responses' as const };
+    const api = mockProvidersApi([], { organizationProvider: provider });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: provider.name, exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit provider' });
+    const backend = within(dialog).getByRole('combobox', { name: 'API backend' });
+    expect(backend.textContent).toContain('OpenAI Responses');
+    fireEvent.click(backend);
+    expect(await screen.findByRole('option', { name: 'Anthropic Messages' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'OpenAI Chat Completions' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'OpenAI Responses' })).toBeNull();
+    fireEvent.keyDown(screen.getByPlaceholderText('Search options...'), { key: 'Escape' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.requests.find((request) => request.method === 'PUT')?.body?.api_backend).toBe('responses'),
+    );
+  });
 
   test('shows the workspace provider empty state', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');

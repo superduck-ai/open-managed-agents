@@ -6,7 +6,6 @@ import type { APIBackend } from './api';
 const backends = [
   { value: 'messages', label: 'Anthropic Messages' },
   { value: 'chat_completions', label: 'OpenAI Chat Completions' },
-  { value: 'responses', label: 'OpenAI Responses' },
 ];
 
 export function ProviderBackendField({
@@ -24,11 +23,11 @@ export function ProviderBackendField({
         value={value}
         items={backends}
         onValueChange={(next) => {
-          if (next === 'messages' || next === 'chat_completions' || next === 'responses') onChange(next);
+          if (next === 'messages' || next === 'chat_completions') onChange(next);
         }}
       >
         <SelectTrigger id="llm-provider-backend" className="w-full">
-          <SelectValue />
+          <SelectValue>{value === 'responses' ? 'OpenAI Responses' : undefined}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {backends.map((backend) => (

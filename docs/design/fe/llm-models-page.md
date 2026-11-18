@@ -49,14 +49,15 @@ flowchart LR
 
 ## API backend
 
-Provider 表单使用共享 shadcn Select 选择 `messages`、`chat_completions` 或 `responses`。已有配置默认为
-Messages，编辑时保留当前值。三个协议分别显示服务端追加的 `/v1/messages`、
+Provider 表单使用共享 shadcn Select 选择 `messages` 或 `chat_completions`，暂不开放选择 `responses`。
+底层保留 Responses 适配；已有 Responses 配置编辑时显示并保留当前协议，不作为下拉选项提供。
+未指定协议时默认为 Messages。三个协议分别显示服务端追加的 `/v1/messages`、
 `/v1/chat/completions`、`/v1/responses` 路径。
 Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 
 创建、编辑和模型预览请求均携带 `api_backend`；模型同步由后端使用已保存的 backend。
 模型增删等局部操作的完整 Provider 更新也必须保留该字段，避免将 Chat Completions 配置重置为 Messages。
-组件测试覆盖选择 backend、模型发现、创建与编辑保留，包括 Responses 的模型发现、创建、编辑保留及完整请求地址归一化。
+组件测试覆盖可选 backend、模型发现、创建与编辑保留，并确认 Responses 不可选、已有配置编辑保存仍保留该协议；请求地址归一化继续覆盖 Responses。
 
 ## 组织 LLM 配置
 

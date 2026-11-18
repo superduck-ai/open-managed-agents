@@ -42,12 +42,12 @@ export function useSessionListTitleRefresh({
 }) {
   useEffect(() => {
     if (section !== 'sessions' || loading || searching || !Number.isFinite(listTitleRefreshInterval(entities))) return;
+    const revision = pageRevision.current;
     let active = true;
     let pending = false;
     const refresh = async () => {
-      if (document.visibilityState !== 'visible' || pending) return;
+      if (document.visibilityState !== 'visible' || pending || revision !== pageRevision.current) return;
       pending = true;
-      const revision = pageRevision.current;
       try {
         const page = await listManagedEntities('sessions', workspaceId, cursor, filters);
         if (active && revision === pageRevision.current) onPage(page);

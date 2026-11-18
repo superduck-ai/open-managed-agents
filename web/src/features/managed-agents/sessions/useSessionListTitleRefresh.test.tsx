@@ -145,3 +145,19 @@ test('discards a pending title response after a foreground write changes the lis
   await act(async () => finish?.(Response.json({ data: [session('sesn_title', 'Stale page')] })));
   expect(hook.result.current).toEqual([initial]);
 });
+
+test('does not start a refresh from an old page after navigation has started', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return Response.json({ error: { message: 'Unavailable' } }, { status: 503 });
+  };
+  const pageRevision = { current: 0 };
+  renderRefresh([session()], pageRevision);
+  await showPage();
+  await waitFor(() => expect(requests).toBe(1));
+  pageRevision.current += 1;
+  await showPage();
+  expect(requests).toBe(1);
+});

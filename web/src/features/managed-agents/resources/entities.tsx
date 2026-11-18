@@ -575,8 +575,13 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     });
   };
 
+  const selectEntityPage = (page: ManagedEntityPageState) => {
+    pageRevision.current += 1;
+    setEntityPageState(page);
+  };
+
   const resetEntityPage = () => {
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: null,
@@ -755,7 +760,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     if (!entityNextPage) {
       return;
     }
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: entityNextPage,
@@ -769,7 +774,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     if (!entityPageHistory.length) {
       return;
     }
-    setEntityPageState({
+    selectEntityPage({
       workspaceId: activeWorkspaceId,
       section: config.section,
       cursor: entityPageHistory[entityPageHistory.length - 1],

@@ -1,12 +1,13 @@
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, CircleAlert, Loader2, MailCheck } from 'lucide-react';
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
+import { cn } from '@/shared/lib/utils';
 import { sendMagicLink, verifyMagicLink } from '../../shared/auth/api';
 import { useAuth } from '../../shared/auth/context';
 import { returnToFromSearch } from '../../shared/auth/redirects';
@@ -43,7 +44,7 @@ export function LoginPage() {
   if (status === 'loading' || status === 'authenticated') {
     return (
       <LoginShell>
-        <section className="flex min-h-[calc(100vh-9rem)] items-center justify-center py-10">
+        <section className="flex w-full items-center justify-center">
           <Card className="w-full max-w-md">
             <CardContent className="py-8 text-sm text-muted-foreground">
               {msg('app.loading', 'Loading Open Managed Agents...')}
@@ -78,6 +79,7 @@ export function LoginFlow({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   function loginErrorMessage(err: unknown, fallback: string) {
     const apiError = err as { code?: unknown } | undefined;
@@ -109,19 +111,22 @@ export function LoginFlow({
     }
   }
 
-  async function handleCodeSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitVerificationCode(codeValue: string) {
+    if (isSubmittingRef.current) {
+      return;
+    }
     setError(null);
     setNotice(null);
 
-    if (code.length !== 6) {
+    if (codeValue.length !== 6) {
       setError(msg('auth.login.codeLengthError', 'Enter the 6-digit verification code.'));
       return;
     }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
-      await onVerifyMagicLink(submittedEmail, code);
+      await onVerifyMagicLink(submittedEmail, codeValue);
       await onAuthenticated();
     } catch (err) {
       const apiError = err as { status?: unknown; code?: unknown } | undefined;
@@ -131,7 +136,21 @@ export function LoginFlow({
           : loginErrorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
       );
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleCodeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitVerificationCode(code);
+  }
+
+  function handleCodeChange(rawValue: string) {
+    const nextCode = rawValue.replace(/\D/g, '').slice(0, 6);
+    setCode(nextCode);
+    if (nextCode.length === 6 && nextCode !== code) {
+      void submitVerificationCode(nextCode);
     }
   }
 
@@ -151,7 +170,7 @@ export function LoginFlow({
 
   return (
     <LoginShell>
-      <section className="flex min-h-[calc(100dvh-4rem)] items-center justify-center py-10">
+      <section className="flex w-full items-center justify-center">
         {step === 'email' ? (
           <form className="w-full max-w-[420px]" onSubmit={handleEmailSubmit}>
             <Card className="w-full">
@@ -224,14 +243,10 @@ export function LoginFlow({
                       },
                     )}
                   </FieldDescription>
-                  <Input
+                  <VerificationCodeInput
+                    disabled={isSubmitting}
                     id="login-code"
-                    autoComplete="one-time-code"
-                    className="h-12 text-center font-mono font-medium tracking-[0.24em]"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
+                    onChange={handleCodeChange}
                     value={code}
                   />
                 </Field>
@@ -266,8 +281,8 @@ function LoginShell({ children }: { children: ReactNode }) {
   const { locale, msg } = useI18n();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b-[0.5px] border-border bg-background">
+    <div className="flex min-h-dvh flex-col bg-background text-foreground">
+      <header className="shrink-0 border-b-[0.5px] border-border bg-background">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
           <a className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground" href="/">
             <BrandLogo decorative />
@@ -292,7 +307,68 @@ function LoginShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl px-5 lg:px-8">{children}</main>
+      <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-5 py-6 lg:px-8">
+        {children}
+      </main>
+    </div>
+  );
+}
+
+function VerificationCodeInput({
+  id,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const activeSlotIndex = Math.min(value.length, 5);
+
+  return (
+    <div className="relative">
+      <div className="grid grid-cols-6 gap-2 sm:gap-2.5" aria-hidden="true">
+        {Array.from({ length: 6 }, (_, index) => {
+          const digit = value[index] ?? '';
+          const isActive = focused && index === activeSlotIndex;
+          return (
+            <div
+              key={index}
+              data-slot="input-otp-slot"
+              data-active={isActive ? 'true' : undefined}
+              className={cn(
+                'flex h-12 items-center justify-center rounded-lg border-[0.5px] border-input bg-background font-mono text-base font-medium text-foreground transition-[border-color,box-shadow] duration-150',
+                isActive && 'border-foreground ring-[0.5px] ring-foreground',
+                disabled && 'opacity-50',
+              )}
+            >
+              {digit}
+            </div>
+          );
+        })}
+      </div>
+      <input
+        id={id}
+        data-slot="input"
+        aria-disabled={disabled || undefined}
+        autoComplete="one-time-code"
+        autoFocus
+        className="absolute inset-0 h-full w-full cursor-text border-0 bg-transparent text-transparent caret-transparent outline-none selection:bg-transparent read-only:cursor-not-allowed"
+        inputMode="numeric"
+        onBlur={() => setFocused(false)}
+        onChange={(event) => {
+          if (!disabled) {
+            onChange(event.target.value);
+          }
+        }}
+        onFocus={() => setFocused(true)}
+        readOnly={disabled}
+        type="text"
+        value={value}
+      />
     </div>
   );
 }

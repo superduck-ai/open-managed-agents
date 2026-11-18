@@ -490,3 +490,11 @@ input[type='search'][data-custom-clear]::-webkit-search-cancel-button {
   outline: none;
   box-shadow: none;
 }
+
+code,
+pre,
+kbd,
+samp,
+.font-mono {
+  font-variant-ligatures: none;
+}

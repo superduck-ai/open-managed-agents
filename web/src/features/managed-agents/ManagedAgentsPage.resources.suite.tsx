@@ -2452,7 +2452,7 @@ export function registerManagedAgentsResourceTests() {
     });
     renderManagedAgentsPage('sessions');
     fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit session' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
     expect((within(dialog).getByLabelText(/Title/) as HTMLInputElement).value).toBe(title);
     expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -2483,7 +2483,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('sessions', 'zh-CN');
     const row = (await screen.findByText('Session one')).closest('tr')!;
     fireEvent.click(within(row).getByRole('button', { name: '更多操作' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '编辑会话' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编辑会话' }));
     const dialog = await screen.findByRole('dialog', { name: '编辑会话' });
     const title = within(dialog).getByLabelText(/标题/);
     fireEvent.change(title, { target: { value: '新标题' } });
@@ -2501,7 +2501,7 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(await screen.findByRole('combobox', { name: 'Status Active' }));
     fireEvent.click(screen.getByRole('option', { name: 'Terminated' }));
     fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitem', { name: 'Edit session' }).getAttribute('aria-disabled')).toBe('true');
+    expect((await screen.findByRole('menuitem', { name: 'Edit session' })).getAttribute('aria-disabled')).toBe('true');
   });
 
   test('synchronizes exact session ID results after editing, archiving, and deleting', async () => {

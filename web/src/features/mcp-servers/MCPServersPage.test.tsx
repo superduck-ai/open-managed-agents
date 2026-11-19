@@ -79,7 +79,7 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
   expect(await screen.findByRole('heading', { name: 'MCP Servers' })).toBeTruthy();
   expect(await screen.findByText('internal-docs')).toBeTruthy();
   expect(screen.getAllByRole('columnheader')).toHaveLength(5);
-  expect(screen.getByRole('table').classList.contains('min-w-[840px]')).toBe(true);
+  expect(screen.getByRole('table').classList.contains('table-auto')).toBe(true);
   expect(screen.getByRole('region', { name: 'MCP servers list' }).closest('[data-slot="card"]')).toBeNull();
   const createButton = screen.getByRole('button', { name: 'Create MCP server' });
   const filters = screen.getByTestId('mcp-server-filters');

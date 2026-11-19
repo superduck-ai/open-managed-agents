@@ -1,24 +1,35 @@
 import { documentationHref } from '../../../shared/documentation';
-import { Archive, ArrowUpRight, BookOpen, Plus, Trash2, X } from 'lucide-react';
+import { Archive, ArrowUpRight, BookOpen, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
-import { useFormatters, useI18n } from '../../../shared/i18n';
+import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import {
   CopyIdCell,
   DataTableCell,
+  DataTableResourceLink,
   DataTableRow,
+  dataTableActionsColumnClassName,
+  dataTableCheckboxColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '../../../shared/ui/data-table-interactions';
+import { ResourceBulkActionBar } from '../../../shared/ui/resource-bulk-action-bar';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceListPagination } from '../../../shared/ui/resource-list-pagination';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourceStatusBadge } from '../../../shared/ui/resource-status-badge';
+import { TableSkeletonRows } from '../../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../../shared/ui/resource-time-cell';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
-import { Skeleton } from '../../../shared/ui/skeleton';
 import type { EnvironmentApiResponse, PageCursor } from '../types';
 import { handleInternalLinkClick, managedEntityDetailHref } from '../utils';
 import { environmentErrorMessage } from '../resources/environment-model';
@@ -126,130 +137,123 @@ export function EnvironmentList({
             </Button>
           </AlertDescription>
         </Alert>
-      ) : query.isPending ? (
-        <Skeleton className="h-40 w-full" />
       ) : (
         <>
-          <Table className={`${dataTableClassName} min-w-[960px]`}>
-            <colgroup>
-              <col className="w-10" />
-              <col className="w-44" />
-              <col />
-              <col className="w-20" />
-              <col className="w-20" />
-              <col className="w-24" />
-              <col className="w-24" />
-              <col className="w-24" />
-            </colgroup>
+          <Table className={dataTableClassName}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
-                <TableHead className="w-10 px-3">
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableCheckboxColumnClassName)}>
                   <Checkbox
                     aria-label={msg('environmentPage.selectAll', 'Select all environments')}
                     checked={table.getIsAllRowsSelected()}
                     indeterminate={table.getIsSomeRowsSelected()}
                     onCheckedChange={(checked) => table.toggleAllRowsSelected(checked)}
-                    disabled={!entities.length}
+                    disabled={!entities.length || query.isPending}
                   />
                 </TableHead>
-                {[
-                  'ID',
-                  msg('common.name', 'Name'),
-                  msg('common.type', 'Type'),
-                  msg('environmentPage.scope', 'Scope'),
-                  msg('environmentPage.updatedAt', 'Updated at'),
-                  msg('environmentPage.archivedAt', 'Archived at'),
-                ].map((label) => (
-                  <TableHead key={label} className={dataTableHeaderCellClassName}>
-                    {label}
-                  </TableHead>
-                ))}
-                <TableHead className="w-24">
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableIdColumnClassName)}>ID</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTablePrimaryColumnClassName)}>
+                  {msg('common.name', 'Name')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableMetaColumnClassName)}>
+                  {msg('common.type', 'Type')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableMetaColumnClassName)}>
+                  {msg('environmentPage.scope', 'Scope')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableTimeColumnClassName)}>
+                  {msg('environmentPage.updatedAt', 'Updated at')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableTimeColumnClassName)}>
+                  {msg('environmentPage.archivedAt', 'Archived at')}
+                </TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}>
                   <span className="sr-only">{msg('common.actions', 'Actions')}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <EnvironmentRow
-                  key={row.id}
-                  entity={row.original}
-                  workspaceId={workspaceId}
-                  selected={row.getIsSelected()}
-                  previewed={selectedId === row.id}
-                  onChecked={(checked) => row.toggleSelected(checked)}
-                  onPreview={() =>
-                    onPreview(
-                      row.id,
-                      entities.map((entity) => entity.id),
-                    )
-                  }
-                  onAction={(request) => onAction({ ...request, onCompleted: () => setSelection({}) })}
+              {query.isPending ? (
+                <TableSkeletonRows
+                  colCount={8}
+                  label={msg('managedAgents.environments.loading', 'Loading environments...')}
                 />
-              ))}
+              ) : (
+                table.getRowModel().rows.map((row) => (
+                  <EnvironmentRow
+                    key={row.id}
+                    entity={row.original}
+                    workspaceId={workspaceId}
+                    selected={row.getIsSelected()}
+                    previewed={selectedId === row.id}
+                    onChecked={(checked) => row.toggleSelected(checked)}
+                    onPreview={() =>
+                      onPreview(
+                        row.id,
+                        entities.map((entity) => entity.id),
+                      )
+                    }
+                    onAction={(request) => onAction({ ...request, onCompleted: () => setSelection({}) })}
+                  />
+                ))
+              )}
             </TableBody>
           </Table>
-          {!entities.length ? (
+          {!query.isPending && !entities.length ? (
             <div className="py-20 text-center text-sm text-muted-foreground">
               {search || status !== 'all'
                 ? msg('environmentPage.noResults', 'No environments found.')
                 : msg('managedAgents.environments.emptyTitle', 'No environments yet')}
             </div>
           ) : null}
-          <ResourceListPagination
-            currentPage={pages.length}
-            totalPages={null}
-            canPrevious={pages.length > 1 && !query.isFetching}
-            canNext={Boolean(query.data?.has_more && query.data?.next_page) && !query.isFetching}
-            onPrevious={() => {
-              setPages(pages.slice(0, -1));
-              setSelection({});
-            }}
-            onNext={() => {
-              setPages([...pages, query.data?.next_page ?? null]);
-              setSelection({});
-            }}
-          />
+          {!query.isPending ? (
+            <ResourceListPagination
+              currentPage={pages.length}
+              totalPages={null}
+              canPrevious={pages.length > 1 && !query.isFetching}
+              canNext={Boolean(query.data?.has_more && query.data?.next_page) && !query.isFetching}
+              onPrevious={() => {
+                setPages(pages.slice(0, -1));
+                setSelection({});
+              }}
+              onNext={() => {
+                setPages([...pages, query.data?.next_page ?? null]);
+                setSelection({});
+              }}
+            />
+          ) : null}
         </>
       )}
-      {selected.length ? (
-        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border-[0.5px] border-border bg-background p-1.5 pl-3 text-sm shadow-lg transition-[left] duration-220 ease-out motion-reduce:transition-none md:left-[calc(50%+var(--sidebar-width,256px)/2)]">
-          <span>{msg('environmentPage.selected', '{count} selected', { count: selected.length })}</span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={msg('environmentPage.clearSelection', 'Clear selection')}
-            onClick={() => setSelection({})}
-          >
-            <X className="size-3.5" />
-          </Button>
-          <span className="mx-1 h-5 w-[0.5px] bg-border" />
-          {selected.some((entity) => !entity.archived_at && entity.state !== 'archived') ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                onAction({
-                  action: 'archive',
-                  onCompleted: () => setSelection({}),
-                  entities: selected.filter((entity) => !entity.archived_at && entity.state !== 'archived'),
-                })
-              }
-            >
-              <Archive className="size-4" strokeWidth={1.5} />
-              {msg('common.archive', 'Archive')}
-            </Button>
-          ) : null}
+      <ResourceBulkActionBar
+        selectedCount={selected.length}
+        selectedLabel={msg('environmentPage.selected', '{count} selected', { count: selected.length })}
+        onClear={() => setSelection({})}
+      >
+        {selected.some((entity) => !entity.archived_at && entity.state !== 'archived') ? (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => onAction({ action: 'delete', entities: selected, onCompleted: () => setSelection({}) })}
+            onClick={() =>
+              onAction({
+                action: 'archive',
+                onCompleted: () => setSelection({}),
+                entities: selected.filter((entity) => !entity.archived_at && entity.state !== 'archived'),
+              })
+            }
           >
-            <Trash2 className="size-4" strokeWidth={1.5} />
-            {msg('common.delete', 'Delete')}
+            <Archive className="size-4" strokeWidth={1.5} />
+            {msg('common.archive', 'Archive')}
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onAction({ action: 'delete', entities: selected, onCompleted: () => setSelection({}) })}
+        >
+          <Trash2 className="size-4" strokeWidth={1.5} />
+          {msg('common.delete', 'Delete')}
+        </Button>
+      </ResourceBulkActionBar>
     </section>
   );
 }
@@ -272,28 +276,31 @@ function EnvironmentRow({
   onAction: (request: EnvironmentActionRequest) => void;
 }) {
   const { msg } = useI18n();
-  const format = useFormatters();
   const href = managedEntityDetailHref(workspaceId, 'environments', entity.id);
   return (
-    <DataTableRow clickable selected={selected || previewed} className="group [&>td]:h-11" onClick={onPreview}>
-      <DataTableCell edge="start" className="h-11" onClick={(event) => event.stopPropagation()}>
+    <DataTableRow clickable selected={selected || previewed} className="group" onClick={onPreview}>
+      <DataTableCell
+        edge="start"
+        className={dataTableCheckboxColumnClassName}
+        onClick={(event) => event.stopPropagation()}
+      >
         <Checkbox
           aria-label={msg('environmentPage.select', 'Select {name}', { name: entity.name })}
           checked={selected}
           onCheckedChange={onChecked}
         />
       </DataTableCell>
-      <DataTableCell className="h-11">
+      <DataTableCell className={dataTableIdColumnClassName}>
         <CopyIdCell
           value={entity.id}
           ariaLabel={msg('common.copyValue', 'Copy {value}', { value: entity.id })}
           stopPropagation
         />
       </DataTableCell>
-      <DataTableCell className="max-w-80 truncate">
-        <a
+      <DataTableCell className={dataTablePrimaryColumnClassName}>
+        <DataTableResourceLink
           href={href}
-          className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-[0.5px] focus-visible:outline-offset-[-0.5px] focus-visible:outline-ring focus-visible:underline"
+          className="block max-w-[340px] truncate rounded-sm font-medium text-foreground focus-visible:outline-[0.5px] focus-visible:outline-offset-[-0.5px] focus-visible:outline-ring"
           title={entity.name}
           onClick={(event) => {
             event.stopPropagation();
@@ -301,23 +308,27 @@ function EnvironmentRow({
           }}
         >
           {entity.name}
-        </a>
+        </DataTableResourceLink>
       </DataTableCell>
-      <DataTableCell>
-        <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+      <DataTableCell className={dataTableMetaColumnClassName}>
+        <ResourceStatusBadge tone="neutral">
           <EnvironmentHosting entity={entity} />
-        </span>
+        </ResourceStatusBadge>
       </DataTableCell>
-      <DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
         <EnvironmentScope scope={entity.scope} />
       </DataTableCell>
-      <DataTableCell className="whitespace-nowrap text-muted-foreground">
-        {format.date(entity.updated_at, { month: 'short', day: 'numeric' })}
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={entity.updated_at} />
       </DataTableCell>
-      <DataTableCell className="whitespace-nowrap text-muted-foreground">
-        {entity.archived_at ? format.date(entity.archived_at, { month: 'short', day: 'numeric' }) : ''}
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={entity.archived_at} emptyLabel="" />
       </DataTableCell>
-      <DataTableCell edge="end" onClick={(event) => event.stopPropagation()}>
+      <DataTableCell
+        edge="end"
+        className={dataTableActionsColumnClassName}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="flex items-center justify-end gap-1">
           <ButtonLink
             href={href}

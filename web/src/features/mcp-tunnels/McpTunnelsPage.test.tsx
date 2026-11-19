@@ -57,25 +57,22 @@ describe('MCP tunnels list page', () => {
     expect(createRequest?.headers.get('x-csrf-token')).toBe('csrf_test');
   });
 
-  test('opens detail only from ID and name links and keeps list actions focused', async () => {
+  test('opens detail from name link, displays full ID for copying, and keeps list actions focused', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/mcp-tunnels');
     mockTunnelApi([activeTunnel]);
     const navigate = mock(() => undefined);
     renderPage(undefined, 'default', 'en', navigate);
 
     const nameLink = await screen.findByRole('link', { name: 'Private tools' });
-    const idLink = screen.getByRole('link', { name: activeTunnel.id });
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent);
     expect(headers.slice(0, 2)).toEqual(['ID', 'Name']);
+    expect(screen.getByText(activeTunnel.id)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: activeTunnel.id })).toBeNull();
     expect(nameLink.getAttribute('href')).toBe(`/settings/workspaces/default/mcp-tunnels/${activeTunnel.id}`);
-    expect(idLink.getAttribute('href')).toBe(`/settings/workspaces/default/mcp-tunnels/${activeTunnel.id}`);
 
     fireEvent.click(nameLink.closest('tr')!);
     expect(navigate).not.toHaveBeenCalled();
 
-    fireEvent.click(idLink);
-    expect(navigate).toHaveBeenCalledWith(`/settings/workspaces/default/mcp-tunnels/${activeTunnel.id}`);
-    navigate.mockClear();
     fireEvent.click(nameLink);
     expect(navigate).toHaveBeenCalledWith(`/settings/workspaces/default/mcp-tunnels/${activeTunnel.id}`);
 

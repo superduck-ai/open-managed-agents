@@ -6,7 +6,14 @@ import { CreateOrganizationDialog } from './CreateOrganizationDialog';
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { Button } from '../../shared/ui/button';
 import { Input } from '../../shared/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import {
+  DataTableCell,
+  DataTableRow,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+} from '../../shared/ui/data-table-interactions';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { usePlatformAdmin } from './context';
 import type { Organization, Page } from './types';
 
@@ -121,12 +128,12 @@ export function OrganizationsPage() {
         <p role="status">{msg('platformAdmin.loadingOrganizations', 'Loading organizations…')}</p>
       ) : (
         <>
-          <Table>
+          <Table className={dataTableClassName}>
             <TableHeader>
               {table.getHeaderGroups().map((group) => (
-                <TableRow key={group.id}>
+                <TableRow key={group.id} className={dataTableHeaderRowClassName}>
                   {group.headers.map((header) => (
-                    <TableHead key={header.id}>
+                    <TableHead key={header.id} className={dataTableHeaderCellClassName}>
                       {flexRender(header.column.columnDef.header, header.getContext())}
                     </TableHead>
                   ))}
@@ -135,11 +142,16 @@ export function OrganizationsPage() {
             </TableHeader>
             <TableBody>
               {table.getRowModel().rows.map((row) => (
-                <TableRow key={row.original.uuid}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                <DataTableRow key={row.original.uuid}>
+                  {row.getVisibleCells().map((cell, index, cells) => (
+                    <DataTableCell
+                      key={cell.id}
+                      edge={index === 0 ? 'start' : index === cells.length - 1 ? 'end' : undefined}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </DataTableCell>
                   ))}
-                </TableRow>
+                </DataTableRow>
               ))}
             </TableBody>
           </Table>

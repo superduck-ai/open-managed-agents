@@ -4,18 +4,24 @@ import { ArrowUpRight, Plug, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiError } from '../../../shared/api/client';
 import { productIcons } from '../../../shared/icons/product-icons';
-import { useFormatters, useI18n } from '../../../shared/i18n';
+import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import {
   DataTableCell,
+  DataTableResourceLink,
   DataTableRow,
   MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '../../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
@@ -27,7 +33,8 @@ import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import { ResourceListPagination } from '../../../shared/ui/resource-list-pagination';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
-import { Skeleton } from '../../../shared/ui/skeleton';
+import { TableSkeletonRows } from '../../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../../shared/ui/resource-time-cell';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
@@ -233,48 +240,29 @@ function ChannelListTable({
 }) {
   const { msg } = useI18n();
   const columns = [
-    msg('managedAgents.channels.columnChannel', '渠道'),
-    msg('managedAgents.channels.columnApp', '应用'),
-    msg('managedAgents.channels.columnStatus', '连通状态'),
-    msg('managedAgents.channels.columnAgent', '智能体'),
-    msg('managedAgents.channels.columnEnvironment', '环境'),
-    msg('managedAgents.channels.createdAt', '创建时间'),
+    { label: msg('managedAgents.channels.columnChannel', '渠道'), className: dataTablePrimaryColumnClassName },
+    { label: msg('managedAgents.channels.columnApp', '应用'), className: dataTableMetaColumnClassName },
+    { label: msg('managedAgents.channels.columnStatus', '连通状态'), className: dataTableMetaColumnClassName },
+    { label: msg('managedAgents.channels.columnAgent', '智能体'), className: dataTableMetaColumnClassName },
+    { label: msg('managedAgents.channels.columnEnvironment', '环境'), className: dataTableMetaColumnClassName },
+    { label: msg('managedAgents.channels.createdAt', '创建时间'), className: dataTableTimeColumnClassName },
   ];
   return (
-    <Table className={`${dataTableClassName} min-w-[960px]`} aria-busy={loading}>
-      <colgroup>
-        <col className="w-44" />
-        <col className="w-44" />
-        <col className="w-28" />
-        <col />
-        <col className="w-40" />
-        <col className="w-28" />
-        <col className="w-16" />
-      </colgroup>
+    <Table className={dataTableClassName} aria-busy={loading}>
       <TableHeader>
         <TableRow className={dataTableHeaderRowClassName}>
-          {columns.map((label) => (
-            <TableHead key={label} className={dataTableHeaderCellClassName}>
-              {label}
+          {columns.map((column) => (
+            <TableHead key={column.label} className={cn(dataTableHeaderCellClassName, column.className)}>
+              {column.label}
             </TableHead>
           ))}
-          <TableHead className="w-16">
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}>
             <span className="sr-only">{msg('managedAgents.channels.columnActions', '操作')}</span>
           </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {loading
-          ? Array.from({ length: 3 }, (_, rowIndex) => (
-              <TableRow key={rowIndex} aria-hidden="true" className="[&>td]:h-11">
-                {Array.from({ length: columns.length + 1 }, (_, columnIndex) => (
-                  <DataTableCell key={columnIndex}>
-                    <Skeleton className="h-4 w-3/4" />
-                  </DataTableCell>
-                ))}
-              </TableRow>
-            ))
-          : null}
+        {loading ? <TableSkeletonRows colCount={columns.length + 1} rowCount={3} /> : null}
         {rows.map((row) => (
           <ChannelListRow
             key={`${row.agentId}:${row.id}`}
@@ -301,16 +289,16 @@ function ChannelListRow({
   onNavigate: (href: string) => void;
 }) {
   const { msg } = useI18n();
-  const format = useFormatters();
   const detailHref = channelDetailPath(workspaceId, row.agentId, row.id);
   const editHref = channelEditPath(workspaceId, row.agentId, row.id);
   const openDetail = () => onNavigate(detailHref);
   return (
-    <DataTableRow clickable className="group [&>td]:h-11" onClick={openDetail}>
-      <DataTableCell edge="start" className="max-w-44 truncate">
-        <a
+    <DataTableRow clickable className="group" onClick={openDetail}>
+      <DataTableCell edge="start" className={dataTablePrimaryColumnClassName}>
+        <DataTableResourceLink
           href={detailHref}
-          className="rounded-sm font-medium underline-offset-4 hover:underline focus-visible:underline"
+          title={row.name}
+          className="block max-w-[280px] truncate rounded-sm font-medium text-foreground"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -318,33 +306,41 @@ function ChannelListRow({
           }}
         >
           {row.name}
-        </a>
+        </DataTableResourceLink>
       </DataTableCell>
-      <DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
         <div className="flex min-w-0 items-start gap-2">
           <img src={feishuLogo} alt="" className="mt-0.5 size-4" width={16} height={16} />
           <div className="min-w-0">
             <div className="truncate">{msg('managedAgents.channels.feishu', '飞书')}</div>
-            <div className="truncate font-mono text-xs text-muted-foreground">{row.app_id || '—'}</div>
+            <div className="font-mono text-xs text-muted-foreground">{row.app_id || '—'}</div>
           </div>
         </div>
       </DataTableCell>
-      <DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
         <ChannelStatusBadge channel={row} />
       </DataTableCell>
-      <DataTableCell>
-        <div className="min-w-0">
+      <DataTableCell className={dataTableMetaColumnClassName}>
+        <div className="min-w-0 max-w-[240px]">
           <div className="truncate">{row.agentName}</div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {row.agent_version ? `v${row.agent_version}` : msg('managedAgents.channels.latestVersion', '默认最新版本')}
           </div>
         </div>
       </DataTableCell>
-      <DataTableCell className="max-w-40 truncate">{environmentLabel}</DataTableCell>
-      <DataTableCell className="whitespace-nowrap text-muted-foreground">
-        {channelCreatedLabel(row.created_at, format.date)}
+      <DataTableCell className={dataTableMetaColumnClassName}>
+        <span title={environmentLabel} className="block max-w-[220px] truncate text-muted-foreground">
+          {environmentLabel}
+        </span>
       </DataTableCell>
-      <DataTableCell edge="end" className="px-2" onClick={(event) => event.stopPropagation()}>
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={row.created_at} />
+      </DataTableCell>
+      <DataTableCell
+        edge="end"
+        className={dataTableActionsColumnClassName}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="flex justify-end">
           <DropdownMenu>
             <DropdownMenuTrigger render={<MoreActionsButton label={msg('common.moreActions', '更多操作')} />} />
@@ -367,14 +363,6 @@ function ChannelListRow({
       </DataTableCell>
     </DataTableRow>
   );
-}
-
-function channelCreatedLabel(
-  value: string | undefined,
-  formatDate: (value: string, options?: Intl.DateTimeFormatOptions) => string,
-) {
-  if (!value || !Number.isFinite(Date.parse(value))) return '—';
-  return formatDate(value, { month: 'short', day: 'numeric' });
 }
 
 function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {

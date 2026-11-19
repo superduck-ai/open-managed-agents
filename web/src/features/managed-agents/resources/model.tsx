@@ -1,3 +1,11 @@
+import {
+  dataTableCheckboxColumnClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTableNumericColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
+} from '../../../shared/ui/data-table-interactions';
 import { Bot } from 'lucide-react';
 import { type ReactNode } from 'react';
 import { relativeTime } from '../agents/AgentsResourcePage';
@@ -1357,40 +1365,21 @@ export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string 
   }
 }
 
-export function columnWidth(section: ManagedEntitySection, column: string) {
+export function columnWidth(_section: ManagedEntitySection, column: string) {
   if (!column) {
-    return 'w-[48px]';
-  }
-  if (section === 'sessions') {
-    switch (column) {
-      case 'ID':
-        return 'w-[180px]';
-      case 'Status':
-        return 'w-[130px]';
-      case 'Agent':
-        return 'w-[160px]';
-      case 'Tokens in / out':
-        return 'w-[140px]';
-      case 'Cost':
-        return 'w-[130px]';
-      case 'Created':
-        return 'w-[160px]';
-    }
+    return dataTableCheckboxColumnClassName;
   }
   if (column === 'ID') {
-    return 'w-[190px]';
+    return dataTableIdColumnClassName;
   }
-  if (column === 'Status') {
-    return 'w-[120px]';
+  if (column === 'Name') {
+    return dataTablePrimaryColumnClassName;
+  }
+  if (column === 'Tokens in / out' || column === 'Cost') {
+    return dataTableNumericColumnClassName;
   }
   if (column === 'Created' || column === 'Updated at') {
-    return 'w-[150px]';
+    return dataTableTimeColumnClassName;
   }
-  if (section === 'deployments' && column === 'Agent') {
-    return 'w-[220px]';
-  }
-  if (column === 'Type' || column === 'Trigger') {
-    return 'w-[120px]';
-  }
-  return '';
+  return dataTableMetaColumnClassName;
 }

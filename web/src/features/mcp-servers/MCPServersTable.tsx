@@ -8,12 +8,18 @@ import {
   DataTableCell,
   DataTableRow,
   MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '@/shared/ui/data-table-interactions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu';
-import { TableEmptyRow, TableErrorRow, TableLoadingRow } from '@/shared/ui/resource-table';
+import { TableEmptyRow, TableErrorRow, TableSkeletonRows } from '@/shared/ui/resource-table';
+import { RelativeTimeText } from '@/shared/ui/resource-time-cell';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { useI18n } from '../../shared/i18n';
 
@@ -35,33 +41,29 @@ export function MCPServersTable(props: MCPServersTableProps) {
   const { msg } = useI18n();
   const showColumns = !props.isLoading && !props.error && props.servers.length > 0;
   return (
-    <section aria-label={msg('mcpServers.listAria', 'MCP servers list')} className="min-w-0 overflow-x-auto">
-      <Table className={cn(dataTableClassName, showColumns && 'min-w-[840px]')}>
+    <section aria-label={msg('mcpServers.listAria', 'MCP servers list')} className="min-w-0">
+      <Table className={dataTableClassName}>
         {showColumns ? (
-          <>
-            <colgroup>
-              <col className="w-[20%]" />
-              <col className="w-[22%]" />
-              <col className="w-[32%]" />
-              <col className="w-[20%]" />
-              <col className="w-[56px]" />
-            </colgroup>
-            <TableHeader>
-              <TableRow className={dataTableHeaderRowClassName}>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>{msg('common.id', 'ID')}</TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-                  {msg('mcpServers.name', 'Name')}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-                  {msg('mcpServers.endpoint', 'Endpoint')}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-                  {msg('mcpServers.updated', 'Updated')}
-                </TableHead>
-                <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
-              </TableRow>
-            </TableHeader>
-          </>
+          <TableHeader>
+            <TableRow className={dataTableHeaderRowClassName}>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableIdColumnClassName)}>
+                {msg('common.id', 'ID')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTablePrimaryColumnClassName)}>
+                {msg('mcpServers.name', 'Name')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableMetaColumnClassName)}>
+                {msg('mcpServers.endpoint', 'Endpoint')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableTimeColumnClassName)}>
+                {msg('mcpServers.updated', 'Updated')}
+              </TableHead>
+              <TableHead
+                className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}
+                aria-label={msg('common.actions', 'Actions')}
+              />
+            </TableRow>
+          </TableHeader>
         ) : null}
         <TableBody>
           <MCPServersTableBody {...props} />
@@ -80,7 +82,6 @@ function MCPServersTableBody({
   selectedServerId,
   isLoading,
   error,
-  formatter,
   onRetry,
   onOpen,
   onEdit,
@@ -88,7 +89,7 @@ function MCPServersTableBody({
 }: MCPServersTableProps) {
   const { msg } = useI18n();
   if (isLoading) {
-    return <TableLoadingRow colSpan={5} label={msg('mcpServers.loading', 'Loading MCP servers...')} />;
+    return <TableSkeletonRows colCount={5} label={msg('mcpServers.loading', 'Loading MCP servers...')} />;
   }
   if (error) {
     return (
@@ -115,7 +116,6 @@ function MCPServersTableBody({
       key={server.id}
       server={server}
       selected={selectedServerId === server.id}
-      formatter={formatter}
       onOpen={onOpen}
       onEdit={onEdit}
       onDelete={onDelete}
@@ -126,35 +126,35 @@ function MCPServersTableBody({
 function MCPServerRow({
   server,
   selected,
-  formatter,
   onOpen,
   onEdit,
   onDelete,
-}: Pick<MCPServersTableProps, 'formatter' | 'onOpen' | 'onEdit' | 'onDelete'> & {
+}: Pick<MCPServersTableProps, 'onOpen' | 'onEdit' | 'onDelete'> & {
   server: WorkspaceMCPServer;
   selected: boolean;
 }) {
   const { msg } = useI18n();
   return (
     <DataTableRow clickable selected={selected} onClick={() => onOpen(server.id)}>
-      <DataTableCell edge="start" className="min-w-0">
+      <DataTableCell edge="start" className={dataTableIdColumnClassName}>
         <CopyIdCell
           value={server.id}
-          displayValue={formatMCPServerId(server.id)}
           ariaLabel={msg('mcpServers.copyAria', 'Copy {serverId}', { serverId: server.id })}
           stopPropagation
         />
       </DataTableCell>
-      <DataTableCell className="break-words whitespace-normal font-medium" title={server.name}>
-        {server.name}
+      <DataTableCell className={cn(dataTablePrimaryColumnClassName, 'max-w-[280px] truncate font-medium')}>
+        <span title={server.name}>{server.name}</span>
       </DataTableCell>
-      <DataTableCell className="truncate font-mono text-xs text-muted-foreground" title={server.url}>
-        {server.url}
+      <DataTableCell className={cn(dataTableMetaColumnClassName, 'font-mono text-xs text-muted-foreground')}>
+        <span title={server.url} className="block max-w-[380px] truncate">
+          {server.url}
+        </span>
       </DataTableCell>
-      <DataTableCell className="truncate text-muted-foreground">
-        {formatDate(server.updated_at, formatter)}
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={server.updated_at} />
       </DataTableCell>
-      <DataTableCell edge="end" className="px-2 text-right">
+      <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
         <MCPServerActionsMenu server={server} onEdit={onEdit} onDelete={onDelete} />
       </DataTableCell>
     </DataTableRow>
@@ -198,13 +198,4 @@ export function MCPServerActionsMenu({
 function runMenuAction(event: MouseEvent, action: () => void) {
   event.stopPropagation();
   action();
-}
-
-function formatMCPServerId(serverId: string) {
-  return serverId.length > 18 ? `${serverId.slice(0, 15)}...` : serverId;
-}
-
-function formatDate(value: string, formatter: Intl.DateTimeFormat) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : formatter.format(date);
 }

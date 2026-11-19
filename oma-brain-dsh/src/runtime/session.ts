@@ -164,7 +164,11 @@ export class SessionRuntime {
       signal: this.abort.signal,
     };
     await this.ctx.get("ccrReplication")?.ensure(this.config.id);
- await this.config.recoverSandboxCalls?.(this.config.id, this.abort.signal, this.parent ? this.config.id : undefined);
+    await this.config.recoverSandboxCalls?.(
+      this.config.id, this.abort.signal,
+      this.config.externalMcpFetch ? { config: this.config.externalMcpConfig, fetcher: this.config.externalMcpFetch } : undefined,
+      this.parent ? this.config.id : undefined,
+    );
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({

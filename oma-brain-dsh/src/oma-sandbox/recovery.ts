@@ -11,7 +11,7 @@ import { appendPluginRecord, pluginRecordOf, Session, SessionId, SessionSeq, typ
 import { createToolResultMessage } from "@deepseek-ai/dsh-llm";
 import { HttpError } from "../api.ts";
 import { CANCELLATION_UNCONFIRMED, type SandboxCalls } from "./client.ts";
-import { UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxRecovery } from "../runtime/contracts.ts";
+import { UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxRecovery, type ThreadMcpContext } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
 import { object, type Payload } from "../json.ts";
 
@@ -33,7 +33,7 @@ async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortS
   }
 }
 
-export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, loadMcp?: () => Promise<{config:unknown;fetcher:typeof fetch}>): Promise<void> {
+export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, mcp?: ThreadMcpContext): Promise<void> {
   if (!await ctx.get("sessionPersistence")!.stat(SessionId(id))) return;
   const handle = await ctx.get("sessionPersistence")!.open(SessionId(id), "write");
   try {
@@ -57,8 +57,7 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
       await handle.flush();
       await ctx.ccrReplication.flush(id);
     }
-    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (loadMcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
-    const mcp = calls.some(([, event]) => event.data.name.startsWith("mcp__")) ? await loadMcp?.() : undefined;
+    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (mcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
     const servers = externalServers(mcp?.config);
     const settled = await Promise.all(calls.map(async ([callId, event]) => {
       const state = authorizations.get(callId);

@@ -1,9 +1,20 @@
 import { CapacityExhaustedError } from "./claim.ts";
 
+export const IDLE_RETIREMENT_MS = 60_000;
+
 export interface CapacityMember {
   readonly id: string;
   readonly busy: boolean;
   readonly lastIdle: number;
+  readonly initializing?: boolean;
+}
+
+export function idleCandidate(member: CapacityMember): boolean {
+  return !member.busy && !member.initializing;
+}
+
+export function idleExpired(member: CapacityMember, now: number): boolean {
+  return idleCandidate(member) && now - member.lastIdle > IDLE_RETIREMENT_MS;
 }
 
 export class SessionCapacity<T extends CapacityMember> {
@@ -25,7 +36,7 @@ export class SessionCapacity<T extends CapacityMember> {
     try {
       while (this.sessions.size - this.retiring.size + this.reserved > this.maxSessions) {
         const idle = [...this.sessions.values()]
-          .filter((session) => !session.busy && !this.retiring.has(session.id))
+          .filter((session) => idleCandidate(session) && !this.retiring.has(session.id))
           .sort((a, b) => a.lastIdle - b.lastIdle)[0];
         if (!idle) throw new CapacityExhaustedError();
         this.evict(idle);

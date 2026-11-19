@@ -280,6 +280,7 @@ test("startup clears task_summary after recovery persistence and before status o
     const persist = backend.persist.bind(backend);
     backend.persist = async (id, ...args) => { order.push(`persist:${args[0]}`); await persist(id, ...args); };
     backend.reportMetadata = async (_id, patch) => {
+      if ("oma_published_events" in patch) { order.push("watermark"); return; }
       expect(patch).toEqual({ task_summary: null, pending_action: null, model: "text" });
       order.push("metadata"); started.resolve(); await confirmed.promise;
     };
@@ -301,6 +302,7 @@ test("startup clears task_summary after recovery persistence and before status o
       await opening;
       expect(session.abort.signal.aborted).toBe(false);
       expect(order.indexOf("publish")).toBeGreaterThan(order.indexOf("metadata"));
+      expect(order.indexOf("watermark")).toBeGreaterThan(order.lastIndexOf("publish"));
       expect(order.indexOf("status:idle")).toBeGreaterThan(order.indexOf("metadata"));
     } finally { confirmed.resolve(); await ctx.fiber.dispose(); }
   }
@@ -327,7 +329,7 @@ test("worker metadata restores the model across logged history and set_model wai
   const first = await mount();
   try {
     expect(backend.metadata.get("model-session")).toEqual({
-      model: "restored-model", custom: { keep: true }, permission_mode: "plan",
+      model: "restored-model", custom: { keep: true }, permission_mode: "plan", oma_published_events: { "model-session": 2 },
     });
     await first.session.receive("first", { content: "hello" });
     expect(first.model.requests[0]!.model).toBe("restored-model");

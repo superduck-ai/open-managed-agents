@@ -74,11 +74,29 @@ test("session history regenerates stable public events after response loss witho
   await first.session.receive("durable-input", { content: "Hello" });
   const original = structuredClone([...b.publicLog.values()].filter(payload => ["agent.message", "result"].includes(payload.type)));
   b.publicLog.clear();
+  b.workerMetadata.oma_published_events = {};
   await first.close();
   const second = await mount(b);
   await second.session.receive("durable-input", { content: "Redelivery" });
   expect(b.requests).toHaveLength(1);
   expect([...b.publicLog.values()].filter(payload => ["agent.message", "result"].includes(payload.type))).toEqual(original);
+});
+
+test.each(["recorded", "missing"])("resume does not republish history already covered by a %s publish watermark", async watermark => {
+  const b = backend();
+  b.modelScript = [textEvents("confirmed native answer")];
+  const first = await mount(b);
+  await first.session.receive("published-input", { content: "Hello" });
+  const published = b.workerMetadata.oma_published_events as Record<string, number>;
+  expect(published[first.session.id]).toBe(first.session.agent.session.snapshotEvents().length);
+  await first.close();
+  b.publicLog.clear();
+  if (watermark === "missing") delete b.workerMetadata.oma_published_events;
+  const second = await mount(b);
+  await second.session.receive("published-input", { content: "Redelivery" });
+  expect(b.requests).toHaveLength(1);
+  expect([...b.publicLog.values()].filter(payload => ["agent.message", "result"].includes(payload.type))).toEqual([]);
+  expect(b.processed).toContain("published-input");
 });
 
 

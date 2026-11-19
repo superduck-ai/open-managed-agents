@@ -4,7 +4,7 @@ import { type CcrClient, type CcrSession } from "./ccrv2/index.ts";
 import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
-import { SessionCapacity } from "./capacity.ts";
+import { SessionCapacity, idleExpired } from "./capacity.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import { SHUTDOWN_SETTLE_MS } from "./config.ts";
 import { brainMetrics } from "./telemetry.ts";
@@ -122,7 +122,7 @@ export async function startWorkers(
   const timer = setInterval(() => {
     for (const session of sessions.values()) {
       if (session.abort.signal.aborted) watch(retire(session, "aborted"), session.id);
-      else if (!session.busy && Date.now() - session.lastIdle > 60_000) watch(retireIdle(session, "idle"), session.id);
+      else if (idleExpired(session, Date.now())) watch(retireIdle(session, "idle"), session.id);
     }
   }, 3000);
   let capacityReported = false;

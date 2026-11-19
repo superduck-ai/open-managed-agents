@@ -72,7 +72,7 @@ test("runtime marker lookup stops before inspecting a large log tail", async () 
   const session = {
     id: "root", ctx: { ccrReplication: { ensure: async () => false, acquiredEvents: () => events }, sessionPersistence: {
       stat: async () => true, open: async () => ({ read: async () => ({ events }), close: async () => {} }),
-    } }, subagents: { loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
+    } }, subagents: { threads: [], loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
   };
   const methods = CcrSession.prototype as unknown as { openState: (stage: (value: string) => void) => Promise<void> };
   await expect(methods.openState.call(session, () => {})).rejects.toBe(done);
@@ -87,7 +87,7 @@ test("runtime preflight reuses acquired events even when the marker is last", as
   const session = {
     id: "root", ctx: { ccrReplication: { ensure: async () => false, acquiredEvents: () => events }, sessionPersistence: {
       stat: async () => true, open: async () => ({ read: async () => { reads++; return { events }; }, close: async () => {} }),
-    } }, subagents: { loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
+    } }, subagents: { threads: [], loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
   };
   const methods = CcrSession.prototype as unknown as { openState: (stage: (value: string) => void) => Promise<void> };
   await expect(methods.openState.call(session, () => {})).rejects.toBe(done);

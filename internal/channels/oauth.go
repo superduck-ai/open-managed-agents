@@ -184,17 +184,31 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 	if err != nil {
 		return "", err
 	}
-	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
+	if !envOAuthProviderReady(provider, target.Request.SecretName) {
 		return "", errors.New("目标服务的个人 OAuth 配置不可用")
 	}
 	_, link, err := oauthflows.CreateEnv(ctx, s.store, s.supervisor.cipher, provider, db.EnvOAuthFlow{
 		OrganizationUUID: flow.OrganizationUUID, WorkspaceUUID: flow.WorkspaceUUID,
 		VaultUUID: target.Vault.UUID, VaultExternalID: target.Vault.ExternalID, CredentialExternalID: credentialID,
 		SecretName: target.Request.SecretName, RedirectURL: s.supervisor.oauthOrigin + "/oauth/vault/env-success",
-		NetworkingType: "limited", AllowedHosts: provider.DefaultAllowedHosts, Continuation: target.Continuation,
+		NetworkingType: envOAuthNetworking(provider), AllowedHosts: provider.DefaultAllowedHosts, Continuation: target.Continuation,
 		CreatedByAPIKeyUUID: target.Scope.Session.CreatedByAPIKeyUUID,
 	})
 	return link, err
+}
+
+func envOAuthProviderReady(provider vaults.EnvOAuthProviderSnapshot, secretName string) bool {
+	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != secretName {
+		return false
+	}
+	return provider.NetworkingType == "unrestricted" || len(provider.DefaultAllowedHosts) > 0
+}
+
+func envOAuthNetworking(provider vaults.EnvOAuthProviderSnapshot) string {
+	if provider.NetworkingType == "unrestricted" {
+		return "unrestricted"
+	}
+	return "limited"
 }
 
 func (s *Service) matchingEnvCredential(ctx context.Context, workspaceUUID, vaultID, secretName, providerKey string) (*db.VaultCredential, error) {

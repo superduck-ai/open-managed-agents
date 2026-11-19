@@ -8,6 +8,8 @@ type ChannelInputMapper interface {
 	Insert(ctx context.Context, scope ChannelInputScope, input ChannelInput) (ChannelInput, bool, error)
 	Claim(ctx context.Context, scope ChannelInputScope, inputUUID, owner string) (ChannelInput, bool, error)
 	ListRecoverable(ctx context.Context, scope ChannelInputScope) ([]ChannelInput, error)
+	HoldOAuth(ctx context.Context, scope ChannelInputScope, inputUUID, owner, patch string) (int64, error)
+	PairingInput(ctx context.Context, scope ChannelInputScope, inputUUID string) (ChannelInput, bool, error)
 	HasPairingWait(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (bool, error)
 	ResumeAfterPairing(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (string, bool, error)
 	LockSources(ctx context.Context, scope ChannelInputScope, owner string, batch ChannelInputBatch) ([]ChannelInput, error)

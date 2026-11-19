@@ -40,7 +40,10 @@ func TestChannelInputsPostgres(t *testing.T) {
 	if err != nil || !fresh {
 		t.Fatalf("创建历史等待回执：%v %v", fresh, err)
 	}
-	if _, err := database.ExecContext(t.Context(), `UPDATE channel_inputs SET state='pairing_wait' WHERE uuid=$1`, wait.UUID); err != nil {
+	if _, found, err := store.ClaimChannelInput(t.Context(), scope, wait.UUID, "worker"); err != nil || !found {
+		t.Fatalf("无法认领首次消息：%v %v", found, err)
+	}
+	if err := store.HoldPairingOAuth(t.Context(), scope, wait.UUID, "worker", `{"oauth_provider":"client","oauth_card":"card"}`); err != nil {
 		t.Fatal(err)
 	}
 	card := ChannelPairingResume{MessageID: wait.MessageID, ScopeKey: wait.ScopeKey, ActorID: "other", PairingID: "pair"}

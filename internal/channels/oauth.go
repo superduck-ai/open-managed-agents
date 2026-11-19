@@ -25,6 +25,17 @@ type OAuthTarget struct {
 
 func (s *Service) WithOAuthProviders(providers vaults.EnvOAuthProviderResolver, startMCP func(context.Context, OAuthTarget) (string, error)) *Service {
 	s.oauthProviders, s.startMCPOAuth = providers, startMCP
+	s.supervisor.pairingPrompt = s.promptPairingOAuth
+	s.supervisor.pairingProvider = func(ctx context.Context, key string) (string, error) {
+		p, err := providers.ResolveEnvOAuthProvider(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		if p.DefaultSecretName == "" || !envOAuthProviderReady(p, p.DefaultSecretName) {
+			return "", errors.New("OAuth 客户端不可用")
+		}
+		return p.Name, nil
+	}
 	return s
 }
 
@@ -97,13 +108,17 @@ func (s *Service) BeginOAuth(ctx context.Context, channelID, sessionID, eventID,
 	if err := s.requirePendingOAuth(ctx, target); err != nil {
 		return "", err
 	}
-	provider := channelIdentityProvider(scope)
+	return s.beginActorCheck(ctx, target)
+}
+
+func (s *Service) beginActorCheck(ctx context.Context, target OAuthTarget) (string, error) {
+	provider := channelIdentityProvider(target.Scope)
 	_, link, err := oauthflows.CreateEnv(ctx, s.store, s.supervisor.cipher, provider, db.EnvOAuthFlow{
-		OrganizationUUID: scope.Channel.OrganizationUUID, WorkspaceUUID: scope.Channel.WorkspaceUUID,
+		OrganizationUUID: target.Scope.Channel.OrganizationUUID, WorkspaceUUID: target.Scope.Channel.WorkspaceUUID,
 		VaultUUID: target.Vault.UUID, VaultExternalID: target.Vault.ExternalID,
 		SecretName: "OMA_CHANNEL_IDENTITY", RedirectURL: s.supervisor.oauthOrigin + "/oauth/vault/env-success",
-		NetworkingType: "limited", AllowedHosts: []string{"open.feishu.cn"}, Continuation: continuation,
-		CreatedByAPIKeyUUID: scope.Session.CreatedByAPIKeyUUID,
+		NetworkingType: "limited", AllowedHosts: []string{"open.feishu.cn"}, Continuation: target.Continuation,
+		CreatedByAPIKeyUUID: target.Scope.Session.CreatedByAPIKeyUUID,
 	})
 	return link, err
 }
@@ -115,6 +130,13 @@ func channelIdentityProvider(scope OAuthContext) vaults.EnvOAuthProviderSnapshot
 func (s *Service) OAuthContinuationTarget(ctx context.Context, workspaceUUID string, continuation *db.OAuthContinuation) (OAuthTarget, error) {
 	if continuation == nil {
 		return OAuthTarget{}, db.ErrNotFound
+	}
+	if continuation.InputUUID != "" {
+		t, _, _, err := s.pairingOAuthTarget(ctx, continuation, false)
+		if err == nil && t.Scope.Channel.WorkspaceUUID != workspaceUUID {
+			return OAuthTarget{}, db.ErrNotFound
+		}
+		return t, err
 	}
 	session, found, err := s.store.GetSessionByUUID(ctx, workspaceUUID, continuation.SessionUUID)
 	if err != nil || !found {
@@ -270,6 +292,9 @@ func (s *Service) OAuthCompletion(ctx context.Context, workspaceUUID string, con
 }
 
 func (s *Service) requirePendingOAuth(ctx context.Context, target OAuthTarget) error {
+	if target.Continuation != nil && target.Continuation.InputUUID != "" {
+		return nil
+	}
 	code, err := s.store.GetCodeSessionBySessionExternalID(ctx, target.Scope.Session.WorkspaceUUID, target.Scope.Session.ExternalID)
 	if err != nil {
 		return err

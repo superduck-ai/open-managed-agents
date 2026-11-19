@@ -389,6 +389,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
+	router.Get("/oauth/channels/{channel_id}/pairing/{input_id}", s.handleChannelOAuthStart)
 	router.Get("/oauth/channels/{channel_id}/sessions/{session_id}/requests/{request_id}", s.handleChannelOAuthStart)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)

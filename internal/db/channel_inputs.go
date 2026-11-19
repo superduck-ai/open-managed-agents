@@ -60,6 +60,20 @@ func (d *DB) ListRecoverableChannelInputs(ctx context.Context, scope ChannelInpu
 	return NewChannelInputMapper(d.mapperDB).ListRecoverable(ctx, scope)
 }
 
+func (d *DB) HoldPairingOAuth(ctx context.Context, scope ChannelInputScope, inputUUID, owner, patch string) error {
+	n, err := NewChannelInputMapper(d.mapperDB).HoldOAuth(ctx, scope, inputUUID, owner, patch)
+	if err == nil && n != 1 {
+		return ErrInvalidState
+	}
+	return err
+}
+func (d *DB) PairingOAuthInput(ctx context.Context, scope ChannelInputScope, id string) (ChannelInput, error) {
+	row, ok, err := NewChannelInputMapper(d.mapperDB).PairingInput(ctx, scope, id)
+	if err == nil && !ok {
+		return row, ErrNotFound
+	}
+	return row, err
+}
 func (d *DB) HasWaitingChannelPairingInput(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (bool, error) {
 	return NewChannelInputMapper(d.mapperDB).HasPairingWait(ctx, scope, input)
 }

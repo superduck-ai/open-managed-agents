@@ -3155,6 +3155,8 @@
   "managedAgents.channels.toolsHint": "Show tool calls in replies",
   "managedAgents.channels.threads": "Reply in threads",
   "managedAgents.channels.threadsHint": "When enabled, the bot replies within threads, each with its own session. Otherwise, the group shares one session.",
+  "managedAgents.channels.pairingProvider": "Private chat pairing authorization",
+  "managedAgents.channels.noPairingProvider": "No authorization required",
   "managedAgents.channels.mode": "Channel mode",
   "managedAgents.channels.open": "Open mode",
   "managedAgents.channels.pairing": "Pairing mode",

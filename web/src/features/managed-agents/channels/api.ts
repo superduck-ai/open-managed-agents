@@ -7,6 +7,7 @@ export type ChannelResource =
   { type: 'file'; file_id: string; mount_path?: string } | (ChannelGitRepository & { type: 'github_repository' });
 
 export interface Channel {
+  pairing_oauth_provider?: string;
   resources?: ChannelResource[];
   agent_version?: number | null;
   id: string;
@@ -32,6 +33,7 @@ export interface Channel {
   entry_closed?: boolean;
 }
 export interface ChannelInput {
+  pairing_oauth_provider?: string;
   resources?: ChannelResource[];
   agent_version?: number | null;
   name: string;

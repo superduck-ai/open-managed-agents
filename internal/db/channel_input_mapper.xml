@@ -31,6 +31,13 @@
       AND i.state IN ('received','buffering','prepared','accepted') AND i.lease_until&lt;=now()
     ORDER BY i.created_at,i.uuid LIMIT 100
   </select>
+  <update id="HoldOAuth" result="rows">
+    UPDATE channel_inputs i SET state='pairing_wait',lease_owner='',payload=payload || CAST(#{patch} AS jsonb),updated_at=now()
+    WHERE <include refid="owned"/> AND i.uuid=#{inputUUID} AND i.state='buffering'
+  </update>
+  <select id="PairingInput" result="optional">
+    SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/> AND i.uuid=#{inputUUID}
+  </select>
   <sql id="pairingWait">
     <include refid="scope"/> AND i.state='pairing_wait' AND i.message_id=#{input.MessageID}
     AND i.scope_key=#{input.ScopeKey} AND i.payload->>'user_id'=#{input.ActorID}

@@ -28,10 +28,17 @@ func oauthElements(origin string, value contracts.ActionValue, inputJSON string,
 		return elements
 	}
 	target := origin + "/oauth/channels/" + url.PathEscape(value.ChannelID) + "/sessions/" + url.PathEscape(value.SessionID) + "/requests/" + url.PathEscape(value.ToolUseID)
+	pairing := value.Kind == "pairing_oauth"
+	if pairing {
+		target = origin + "/oauth/channels/" + url.PathEscape(value.ChannelID) + "/pairing/" + url.PathEscape(value.SourceID)
+	}
 	value.Kind = "cancel_oauth"
 	buttons := []map[string]any{
 		{"tag": "button", "type": "primary", "text": map[string]any{"tag": "plain_text", "content": "前往授权"}, "behaviors": []any{map[string]any{"type": "open_url", "default_url": target}}},
 		{"tag": "button", "text": map[string]any{"tag": "plain_text", "content": "取消"}, "value": value},
+	}
+	if pairing {
+		buttons = buttons[:1]
 	}
 	if stop != nil {
 		buttons = append(buttons, stop)

@@ -108,6 +108,7 @@ function buildInitialWizardValue(channel: Channel | null, initialAgentId: string
   return {
     name: channel?.name ?? '',
     mode: channel?.mode ?? 'open',
+    pairing_oauth_provider: channel?.pairing_oauth_provider ?? '',
     include_thinking: channel?.include_thinking ?? true,
     include_tool_calls: channel?.include_tool_calls ?? true,
     reply_in_thread: channel?.reply_in_thread ?? true,

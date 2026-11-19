@@ -26,6 +26,16 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	if err != nil || preview.Mode != "hold" || len(store.pairings) != 0 || len(store.links) != 0 {
 		t.Fatalf("预览创建了配对或身份：%+v %v", preview, err)
 	}
+	pending, err := service.PrepareSelfPairing(t.Context(), ingress)
+	if err != nil || pending == "" || store.pairings[pending].Status != "pending" || len(store.links) != 0 {
+		t.Fatalf("授权前应仅保存待配对记录：%q %v", pending, err)
+	}
+	if err := service.ConfirmSelfPairing(t.Context(), ingress, pending, store.version); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := service.PrepareSelfPairing(t.Context(), ingress); err != nil || again != "" {
+		t.Fatalf("已有配对仍要求重新授权：%q %v", again, err)
+	}
 	owner, err := service.PersonalActorIdentity(t.Context(), ingress, true)
 	if err != nil {
 		t.Fatal(err)

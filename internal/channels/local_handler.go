@@ -60,7 +60,7 @@ func channelConsoleOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, _ := auth.PrincipalFromContext(r.Context())
 		if principal.CredentialType != auth.CredentialTypePlatformSession {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+			httpapi.NewErrorAdapter(nil).Write(w, r, consoleRouteNotFound())
 			return
 		}
 		next.ServeHTTP(w, r)

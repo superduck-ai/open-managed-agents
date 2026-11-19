@@ -33,21 +33,28 @@ Go 是控制台唯一后端入口。`internal/channels` 通过现有 Mapper 验�
 
 ## API 与权限
 
-智能体渠道路径挂在 `/v1/agents/{agent_id}/channels` 下，不要求 `beta=true`。工作区级列表、授权及凭据校验位于 `/v1/channels`。均复用平台会话/API Key 鉴权和工作区边界。浏览器 Cookie 变更请求必须携带合法的 `X-CSRF-Token`；API Key 调用不要求 Cookie 或 CSRF。
+智能体渠道路径挂在 `/v1/agents/{agent_id}/channels` 下，不要求 `beta=true`。工作区级列表、授权及凭据校验位于 `/v1/channels`。浏览器 Cookie 变更请求必须携带合法的 `X-CSRF-Token`；API Key 调用不要求 Cookie 或 CSRF。
+
+工作区 API Key 可以调用渠道列表、创建、更新和连接检查，工作区列表、扫码授权、凭据校验，以及 `/v1/channel_pairings` 的查询和解除绑定。渠道删除、执行环境读写、渠道内旧配对审批，以及渠道二维码 `/qr` 与 `/qr_sessions`，只接受平台登录会话。工作区 API Key 访问这些路径返回 HTTP 404 和 `not_found_error`。这是相对原先这些路径同时接受 API Key 的收窄；公开合同以 `openapi/oma.zh.json` 为准，不包含这些控制台路径。
 
 | 路径 | 方法 | 行为 |
 | --- | --- | --- |
-| `/v1/channels` | GET | 工作区列表 |
-| `/v1/channels/authorizations` | POST | 发起工作区飞书授权 |
-| `/v1/channels/authorizations/{authorization_id}` | GET | 查询授权状态 |
-| `/v1/channels/credentials/check` | POST | 验证应用凭据，不返回平台令牌 |
-| `/v1/channels/{channel_id}/qr` | GET / POST | 查询或发起渠道授权 |
-| `/v1/agents/{agent_id}/channels` | GET / POST | 智能体列表与创建 |
-| `/v1/agents/{agent_id}/channels/settings` | GET / POST | 读取与保存执行环境 |
-| `/v1/agents/{agent_id}/channels/{channel_id}` | POST / DELETE | 更新或停止并软删除 |
-| `/v1/agents/{agent_id}/channels/{channel_id}/check` | GET | 连接、凭据及配置预检 |
-| `/v1/agents/{agent_id}/channels/{channel_id}/pairings` | GET | 配对申请与已批准项 |
-| `/v1/agents/{agent_id}/channels/{channel_id}/pairings/{pairing_id}` | POST | 批准、拒绝或撤销 |
+| `/v1/channels` | GET | 工作区列表，API Key 可调用 |
+| `/v1/channels/authorizations` | POST | 发起工作区飞书授权，API Key 可调用 |
+| `/v1/channels/authorizations/{authorization_id}` | GET | 查询授权状态，API Key 可调用 |
+| `/v1/channels/credentials/check` | POST | 验证应用凭据，不返回平台令牌，API Key 可调用 |
+| `/v1/channels/{channel_id}/qr` | GET / POST | 控制台查询或发起渠道授权 |
+| `/v1/channels/{channel_id}/qr_sessions` | POST | 控制台发起扫码会话 |
+| `/v1/channels/{channel_id}/qr_sessions/{qr_id}` | GET | 控制台查询扫码会话 |
+| `/v1/agents/{agent_id}/channels` | GET / POST | 智能体列表与创建，API Key 可调用 |
+| `/v1/agents/{agent_id}/channels/settings` | GET / POST | 控制台读取与保存执行环境 |
+| `/v1/agents/{agent_id}/channels/{channel_id}` | POST | 更新渠道，API Key 可调用 |
+| `/v1/agents/{agent_id}/channels/{channel_id}` | DELETE | 控制台停止并软删除 |
+| `/v1/agents/{agent_id}/channels/{channel_id}/check` | GET | 连接、凭据及配置预检，API Key 可调用 |
+| `/v1/agents/{agent_id}/channels/{channel_id}/pairings` | GET | 控制台查看旧配对申请与已批准项 |
+| `/v1/agents/{agent_id}/channels/{channel_id}/pairings/{pairing_id}` | POST | 控制台批准、拒绝或撤销旧配对 |
+| `/v1/channel_pairings` | GET | 查询范围配对，API Key 可调用 |
+| `/v1/channel_pairings/{pairing_id}` | GET / DELETE | 查询或按当前修订号解除绑定，API Key 可调用 |
 
 创建后渠道模式与智能体不可由编辑向导切换。未绑定记录可先保存，绑定和启用状态分离。删除保留已有 OMA 会话。连接检查不等同于模型执行、沙箱就绪、资源实际读取或 Git 检出验证。
 

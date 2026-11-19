@@ -62,6 +62,10 @@ func agentNotFound() error {
 	return apperr.New(apperr.NotFound, "Agent 不存在", nil)
 }
 
+func consoleRouteNotFound() error {
+	return apperr.New(apperr.NotFound, "Not found", nil)
+}
+
 func archivedAgent() error {
 	return apperr.New(apperr.Conflict, "已归档 Agent 无法修改渠道", nil)
 }

@@ -216,6 +216,13 @@
                 ]
               },
               {
+                "group": "集成智能体",
+                "pages": [
+                  "docs/zh/message-channels",
+                  "docs/zh/identities"
+                ]
+              },
+              {
                 "group": "管理智能体上下文",
                 "pages": [
                   "docs/zh/github",
@@ -416,6 +423,13 @@
                     "pages": [
                       "GET /v1/deployment_runs",
                       "GET /v1/deployment_runs/{deployment_run_id}"
+                    ]
+                  },
+                  {
+                    "group": "渠道与身份",
+                    "pages": [
+                      "docs/zh/api/resources/channels",
+                      "docs/zh/api/resources/identities"
                     ]
                   },
                   {

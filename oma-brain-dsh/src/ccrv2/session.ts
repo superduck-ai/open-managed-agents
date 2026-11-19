@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
-import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
@@ -29,6 +29,7 @@ import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "
 
 declare module "@deepseek-ai/dsh-session/types" {
   interface PluginRecordMap {
+    "plugin:oma/tool-oauth": {callId: string; invocation?: string; dispatched?: boolean; server?: string; discovery?: boolean};
     "plugin:oma/subagent-runtime": { version: 1; runtime: "oma" | "dsh" };
   }
 }
@@ -73,6 +74,7 @@ export class CcrSession {
   private readonly recoveryInterrupts = new Map<string, AbortController>();
   private recoveryInterruptedAll = false;
   private recoveryRootInterrupted = false;
+  private readonly recoveryControlsReady = Promise.withResolvers<void>();
   private readonly opened = Promise.withResolvers<void>();
   private ready = false;
   private openedAt = 0;
@@ -266,13 +268,13 @@ export class CcrSession {
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
-    const inputResults = this.replay(this.agent.session.snapshotEvents(), published[this.id] ?? 0);
+    const inputResults = await this.replay(this.agent.session.snapshotEvents(), published[this.id] ?? 0);
     const replayed = { [this.id]: this.agent.session.snapshotEvents().length };
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
       try {
         const { events } = await handle.read();
-        this.replay(events, published[thread.id] ?? 0, thread.id);
+        await this.replay(events, published[thread.id] ?? 0, thread.id);
         replayed[thread.id] = events.length;
       } finally { await handle.close(); }
     }
@@ -353,7 +355,7 @@ export class CcrSession {
       .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
   }
 
-  private replay(events: readonly SessionEvent[], publishedCount: number, threadId?: string): Payload[] {
+  private async replay(events: readonly SessionEvent[], publishedCount: number, threadId?: string): Promise<Payload[]> {
     const completions: Payload[] = [];
     const tools = new CcrToolResults();
     let inputId = "";
@@ -383,7 +385,21 @@ export class CcrSession {
       if (unpublished) this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, toolName, threadId));
     }
     for (const inputId of unfinished) {
-      const outcome = turnOutcome(this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
+      let reason: Parameters<typeof turnOutcome>[0] = this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" };
+      const last = events.findLast(event => event.type === "assistant/message" || event.type === "tool/result" || event.type === "user/message");
+      if (reason.kind === "interrupted" && inputId === this.inputId && last?.type === "tool/result" && !last.data.message.isError
+        && events.some(event => { const record = pluginRecordOf(event); return record?.type === "plugin:oma/tool-oauth" && object(record.data).callId === last.data.message.toolCallId; })) {
+        this.opening = false;
+        await this.checkpoint();
+        this.recoveryControlsReady.resolve();
+        this.recoveryBlocked?.();
+        this.agent.followup(createUserMessage({ source: { kind: "system-prompt" }, content: [
+          { type: "text", text: "授权后的工具调用已完成，请根据刚才的工具结果继续处理用户的原问题。" },
+        ] }));
+        await this.agent.whenIdle();
+        reason = this.rootTurnReason ?? reason;
+      }
+      const outcome = turnOutcome(reason);
       appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
       completions.push(...completionOutput(inputId, outcome));
     }
@@ -445,6 +461,13 @@ export class CcrSession {
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
     const requestId = crypto.randomUUID();
     const ownerId = threadId ?? this.id;
+    const oauthOwner = request.kind === "oauth" ? (threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session) : undefined;
+    const invocation = request.input.kind === "mcp_oauth" ? request.input.invocation_id : undefined;
+    if (oauthOwner) appendPluginRecord(oauthOwner, "plugin:oma/tool-oauth", {
+      callId:request.input.parent_call_id,
+      ...(request.input.kind === "mcp_oauth" && {server:request.input.mcp_server_name, discovery:request.input.reason === "missing"}),
+      ...(invocation && {invocation})
+    });
     const details = { tool_name: request.toolName, action_description: `Use ${request.toolName}`,
       tool_use_id: request.callId, request_id: requestId, input: request.input,
       ...(threadId ? { session_thread_id: threadId } : {}) };
@@ -502,6 +525,10 @@ export class CcrSession {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
       await this.updateStatus();
+    }
+    if (oauthOwner && invocation && !decision.externalResult?.isError && decision.behavior === "allow") {
+      appendPluginRecord(oauthOwner,"plugin:oma/tool-oauth",{callId:request.input.parent_call_id,dispatched:true});
+      await this.checkpoint();
     }
     return { allowed: decision.behavior === "allow", input: decision.updatedInput,
       ...(decision.externalResult !== undefined ? { externalResult: validatedExternalToolResult(decision.externalResult) } : {}),
@@ -639,10 +666,11 @@ export class CcrSession {
 
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
-    const interruptConsumed = !this.ready && isInterruptInput(payload);
+    const interruptConsumed = this.opening && !this.ready && isInterruptInput(payload);
     if (!this.ready) {
       if (interruptConsumed) this.interruptRecovery(payload.session_thread_id);
-      await this.opened.promise;
+      if (isControlInput(payload.type)) await Promise.race([this.opened.promise, this.recoveryControlsReady.promise]);
+      else await this.opened.promise;
     }
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
     if (!repeatedControl && payload.type === "control_response") {

@@ -1,4 +1,6 @@
 import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
+import { canonicalJson } from "../ccrv2/json-equality.ts";
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
@@ -14,6 +16,16 @@ import { currentToolTrace, traceHooks } from "../observability/trace-context.ts"
 import { object, type Payload } from "../json.ts";
 import { type RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
+
+export function mcpInvocation(tool: RemoteTool, args: Payload, legacy = false): string {
+  const input = [tool.name, tool.inputSchema, !!tool.readOnly, args];
+  const digest = createHash("sha256").update(JSON.stringify(legacy ? input : canonicalJson(input))).digest("hex");
+  return legacy ? digest : "v2:" + digest;
+}
+
+export function connectedTools(tools: RemoteTool[]): string {
+  return JSON.stringify({tools:tools.map(({name,description}) => ({name,description}))});
+}
 
 export class ExternalMcpClient {
   private client: Client;
@@ -92,7 +104,7 @@ export class ExternalMcpClient {
     args: Payload,
     signal: AbortSignal,
     authenticationFailure?: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>,
-    authorize?: () => Promise<void>,
+    authorize?: (canRetry: boolean) => Promise<void>,
   ): Promise<Payload> {
     this.authenticationRejected = false;
     this.oauthRejected = false;
@@ -106,7 +118,7 @@ export class ExternalMcpClient {
       if (this.authenticationRejected) {
         if (this.oauthRejected && authorize) {
           const mayRetry = tool.readOnly === true || this.notForwarded !== undefined;
-          await authorize();
+          await authorize(mayRetry);
           if (mayRetry) {
             const tools = await this.reconnect(signal);
             const current = tools.find(candidate => candidate.remoteName === tool.remoteName);

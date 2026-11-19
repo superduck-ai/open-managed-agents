@@ -29,6 +29,7 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 		r.Post("/", h.handleToolCallSubmit)
 		r.Get("/{call_id}", h.handleToolCallWait)
 		r.Post("/{call_id}/cancel", h.handleToolCallCancel)
+		r.Post("/{call_id}/oauth-credential", h.handleToolOAuthCredential)
 	})
 	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
 	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)

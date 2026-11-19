@@ -419,7 +419,15 @@ func (s *acceptanceStore) ListIdentitySessions(context.Context, string, string, 
 func (s *acceptanceStore) BusinessIdentityStats(context.Context, string, string, *time.Time) (db.IdentityStatsRecord, error) {
 	return db.IdentityStatsRecord{}, nil
 }
-func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int) ([]db.IdentityAgentUsageRecord, error) {
+func (s *acceptanceStore) IdentityDirectory(context.Context, db.IdentityDirectoryParams) (string, error) {
+	return "{}", nil
+}
+
+func (s *acceptanceStore) ListIdentityChannels(context.Context, string, string) ([]db.IdentityChannelBindingRecord, error) {
+	return nil, nil
+}
+
+func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int, int) ([]db.IdentityAgentUsageRecord, error) {
 	return nil, nil
 }
 func (s *acceptanceStore) ListAgentIdentityBindings(context.Context, string, string) ([]db.AgentBindingRecord, error) {

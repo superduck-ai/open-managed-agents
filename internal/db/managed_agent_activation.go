@@ -38,6 +38,7 @@ func (d *DB) WithLockedActiveCodeSession(
 	ctx context.Context,
 	codeSessionExternalID string,
 	completedToolID string,
+	workerTraceParent *string,
 	fn func(CodeSession) error,
 ) error {
 	return d.withLockedCodeSession(ctx, codeSessionExternalID, func(executor yourbatis.Executor, row codeSessionRow) error {
@@ -48,7 +49,12 @@ func (d *DB) WithLockedActiveCodeSession(
 			return err
 		}
 		if completedToolID != "" {
-			return NewCodeSessionMapper(executor).ClearToolPermissionRequest(ctx, row.WorkspaceUUID, row.ExternalID, completedToolID)
+			if err := NewCodeSessionMapper(executor).ClearToolPermissionRequest(ctx, row.WorkspaceUUID, row.ExternalID, completedToolID); err != nil {
+				return err
+			}
+		}
+		if workerTraceParent != nil {
+			return requestCodeSessionWorker(ctx, executor, row.OrganizationUUID, row.WorkspaceUUID, row.ExternalID, *workerTraceParent)
 		}
 		return nil
 	})

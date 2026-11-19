@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -768,18 +770,29 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
-	var permissions toolPermissionSnapshot
+	var permissions struct {
+		toolPermissionSnapshot
+		clitools.OAuthConfig
+	}
 	if len(metadata.Config) > 0 {
 		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
 			return nil, err
 		}
 	}
 	config := codeSessionConfig(record.Metadata)
+	tools := catalog.runtimeTools(permissions.Tools)
+	if slices.Contains(tools, "Bash") {
+		for _, cli := range clitools.Bindings {
+			if permissions.Provider(cli.Variable) != "" {
+				tools = append(tools, cli.Name)
+			}
+		}
+	}
 	return map[string]any{
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
-		"runtime_tools":            catalog.runtimeTools(permissions.Tools),
+		"runtime_tools":            tools,
 		"runtime_tool_permissions": catalog.toolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],
 		"outcomes":                 arrayConfigValue(config["outcomes"]),

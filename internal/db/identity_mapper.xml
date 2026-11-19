@@ -325,8 +325,8 @@
         WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID} AND s.deleted_at IS NULL
         <if test="since != nil">AND s.updated_at &gt;= #{since}</if>
         GROUP BY b.agent_external_id
-        ORDER BY MAX(s.updated_at) DESC
-        LIMIT #{limit}
+        ORDER BY last_used_at DESC, b.agent_external_id
+        LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="ListRunningIdentitySessions" resultType="string">
@@ -347,21 +347,97 @@
         )
     </select>
 
-    <select id="ListAgentBindings" resultType="AgentBindingRecord">
-        SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
-            p.channel_external_id AS channel_external_id, p.scope_kind AS scope_kind,
-            p.remote_id AS remote_id, p.external_id AS pairing_external_id, p.status AS status
+    <select id="IdentityDirectory" result="scalar" resultType="string">
+        WITH subjects AS (
+            SELECT uuid, external_id AS id, namespace, external_subject_id, display_name, enabled, created_at
+            FROM identities WHERE organization_uuid = #{params.OrganizationUUID} AND workspace_uuid = #{params.WorkspaceUUID} AND deleted_at IS NULL
+        ), usage AS (
+            SELECT b.identity_uuid, b.agent_external_id AS agent_id, count(*) AS sessions, max(s.updated_at) AS last_used_at
+            FROM session_identity_bindings b
+            JOIN subjects i ON i.uuid = b.identity_uuid
+            JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
+            WHERE b.organization_uuid = #{params.OrganizationUUID} AND b.workspace_uuid = #{params.WorkspaceUUID} AND s.deleted_at IS NULL
+            GROUP BY b.identity_uuid, b.agent_external_id
+        ), identity_usage AS (
+            SELECT identity_uuid, count(*) AS agents, sum(sessions) AS sessions, max(last_used_at) AS last_used_at,
+                max(last_used_at) &gt;= now() - interval '7 days' AS active
+            FROM usage GROUP BY identity_uuid
+        ), directory AS (
+            SELECT i.id, i.namespace, i.external_subject_id, i.display_name, i.enabled, i.created_at,
+                EXISTS (SELECT 1 FROM identity_actor_links l WHERE l.identity_uuid = i.uuid AND l.personal) AS personal,
+                coalesce(u.agents, 0) AS agents, coalesce(u.sessions, 0) AS sessions, u.last_used_at,
+                coalesce(u.active, false) AS active
+            FROM subjects i LEFT JOIN identity_usage u ON u.identity_uuid = i.uuid
+            WHERE true
+            <if test="params.AgentID != ''">AND EXISTS (
+                SELECT 1 FROM usage a WHERE a.identity_uuid = i.uuid AND a.agent_id = #{params.AgentID}
+            )</if>
+            <if test="params.Status == 'active'">AND u.active</if>
+            <if test="params.Status == 'enabled'">AND i.enabled</if>
+            <if test="params.Status == 'disabled'">AND NOT i.enabled</if>
+            <if test="params.Search != ''">AND (
+                strpos(lower(i.display_name), lower(#{params.Search})) &gt; 0
+                OR strpos(lower(i.external_subject_id), lower(#{params.Search})) &gt; 0
+                OR strpos(lower(i.id), lower(#{params.Search})) &gt; 0
+            )</if>
+        ), page AS (
+            SELECT id, namespace, external_subject_id, display_name, enabled, created_at, personal, agents, sessions, last_used_at, active
+            FROM directory
+            ORDER BY CASE WHEN #{params.Sort} = 'sessions' THEN sessions END DESC NULLS LAST,
+                last_used_at DESC NULLS LAST, id DESC
+            OFFSET #{params.Offset} LIMIT #{params.Limit}
+        ), used_agents AS (
+            SELECT DISTINCT agent_id AS id FROM usage
+        ), agent_options AS (
+            SELECT u.id, coalesce(a.name, u.id) AS name
+            FROM used_agents u LEFT JOIN agents a
+                ON a.external_id = u.id AND a.workspace_uuid = #{params.WorkspaceUUID} AND a.deleted_at IS NULL
+        )
+        SELECT jsonb_build_object(
+            'data', coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY
+                CASE WHEN #{params.Sort} = 'sessions' THEN page.sessions END DESC NULLS LAST,
+                page.last_used_at DESC NULLS LAST, page.id DESC) FROM page), '[]'::jsonb),
+            'total_count', (SELECT count(*) FROM directory),
+            'agent_options', coalesce((SELECT jsonb_agg(to_jsonb(agent_options) ORDER BY name, id) FROM agent_options), '[]'::jsonb),
+            'overview', jsonb_build_object(
+                'identities', (SELECT count(*) FROM subjects),
+                'active', (SELECT count(*) FROM identity_usage WHERE active),
+                'agents', (SELECT count(*) FROM used_agents),
+                'sessions', (SELECT coalesce(sum(sessions), 0) FROM identity_usage)
+            )
+        )::text AS directory
+    </select>
+
+    <sql id="identityChannelTargets">
+        SELECT p.identity_uuid, p.channel_uuid, p.channel_external_id, p.agent_external_id,
+            p.scope_kind, p.remote_id, p.external_id AS pairing_external_id, p.platform_account
         FROM channel_pairings p
-        JOIN identities i ON i.uuid = p.identity_uuid AND i.workspace_uuid = p.workspace_uuid AND i.deleted_at IS NULL
-        WHERE p.workspace_uuid = #{workspaceUUID} AND p.agent_external_id = #{agentExternalID} AND p.status = 'active'
+        WHERE p.workspace_uuid = #{workspaceUUID} AND p.status = 'active'
         UNION ALL
-        SELECT i.external_id AS identity_external_id, i.display_name AS display_name,
-            c.external_id AS channel_external_id, 'fixed' AS scope_kind,
-            '' AS remote_id, '' AS pairing_external_id, 'active' AS status
+        SELECT c.identity_uuid, c.uuid AS channel_uuid, c.external_id AS channel_external_id, c.agent_external_id,
+            'fixed' AS scope_kind, '' AS remote_id, '' AS pairing_external_id, '' AS platform_account
         FROM channels c
-        JOIN identities i ON i.uuid = c.identity_uuid AND i.workspace_uuid = c.workspace_uuid AND i.deleted_at IS NULL
-        WHERE c.workspace_uuid = #{workspaceUUID} AND c.agent_external_id = #{agentExternalID}
-        AND c.identity_resolution_mode = 'fixed' AND c.entry_closed = false AND c.deleted_at IS NULL
+        WHERE c.workspace_uuid = #{workspaceUUID} AND c.identity_resolution_mode = 'fixed'
+        AND c.entry_closed = false AND c.deleted_at IS NULL
+    </sql>
+
+    <select id="ListAgentBindings" resultType="AgentBindingRecord">
+        WITH targets AS (<include refid="identityChannelTargets"/>)
+        SELECT i.external_id AS identity_external_id, i.display_name, t.channel_external_id,
+            t.scope_kind, t.remote_id, t.pairing_external_id, 'active' AS status
+        FROM targets t
+        JOIN identities i ON i.uuid = t.identity_uuid AND i.workspace_uuid = #{workspaceUUID} AND i.deleted_at IS NULL
+        WHERE t.agent_external_id = #{agentExternalID}
+    </select>
+
+    <select id="ListIdentityChannels" resultType="IdentityChannelBindingRecord">
+        WITH targets AS (<include refid="identityChannelTargets"/>)
+        SELECT DISTINCT t.agent_external_id, c.external_id AS channel_external_id, c.channel_type, c.name, c.binding_status
+        FROM targets t
+        JOIN channels c ON c.uuid = t.channel_uuid AND c.workspace_uuid = #{workspaceUUID} AND c.deleted_at IS NULL
+        WHERE t.identity_uuid = #{identityUUID}
+        AND (t.scope_kind = 'fixed' OR t.platform_account = c.app_id)
+        ORDER BY t.agent_external_id, c.name, c.external_id
     </select>
 
     <select id="PersonalVault" result="scalar">

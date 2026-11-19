@@ -18,7 +18,7 @@ export async function nativeOutcomes(session: CcrSession, threadId = session.id)
   return outcomes;
 }
 
-export async function seedInterruptedTool(session: CcrSession, inputId: string, callId = "uncertain") {
+export async function seedInterruptedTool(session: CcrSession, inputId: string, callId = "uncertain", tool = { name: "Bash", arguments: '{"command":"write"}' }, dispatched = true) {
   const { createMessage, ToolCallId } = await import("@deepseek-ai/dsh-llm");
   session.inputId = inputId;
   session.agent.session.append("turn/start", { turn: 1 });
@@ -31,9 +31,9 @@ export async function seedInterruptedTool(session: CcrSession, inputId: string, 
   session.agent.session.append("assistant/message", {
     turn: 1, step: 1, stream: [],
     message: createMessage({ role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
-      content: [{ type: "tool-call", id: ToolCallId(callId), name: "Bash", arguments: '{"command":"write"}' }] }),
+      content: [{ type: "tool-call", id: ToolCallId(callId), ...tool }] }),
   }, { surfaceOp: "append" });
-  session.agent.session.append("tool/call", { turn: 1, step: 1, callId: ToolCallId(callId), name: "Bash", arguments: '{"command":"write"}' });
+  if (dispatched) session.agent.session.append("tool/call", { turn: 1, step: 1, callId: ToolCallId(callId), ...tool });
   await session.runtime.flushLog();
 }
 

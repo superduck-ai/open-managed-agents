@@ -9,6 +9,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 var errMessageImageRejected = errors.New("message image source rejected")
@@ -257,4 +258,18 @@ func tunnelCredentialFailure(cause error) error {
 		return fmt.Errorf("%w: %w", porttunnel.ErrUnauthorized, cause)
 	}
 	return cause
+}
+
+func toolOAuthCredentialError(err error) error {
+	if _, ok := errors.AsType[*apperr.Error](err); !ok {
+		switch {
+		case errors.Is(err, vaults.ErrCredentialAuthorizationManaged), errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired):
+			return apperr.New(apperr.Conflict, "工具授权未就绪", err)
+		case errors.Is(err, db.ErrNotFound):
+			return toolCallOperationError(err)
+		default:
+			return apperr.New(apperr.Unavailable, "暂时无法读取工具授权", err)
+		}
+	}
+	return err
 }

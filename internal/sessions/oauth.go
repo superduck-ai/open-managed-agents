@@ -69,34 +69,43 @@ func (h *Handler) ResolveOAuthResult(ctx context.Context, sessionID, requestID s
 }
 
 func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSession, input codesessions.OAuthRequest, prepare func(context.Context, db.VaultCredential) error) (json.RawMessage, error) {
-	if input.Kind != "env_oauth" {
+	if input.Kind != "env_oauth" && input.ResumeEventID == "" {
 		return nil, errors.New("CLI 入口只支持 ENV OAuth")
 	}
-	if input.Reason == "missing" {
+	if input.ResumeEventID == "" && input.Reason == "missing" {
 		if result, err := h.oauthEnvironmentResult(ctx, code, input, prepare, false); errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired) {
 			input.Reason = "reauthorization_required"
 		} else if err != nil || result != nil {
 			return result, err
 		}
 	}
-	session, found, err := h.db.GetSession(ctx, code.WorkspaceUUID, code.SessionExternalID)
-	if err != nil || !found {
-		return nil, errors.Join(db.ErrNotFound, err)
+	if input.CheckOnly {
+		return jsonv2.Marshal(map[string]any{"requirement": input})
 	}
-	thread, err := h.ensurePrimarySessionThread(ctx, session)
+	return h.waitForOAuthResult(ctx, code, input, prepare)
+}
+
+func (h *Handler) waitForOAuthResult(ctx context.Context, code db.CodeSession, input codesessions.OAuthRequest, prepare func(context.Context, db.VaultCredential) error) (json.RawMessage, error) {
+	session, found, err := h.db.GetSession(ctx, code.WorkspaceUUID, code.SessionExternalID)
 	if err != nil {
 		return nil, err
 	}
-	subscription, err := h.subscribeSession(ctx, session, newStreamConnection(thread.ExternalID, true, nil), StreamOptions{})
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	subscription, err := h.subscribeSessionThread(ctx, session, StreamOptions{ThreadID: input.ResumeThreadID, AfterEventID: input.ResumeEventID})
 	if err != nil {
 		return nil, err
 	}
 	defer subscription.Close()
-	requestID, err := h.codeSessions.RequestSandboxOAuth(ctx, code, input)
-	if err != nil {
-		return nil, err
+	requestID := input.ResumeEventID
+	if requestID == "" {
+		requestID, err = h.codeSessions.RequestSandboxOAuth(ctx, code, input)
+		if err != nil {
+			return nil, err
+		}
 	}
-	requestSeen := false
+	requestSeen := input.ResumeEventID != ""
 	for {
 		event, err := subscription.Receive(ctx)
 		if err != nil {
@@ -109,7 +118,7 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 			continue
 		}
 		if event.EventType == "user.interrupt" || event.EventType == "session.status_terminated" {
-			return nil, errors.New("OAuth 等待已取消")
+			return nil, oauthWaitCancelled()
 		}
 		if event.EventType != "user.custom_tool_result" {
 			continue
@@ -117,6 +126,9 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 		var result struct {
 			RequestID string `json:"custom_tool_use_id"`
 			IsError   bool   `json:"is_error"`
+			Content   []struct {
+				Text string `json:"text"`
+			} `json:"content"`
 		}
 		if err := jsonv2.Unmarshal(event.Payload, &result); err != nil {
 			return nil, err
@@ -125,11 +137,17 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 			continue
 		}
 		if result.IsError {
-			return nil, errors.New("OAuth 授权未完成")
+			return nil, oauthAuthorizationIncomplete()
+		}
+		if len(result.Content) != 1 || !codesessions.OAuthGranted(result.Content[0].Text) {
+			return nil, oauthAuthorizationUnconfirmed()
+		}
+		if input.Kind == "mcp_oauth" {
+			return json.RawMessage(`{"authorized":true}`), nil
 		}
 		resultJSON, err := h.oauthEnvironmentResult(ctx, code, input, prepare, true)
 		if err == nil && resultJSON == nil {
-			err = errors.New("OAuth 凭据未就绪")
+			err = oauthCredentialNotReady()
 		}
 		return resultJSON, err
 	}
@@ -148,6 +166,12 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 		if credential.AuthType != "env_oauth" && credential.AuthType != "environment_variable" || credential.CredentialKey != input.SecretName {
 			continue
 		}
+		if credential.AuthType == "environment_variable" && input.Provider != "" {
+			if scope.PinBindings {
+				return nil, oauthBoundToEnvironmentCredential()
+			}
+			continue
+		}
 		if credential.AuthType == "env_oauth" {
 			provider, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
 			if err != nil {
@@ -155,7 +179,7 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 			}
 			if provider != input.Provider {
 				if scope.PinBindings {
-					return nil, errors.New("当前变量已绑定其他 OAuth 连接")
+					return nil, oauthBoundToDifferentProvider()
 				}
 				continue
 			}

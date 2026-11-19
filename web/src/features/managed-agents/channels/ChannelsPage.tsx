@@ -47,11 +47,12 @@ import {
   channelConnectionStatusNotice,
   type ChannelConnectionStatus,
 } from './status';
+import { useChannelStatusTime } from './useChannelStatusTime';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
 const channelListPageSize = 10;
-const statusFilters = ['connected', 'pending_test', 'abnormal', 'disabled'] as const;
+const statusFilters = ['connected', 'connecting', 'pending_test', 'abnormal', 'disabled'] as const;
 
 export function ChannelsPage() {
   const location = useLocation();
@@ -93,9 +94,10 @@ export function ChannelsPageContent({
     queryKey: ['channel-environment-options', workspaceId],
     queryFn: () => listChannelEnvironments(workspaceId),
   });
+  const observedAt = useChannelStatusTime(query.data?.channels, query.dataUpdatedAt);
   const rows = useMemo(
-    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }),
-    [query.data, statusFilter, search],
+    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }, observedAt),
+    [query.data, observedAt, statusFilter, search],
   );
   const pageCount = Math.max(1, Math.ceil(rows.length / channelListPageSize));
   const page = Math.min(pageIndex, pageCount);
@@ -168,6 +170,7 @@ export function ChannelsPageContent({
           rows={[]}
           loading
           workspaceId={workspaceId}
+          observedAt={observedAt}
           environmentLabel={environmentLabel}
           onNavigate={onNavigate}
         />
@@ -176,6 +179,7 @@ export function ChannelsPageContent({
           <ChannelListTable
             rows={visibleRows}
             workspaceId={workspaceId}
+            observedAt={observedAt}
             environmentLabel={environmentLabel}
             onNavigate={onNavigate}
           />
@@ -197,10 +201,12 @@ export function ChannelsPageContent({
 function filterChannelRows(
   channels: WorkspaceChannel[],
   filters: { statusFilter: ChannelConnectionStatus | 'all'; search: string },
+  observedAt: number,
 ) {
   const needle = filters.search.trim().toLowerCase();
   return channels.filter((row) => {
-    if (filters.statusFilter !== 'all' && channelConnectionStatus(row) !== filters.statusFilter) return false;
+    if (filters.statusFilter !== 'all' && channelConnectionStatus(row, observedAt) !== filters.statusFilter)
+      return false;
     if (!needle) return true;
     return row.name.toLowerCase().includes(needle) || (row.app_id ?? '').toLowerCase().includes(needle);
   });
@@ -229,12 +235,14 @@ function ChannelListTable({
   rows,
   loading = false,
   workspaceId,
+  observedAt,
   environmentLabel,
   onNavigate,
 }: {
   rows: WorkspaceChannel[];
   loading?: boolean;
   workspaceId: string;
+  observedAt: number;
   environmentLabel: (environmentId: string | null) => string;
   onNavigate: (href: string) => void;
 }) {
@@ -268,6 +276,7 @@ function ChannelListTable({
             key={`${row.agentId}:${row.id}`}
             row={row}
             workspaceId={workspaceId}
+            observedAt={observedAt}
             environmentLabel={environmentLabel(row.environmentId)}
             onNavigate={onNavigate}
           />
@@ -280,11 +289,13 @@ function ChannelListTable({
 function ChannelListRow({
   row,
   workspaceId,
+  observedAt,
   environmentLabel,
   onNavigate,
 }: {
   row: WorkspaceChannel;
   workspaceId: string;
+  observedAt: number;
   environmentLabel: string;
   onNavigate: (href: string) => void;
 }) {
@@ -318,7 +329,7 @@ function ChannelListRow({
         </div>
       </DataTableCell>
       <DataTableCell className={dataTableMetaColumnClassName}>
-        <ChannelStatusBadge channel={row} />
+        <ChannelStatusBadge channel={row} observedAt={observedAt} />
       </DataTableCell>
       <DataTableCell className={dataTableMetaColumnClassName}>
         <div className="min-w-0 max-w-[240px]">
@@ -353,7 +364,7 @@ function ChannelListRow({
                 <Settings className="size-4" />
                 {msg('managedAgents.channels.configure', '配置')}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => reportConnectionCheck(row, msg)}>
+              <DropdownMenuItem onClick={() => reportConnectionCheck(row, observedAt, msg)}>
                 <Plug className="size-4" />
                 {msg('managedAgents.channels.connectionCheck', '连接检测')}
               </DropdownMenuItem>
@@ -365,6 +376,6 @@ function ChannelListRow({
   );
 }
 
-function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {
-  toast.message(channelConnectionStatusNotice(channelConnectionStatus(row), msg));
+function reportConnectionCheck(row: WorkspaceChannel, observedAt: number, msg: ReturnType<typeof useI18n>['msg']) {
+  toast.message(channelConnectionStatusNotice(channelConnectionStatus(row, observedAt), msg));
 }

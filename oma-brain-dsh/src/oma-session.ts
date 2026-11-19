@@ -24,20 +24,24 @@ export function createOmaSession(
   validateAssignment(assignment);
   api.assignments.set(assignment.session_id, assignment);
   const provider = `oma:${assignment.session_id}`;
+  const threadMcpContext = async (threadId: string, signal?: AbortSignal) => {
+    const context = await omaToolContext(api, assignment.session_id, threadId, signal);
+    return { config: context.mcp_config, fetcher: externalMcpFetch(api, assignment.session_id, threadId) };
+  };
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
     provider,
-    recoverSandboxCalls: (id,signal,threadId,recovery) => recoverSandboxCalls(ctx,new SandboxCalls(api,assignment.session_id),id,signal,threadId,recovery),
+    recoverSandboxCalls: (id, signal, threadId, recovery) => recoverSandboxCalls(
+      ctx, new SandboxCalls(api, assignment.session_id), id, signal, threadId, recovery,
+      async () => threadId ? threadMcpContext(threadId, signal) : {config: assignment.external_mcp_config, fetcher: externalMcpFetch(api, assignment.session_id)},
+    ),
     configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
     externalMcpConfig: assignment.external_mcp_config,
     externalMcpFetch: externalMcpFetch(api, assignment.session_id),
-    threadMcpContext: async (threadId) => {
-      const context = await omaToolContext(api, assignment.session_id, threadId);
-      return { config: context.mcp_config, fetcher: externalMcpFetch(api, assignment.session_id, threadId) };
-    },
+    threadMcpContext,
     refreshTools: async (signal) => {
       const context = await omaToolContext(api, assignment.session_id, undefined, signal);
       return { tools: context.runtime_tools, externalMcpConfig: context.mcp_config };

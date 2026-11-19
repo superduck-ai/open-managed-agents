@@ -405,3 +405,33 @@ func TestManagedAgentLaunchCleanupPostgres(t *testing.T) {
 		t.Fatalf("repeated cleanup = (%t, %v)", terminated, err)
 	}
 }
+
+func TestOAuthHandoffCommitsBeforeWorkerClaim(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	id := seedClaimCodeSession(t, ctx, database, 1, "claim", "idle")
+	execClaimTest(t, ctx, database, `update code_sessions set worker_external_metadata='{"managed_agent_tool_permission_request:grant":{}}' where external_id=$1`, id)
+	failed := errors.New("交接失败")
+	if err := store.WithLockedActiveCodeSession(ctx, id, "grant", new(claimTestTraceParent), func(CodeSession) error { return failed }); !errors.Is(err, failed) {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.ClaimNextCodeSession(ctx, claimTestInput("before")); ok || err != nil {
+		t.Fatalf("交接前领取 %v, %v", ok, err)
+	}
+	if err := store.WithLockedActiveCodeSession(ctx, id, "grant", new(claimTestTraceParent), func(CodeSession) error {
+		if _, ok, err := store.ClaimNextCodeSession(ctx, claimTestInput("during")); ok || err != nil {
+			return fmt.Errorf("交接中领取 %v, %w", ok, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	worker, ok, err := store.ClaimNextCodeSession(ctx, claimTestInput("after"))
+	if err != nil || !ok || worker.CodeSessionExternalID != id {
+		t.Fatalf("接手时授权交接未完成: ok=%v err=%v", ok, err)
+	}
+	var pending bool
+	if err := database.QueryRowContext(ctx, `select worker_external_metadata ? 'managed_agent_tool_permission_request:grant' from code_sessions where external_id=$1`, id).Scan(&pending); err != nil || pending {
+		t.Fatalf("交接后仍有待授权请求 %v, %v", pending, err)
+	}
+
+}

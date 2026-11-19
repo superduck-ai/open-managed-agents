@@ -9,7 +9,9 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import { mcpServerPrefix } from "../src/external-mcp/server-name.ts";
 import { externalServers } from "../src/external-mcp/config.ts";
-import { ExternalMcpClient } from "../src/external-mcp/client.ts";
+import { recoverMcpOAuth } from "../src/external-mcp/recovery.ts";
+import { SandboxCalls } from "../src/oma-sandbox/client.ts";
+import { ExternalMcpClient, mcpInvocation } from "../src/external-mcp/client.ts";
 import { registerWorkerTask } from "../src/worker-registration.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
@@ -31,7 +33,7 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
   const listRequested = Promise.withResolvers<void>();
   const listCompleted = Promise.withResolvers<void>();
   const listAborted = Promise.withResolvers<void>();
-  const dispatched = Promise.withResolvers<void>();
+  let dispatched = Promise.withResolvers<void>();
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const disconnected = Promise.withResolvers<void>();
   const server = Bun.serve({
@@ -149,13 +151,14 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
     httpRequests,
     output: (text: string) => { outputText = text; },
     content: (blocks: Payload[]) => { outputContent = blocks; },
-    dispatched: dispatched.promise,
+    get dispatched() { return dispatched.promise; },
     disconnected: disconnected.promise,
     listRequested: listRequested.promise,
     listCompleted: listCompleted.promise,
     listAborted: listAborted.promise,
     holdDiscovery: (until: Promise<void>) => { discoveryHold = until; },
     hangCall: () => {
+      dispatched = Promise.withResolvers<void>();
       hangCall = true;
     },
     config: {
@@ -1177,4 +1180,47 @@ test("首次授权发现的真实 MCP 工具应保留到下一轮", async () => 
     expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
     expect((await nativeOutcomes(f.session))?.after_oauth?.failed).toBe(false);
   } finally { await f.close(); }
+});
+
+test("MCP 重新授权后仅以获准参数派发一次，未知结果保留", async () => {
+  const p = peer();
+  const backend = new Backend();
+  const server = externalServers(p.config)[0]!;
+  const client = new ExternalMcpClient(server);
+  const signal = new AbortController().signal;
+  try {
+    await backend.ready;
+    const api = new OmaApi(backend.url);
+    api.assignments.set(backend.a.session_id,backend.a);
+    backend.route = async request => {
+      expect(new URL(request.url).searchParams.get("resume")).toBe("1");
+      return Response.json({authorized:true});
+    };
+    const sandbox = new SandboxCalls(api,backend.a.session_id);
+    const [tool] = await client.discover(signal);
+    const args = {url:"https://docs.example/test"};
+    const reordered = {...tool!, inputSchema:Object.fromEntries(Object.entries(tool!.inputSchema).reverse())};
+    const state = {invocation:mcpInvocation(reordered,args),dispatched:false};
+    expect(state.invocation).toBe(mcpInvocation(tool!,args));
+    const call = {callId:"original",name:tool!.name,arguments:JSON.stringify(args)};
+    const run = () => recoverMcpOAuth(call,state,server,fetch,sandbox,signal,async id => {
+      expect(id).toBe(call.callId);
+      expect(p.requests.filter(r => r.method === "tools/call")).toHaveLength(0);
+      state.dispatched = true;
+    });
+    call.arguments = "{}";
+    expect((await run()).errorCode).toBe("TOOL_NOT_STARTED");
+    call.arguments = JSON.stringify(args);
+    expect((await run()).isError).toBe(false);
+    expect((await run()).errorCode).toBe("TOOL_OUTCOME_UNKNOWN");
+    expect(p.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
+    const interrupt = new AbortController();
+    const legacy = {invocation: mcpInvocation(tool!,args,true)};
+    p.hangCall();
+    const recovered = recoverMcpOAuth(call,legacy,server,fetch,sandbox,signal,async () => {}, "sthr_reader",
+      {interrupt:interrupt.signal,blocking(){}});
+    await p.dispatched;
+    interrupt.abort();
+    expect((await recovered).errorCode).toBe("TOOL_OUTCOME_UNKNOWN");
+  } finally {await client.close();backend.stop();p.close();}
 });

@@ -155,13 +155,21 @@ func (s *Service) Stats(ctx context.Context, principal auth.Principal, identityI
 	return stats, mapStore(err, "执行身份不存在")
 }
 
-func (s *Service) IdentityAgents(ctx context.Context, principal auth.Principal, identityID, window string) ([]db.IdentityAgentUsageRecord, error) {
+func (s *Service) IdentityAgents(ctx context.Context, principal auth.Principal, identityID, window string, page int, includeChannels bool) ([]db.IdentityAgentUsageRecord, []db.IdentityChannelBindingRecord, bool, error) {
 	identity, err := s.GetIdentity(ctx, principal, identityID)
 	if err != nil {
-		return nil, err
+		return nil, nil, false, err
 	}
-	rows, err := s.store.ListBusinessIdentityAgents(ctx, principal.WorkspaceUUID, identity.UUID, windowStart(window), pageMax)
-	return rows, mapStore(err, "执行身份不存在")
+	rows, err := s.store.ListBusinessIdentityAgents(ctx, principal.WorkspaceUUID, identity.UUID, windowStart(window), pageMax+1, (page-1)*pageMax)
+	hasMore := len(rows) > pageMax
+	if hasMore {
+		rows = rows[:pageMax]
+	}
+	if err != nil || !includeChannels || len(rows) == 0 {
+		return rows, nil, hasMore, mapStore(err, "执行身份不存在")
+	}
+	channels, err := s.store.ListIdentityChannels(ctx, principal.WorkspaceUUID, identity.UUID)
+	return rows, channels, hasMore, mapStore(err, "执行身份不存在")
 }
 
 func windowStart(window string) *time.Time {

@@ -127,3 +127,14 @@ func TestRuntimeAutoPolicyDefersToAuthoritativeServerEvaluation(t *testing.T) {
 		}
 	}
 }
+
+func TestFridayUsesBashPolicy(t *testing.T) {
+	for _, policy := range []string{"always_allow", "always_ask", "always_deny"} {
+		snapshot := json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"` + policy + `"}}]}]}`)
+		expected, _ := resolveToolPermissionFromAgentSnapshot(snapshot, "Bash")
+		actual, identity := resolveToolPermissionFromAgentSnapshot(snapshot, "Friday")
+		if actual != expected || identity.ToolName != "Friday" {
+			t.Fatalf("Friday 权限或展示名称有误：%v %v", actual, identity)
+		}
+	}
+}

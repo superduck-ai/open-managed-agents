@@ -194,6 +194,8 @@ func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claud
 		return resolvedToolPermissionAsk, identity
 	}
 	switch {
+	case claudeToolName == "Friday":
+		return resolvedToolPermissionEvaluation(resolveAgentToolPermission(snapshot.Tools, "bash"), toolIdentity{Kind: "agent_toolset", ToolName: "Friday"})
 	case isDelegationTool(claudeToolName):
 		return delegationToolPermission(snapshot.Multiagent), toolIdentity{Kind: "delegation", ToolName: claudeToolName}
 	case strings.HasPrefix(claudeToolName, "mcp__"):

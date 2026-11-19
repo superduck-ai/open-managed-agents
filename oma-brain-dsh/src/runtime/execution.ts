@@ -36,7 +36,7 @@ export class ToolExecution {
     validate(original);
     const decision: ApprovalDecision = this.permissions?.[tool.permissionName ?? tool.remoteName] === "allow"
       ? { allowed: true }
-      : await approveToolCall(this.bridge, { callId: exec.callId, toolName: tool.remoteName === "friday" ? "Bash" : tool.name, input: original }, exec.signal);
+      : await approveToolCall(this.bridge, { callId: exec.callId, toolName: tool.name, input: original }, exec.signal);
     if (!decision.allowed)
       throw new Error(decision.reason || "Tool use denied by OMA");
     const effective = decision.input === undefined ? original : object(decision.input);

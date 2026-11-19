@@ -1,7 +1,9 @@
 package channels
 
 import (
+	"context"
 	"encoding/json/v2"
+	"errors"
 	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"net/http"
@@ -133,6 +135,16 @@ func TestSeparateOAuthCardRequiresMatchingReceipt(t *testing.T) {
 			t.Errorf("授权卡 %s 校验结果 %v", id, err)
 		}
 	}
+	value.Kind, value.ToolUseID = "stop", row.InputEventID
+	if _, err := worker.cardActionReceipt(t.Context(), value, "om_auth", "oc_1", "ou_1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []struct{ message, input string }{{"om_forwarded", row.InputEventID}, {"om_auth", "other"}} {
+		value.ToolUseID = invalid.input
+		if _, err := worker.cardActionReceipt(t.Context(), value, invalid.message, "oc_1", "ou_1"); err == nil {
+			t.Fatal("错误回执或输入不能停止对话")
+		}
+	}
 }
 
 func TestFridayContinuationKeepsOriginalDeliveryAcrossReplay(t *testing.T) {
@@ -148,5 +160,49 @@ func TestFridayContinuationKeepsOriginalDeliveryAcrossReplay(t *testing.T) {
 	}
 	if adapter.opens != 1 || task.delivery.ReplyMessageID != "card" || runner.reply.stopValue.SourceID != "card" || len(adapter.resumed) != 2 || adapter.resumed[0] != adapter.resumed[1] {
 		t.Fatal("重放应复用同一张续跑卡并保留原交付")
+	}
+}
+
+type retryOAuthCardAdapter struct {
+	independentAdapter
+	last     contracts.Reply
+	attempts int
+}
+
+func (a *retryOAuthCardAdapter) ResumeReply(string) channelReplyStream { return a }
+func (a *retryOAuthCardAdapter) Update(_ context.Context, reply contracts.Reply) error {
+	a.attempts++
+	if a.attempts == 1 {
+		return errors.New("飞书暂时不可用")
+	}
+	a.last = reply
+	return nil
+}
+
+func TestNextInputSettlesDetachedOAuthCard(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		worker, _, _, _, task, msg := artifactDeliveryFixture(t)
+		task.terminal = false
+		adapter := &retryOAuthCardAdapter{}
+		worker.adapter = adapter
+		runner := newReplyRunner(worker, task, msg)
+		runner.stream = &independentAdapter{}
+		runner.oauthCards = map[string]string{"oauth": "om_auth"}
+		runner.reply.consumeInteraction(omaEvent{ID: "oauth", Type: "agent.custom_tool_use", Name: "RequestOAuth", Input: []byte(`{"kind":"mcp_oauth","mcp_server_name":"notion"}`)})
+		next := omaEvent{ID: "next", Type: "user.message", Metadata: []byte(`{"channel_id":"chnl_1","channel_type":"feishu","channel_account_id":"app_1","channel_chat_id":"oc_1","channel_actor_id":"actor","channel_message_id":"next"}`)}
+		if done, err := runner.consumeEvent(t.Context(), next); err != nil || done || adapter.attempts != 0 {
+			t.Fatalf("未处理的输入不应结束授权：%v %v", done, err)
+		}
+		if foreign {
+			next.Metadata = nil
+		} else {
+			next.ProcessedAt = []byte(`"2026-11-19T00:00:00Z"`)
+		}
+		if done, err := runner.consumeEvent(t.Context(), next); err != nil || !done {
+			t.Fatalf("收尾失败：%v %v", done, err)
+		}
+		if adapter.attempts != 2 || !adapter.last.Ended || adapter.last.Status != "已结束授权" || adapter.last.StopValue != nil {
+			t.Fatalf("授权卡重试或终态异常：%d %+v", adapter.attempts, adapter.last)
+		}
 	}
 }

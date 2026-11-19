@@ -1,4 +1,5 @@
 import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
+import { canonicalJson } from "../ccrv2/json-equality.ts";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -16,8 +17,10 @@ import { object, type Payload } from "../json.ts";
 import { type RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
 
-export function mcpInvocation(tool: RemoteTool, args: Payload): string {
-  return createHash("sha256").update(JSON.stringify([tool.name, tool.inputSchema, !!tool.readOnly, args])).digest("hex");
+export function mcpInvocation(tool: RemoteTool, args: Payload, legacy = false): string {
+  const input = [tool.name, tool.inputSchema, !!tool.readOnly, args];
+  const digest = createHash("sha256").update(JSON.stringify(legacy ? input : canonicalJson(input))).digest("hex");
+  return legacy ? digest : "v2:" + digest;
 }
 
 export function connectedTools(tools: RemoteTool[]): string {

@@ -63,8 +63,9 @@ export function validateAssignment(a: Assignment): void {
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
   validateModels(a.launch.models);
-  const tools = new Set([...sandboxToolDefinitions(), ...cliTools, ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
-  tools.add("ask_user_question");
+  const childTools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
+  childTools.add("ask_user_question");
+  const tools = new Set([...childTools, ...cliTools.map(tool => tool.name)]);
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");
@@ -81,7 +82,7 @@ export function validateAssignment(a: Assignment): void {
         || typeof agent.description !== "string" || typeof agent.systemPrompt !== "string"
         || (agent.model !== undefined && (typeof agent.model !== "string" || !agent.model))
         || (agent.tools !== undefined && (!Array.isArray(agent.tools)
-          || agent.tools.some((name) => !tools.has(name)))))
+          || agent.tools.some((name) => !childTools.has(name)))))
         throw new Error("Invalid subagent definition");
       names.add(agent.name);
     }

@@ -31,6 +31,11 @@ func (r *replyRunner) detachOAuthCard(ctx context.Context, view *contracts.Reply
 		if r.oauthCards[id] == "" {
 			action.Value.SourceID = r.task.delivery.ReplyMessageID
 			card := contracts.Reply{Title: "连接 " + name, Status: "等待授权", OAuthOrigin: view.OAuthOrigin, Interactions: []contracts.Interaction{action}, DeliveryKey: id}
+			if view.StopValue != nil {
+				stop := *view.StopValue
+				stop.SourceID = action.Value.SourceID
+				card.StopValue = &stop
+			}
 			stream, err := r.worker.adapter.OpenReply(ctx, r.msg, card)
 			if err != nil {
 				return err
@@ -81,7 +86,7 @@ func (r *replyRunner) settleOAuthCards(ctx context.Context, event omaEvent) erro
 					status = "已连接"
 				}
 			}
-		} else if !terminalEvent(event) && event.Type != "user.interrupt" {
+		} else if !r.task.terminal && !terminalEvent(event) && event.Type != "user.interrupt" {
 			continue
 		}
 		var input codesessions.OAuthRequest
@@ -89,7 +94,7 @@ func (r *replyRunner) settleOAuthCards(ctx context.Context, event omaEvent) erro
 			return err
 		}
 		stream := r.worker.adapter.ResumeReply(receipt)
-		if err := stream.Update(ctx, contracts.Reply{Title: "连接 " + oauthServiceName(input), Status: status, Ended: true, Blocks: []contracts.ReplyBlock{{Text: status}}}); err != nil {
+		if err := updateChannelReply(ctx, stream, contracts.Reply{Title: "连接 " + oauthServiceName(input), Status: status, Ended: true, Blocks: []contracts.ReplyBlock{{Text: status}}}); err != nil {
 			return err
 		}
 		if status == "已连接" {

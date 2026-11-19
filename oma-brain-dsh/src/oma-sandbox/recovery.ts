@@ -33,12 +33,11 @@ async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortS
   }
 }
 
-export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, mcp?: {config:unknown;fetcher:typeof fetch}): Promise<void> {
+export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, loadMcp?: () => Promise<{config:unknown;fetcher:typeof fetch}>): Promise<void> {
   if (!await ctx.get("sessionPersistence")!.stat(SessionId(id))) return;
   const handle = await ctx.get("sessionPersistence")!.open(SessionId(id), "write");
   try {
     const { events } = await handle.read();
-    const servers = externalServers(mcp?.config);
     const authorizations = new Map<string, Payload>();
     const pending = new Map<string, Extract<SessionEvent, { type: "tool/call" }>>();
     for (const event of events) {
@@ -58,7 +57,9 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
       await handle.flush();
       await ctx.ccrReplication.flush(id);
     }
-    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (mcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
+    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (loadMcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
+    const mcp = calls.some(([, event]) => event.data.name.startsWith("mcp__")) ? await loadMcp?.() : undefined;
+    const servers = externalServers(mcp?.config);
     const settled = await Promise.all(calls.map(async ([callId, event]) => {
       const state = authorizations.get(callId);
       if (state && event.data.name.startsWith("mcp__") && mcp) {

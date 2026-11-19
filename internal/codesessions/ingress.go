@@ -770,7 +770,10 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
-	var permissions toolPermissionSnapshot
+	var permissions struct {
+		toolPermissionSnapshot
+		clitools.OAuthConfig
+	}
 	if len(metadata.Config) > 0 {
 		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
 			return nil, err
@@ -780,7 +783,7 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	tools := catalog.runtimeTools(permissions.Tools)
 	if slices.Contains(tools, "Bash") {
 		for _, cli := range clitools.Bindings {
-			if cliOAuthProvider(config, cli.Variable) != "" {
+			if permissions.Provider(cli.Variable) != "" {
 				tools = append(tools, cli.Name)
 			}
 		}
@@ -899,18 +902,6 @@ func codeSessionWorkerSSEEventID(event db.CodeSessionEvent) string {
 		}
 	}
 	return event.ExternalID
-}
-
-func cliOAuthProvider(config map[string]any, variable string) string {
-	if provider := stringField(objectField(config, "cli_oauth_providers"), variable); provider != "" {
-		return provider
-	}
-	for _, cli := range clitools.Bindings {
-		if variable == cli.Variable {
-			return stringField(config, cli.LegacyProviderKey)
-		}
-	}
-	return ""
 }
 
 func codeSessionConfig(metadata json.RawMessage) map[string]any {

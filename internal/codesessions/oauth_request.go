@@ -14,18 +14,19 @@ import (
 )
 
 type OAuthRequest struct {
-	CheckOnly     bool   `json:"-"`
-	ResumeEventID string `json:"-"`
-	Kind          string `json:"kind"`
-	Provider      string `json:"provider,omitempty"`
-	TargetHost    string `json:"target_host,omitempty"`
-	ProviderName  string `json:"provider_name,omitempty"`
-	SecretName    string `json:"secret_name,omitempty"`
-	MCPServerName string `json:"mcp_server_name,omitempty"`
-	MCPServerURL  string `json:"mcp_server_url,omitempty"`
-	ParentCallID  string `json:"parent_call_id"`
-	Reason        string `json:"reason"`
-	InvocationID  string `json:"invocation_id,omitempty"`
+	CheckOnly      bool   `json:"-"`
+	ResumeThreadID string `json:"-"`
+	ResumeEventID  string `json:"-"`
+	Kind           string `json:"kind"`
+	Provider       string `json:"provider,omitempty"`
+	TargetHost     string `json:"target_host,omitempty"`
+	ProviderName   string `json:"provider_name,omitempty"`
+	SecretName     string `json:"secret_name,omitempty"`
+	MCPServerName  string `json:"mcp_server_name,omitempty"`
+	MCPServerURL   string `json:"mcp_server_url,omitempty"`
+	ParentCallID   string `json:"parent_call_id"`
+	Reason         string `json:"reason"`
+	InvocationID   string `json:"invocation_id,omitempty"`
 }
 
 func (r OAuthRequest) Validate() error {

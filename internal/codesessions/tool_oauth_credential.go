@@ -8,11 +8,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +19,7 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if scope.ThreadID != "root" || h.oauthCredentials == nil || h.prepareEnvOAuth == nil {
+	if scope.ThreadID == "" || h.oauthCredentials == nil || h.prepareEnvOAuth == nil {
 		h.errorAdapter.Write(w, r, sandboxToolDenied())
 		return
 	}
@@ -41,6 +40,10 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 	}
 	resume := r.URL.Query().Get("resume") == "1"
 	if input.Kind == "env_oauth" {
+		if scope.ThreadID != "root" {
+			h.errorAdapter.Write(w, r, sandboxToolDenied())
+			return
+		}
 		policies, err := h.service.currentRuntimeToolPolicies(ctx, code, "")
 		if err != nil {
 			h.errorAdapter.Write(w, r, toolCallOperationError(err))
@@ -55,7 +58,14 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 			httpapi.WriteError(w, r, httpapi.NewError(400, "invalid_request_error", "调用参数摘要无效"))
 			return
 		}
-		providerKey := cliOAuthProvider(codeSessionConfig(code.Metadata), input.SecretName)
+		var snapshot struct {
+			Config clitools.OAuthConfig `json:"config"`
+		}
+		if err := json.Unmarshal(code.Metadata, &snapshot); err != nil {
+			h.errorAdapter.Write(w, r, toolCallOperationError(err))
+			return
+		}
+		providerKey := snapshot.Config.Provider(input.SecretName)
 		if providerKey == "" || (input.Provider != "" && input.Provider != providerKey) {
 			h.errorAdapter.Write(w, r, sandboxToolDenied())
 			return
@@ -72,7 +82,16 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if resume {
-		input.ResumeEventID, err = h.toolOAuthResumeEvent(ctx, code, *input)
+		threadID := ""
+		if scope.ThreadID != "root" {
+			threadID = scope.ThreadID
+			if _, err := h.loadMCPThreadSnapshot(ctx, code, threadID); err != nil {
+				h.errorAdapter.Write(w, r, toolCallOperationError(err))
+				return
+			}
+		}
+		input.ResumeEventID, err = h.toolOAuthResumeEvent(ctx, code, *input, threadID)
+		input.ResumeThreadID = threadID
 		if err != nil {
 			h.errorAdapter.Write(w, r, err)
 			return
@@ -83,24 +102,14 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.oauthCredentials(ctx, code, *input, h.prepareEnvOAuth)
 	if err != nil {
-		if _, ok := errors.AsType[*apperr.Error](err); !ok {
-			switch {
-			case errors.Is(err, vaults.ErrCredentialAuthorizationManaged), errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired):
-				err = apperr.New(apperr.Conflict, "工具授权未就绪", err)
-			case errors.Is(err, db.ErrNotFound):
-				err = toolCallOperationError(err)
-			default:
-				err = apperr.New(apperr.Unavailable, "暂时无法读取工具授权", err)
-			}
-		}
-		h.errorAdapter.Write(w, r, err)
+		h.errorAdapter.Write(w, r, toolOAuthCredentialError(err))
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, result)
 }
 
-func (h *Handler) toolOAuthResumeEvent(ctx context.Context, code db.CodeSession, input OAuthRequest) (string, error) {
-	eventID := maevents.ToolUseEventID(code.ExternalID, input.ParentCallID+":oauth:"+cmp.Or(input.Provider, input.MCPServerName), "")
+func (h *Handler) toolOAuthResumeEvent(ctx context.Context, code db.CodeSession, input OAuthRequest, threadID string) (string, error) {
+	eventID := maevents.ToolUseEventID(code.ExternalID, input.ParentCallID+":oauth:"+cmp.Or(input.Provider, input.MCPServerName), threadID)
 	event, err := h.db.GetSessionEvent(ctx, code.WorkspaceUUID, code.SessionExternalID, eventID)
 	if errors.Is(err, db.ErrNotFound) && input.Kind == "env_oauth" {
 		eventID = maevents.ToolUseEventID(code.ExternalID, input.toolUseID(), "")

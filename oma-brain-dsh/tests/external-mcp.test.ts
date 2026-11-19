@@ -33,7 +33,7 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
   const listRequested = Promise.withResolvers<void>();
   const listCompleted = Promise.withResolvers<void>();
   const listAborted = Promise.withResolvers<void>();
-  const dispatched = Promise.withResolvers<void>();
+  let dispatched = Promise.withResolvers<void>();
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const disconnected = Promise.withResolvers<void>();
   const server = Bun.serve({
@@ -151,13 +151,14 @@ function peer(transport: "http" | "sse" | "fallback" = "http", serverName = "pee
     httpRequests,
     output: (text: string) => { outputText = text; },
     content: (blocks: Payload[]) => { outputContent = blocks; },
-    dispatched: dispatched.promise,
+    get dispatched() { return dispatched.promise; },
     disconnected: disconnected.promise,
     listRequested: listRequested.promise,
     listCompleted: listCompleted.promise,
     listAborted: listAborted.promise,
     holdDiscovery: (until: Promise<void>) => { discoveryHold = until; },
     hangCall: () => {
+      dispatched = Promise.withResolvers<void>();
       hangCall = true;
     },
     config: {
@@ -1198,7 +1199,9 @@ test("MCP 重新授权后仅以获准参数派发一次，未知结果保留", a
     const sandbox = new SandboxCalls(api,backend.a.session_id);
     const [tool] = await client.discover(signal);
     const args = {url:"https://docs.example/test"};
-    const state = {invocation:mcpInvocation(tool!,args),dispatched:false};
+    const reordered = {...tool!, inputSchema:Object.fromEntries(Object.entries(tool!.inputSchema).reverse())};
+    const state = {invocation:mcpInvocation(reordered,args),dispatched:false};
+    expect(state.invocation).toBe(mcpInvocation(tool!,args));
     const call = {callId:"original",name:tool!.name,arguments:JSON.stringify(args)};
     const run = () => recoverMcpOAuth(call,state,server,fetch,sandbox,signal,async id => {
       expect(id).toBe(call.callId);
@@ -1211,5 +1214,13 @@ test("MCP 重新授权后仅以获准参数派发一次，未知结果保留", a
     expect((await run()).isError).toBe(false);
     expect((await run()).errorCode).toBe("TOOL_OUTCOME_UNKNOWN");
     expect(p.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
+    const interrupt = new AbortController();
+    const legacy = {invocation: mcpInvocation(tool!,args,true)};
+    p.hangCall();
+    const recovered = recoverMcpOAuth(call,legacy,server,fetch,sandbox,signal,async () => {}, "sthr_reader",
+      {interrupt:interrupt.signal,blocking(){}});
+    await p.dispatched;
+    interrupt.abort();
+    expect((await recovered).errorCode).toBe("TOOL_OUTCOME_UNKNOWN");
   } finally {await client.close();backend.stop();p.close();}
 });

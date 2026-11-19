@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
@@ -205,6 +207,9 @@ func (w *channelWorker) cardActionReceipt(ctx context.Context, value channelActi
 			return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
 		}
 		valid := value.Kind == "cancel_oauth" && receipts.OAuthCards[value.ToolUseID] == messageID
+		if value.Kind == "stop" && value.ToolUseID == row.InputEventID {
+			valid = slices.Contains(slices.Collect(maps.Values(receipts.OAuthCards)), messageID)
+		}
 		for _, id := range receipts.Continuations {
 			valid = valid || id == messageID
 		}

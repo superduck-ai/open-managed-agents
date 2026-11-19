@@ -242,3 +242,25 @@ func mapSkillReferenceValidationError(err error) error {
 	}
 	return internalError("Could not validate Session Skill references", fmt.Errorf("validate Session Skill references: %w", err))
 }
+
+func oauthWaitCancelled() error { return apperr.New(apperr.Conflict, "OAuth 等待已取消", nil) }
+
+func oauthAuthorizationIncomplete() error {
+	return apperr.New(apperr.Conflict, "OAuth 授权未完成", nil)
+}
+
+func oauthAuthorizationUnconfirmed() error {
+	return apperr.New(apperr.Conflict, "OAuth 授权未确认", nil)
+}
+
+func oauthCredentialNotReady() error {
+	return apperr.New(apperr.Conflict, "OAuth 凭据未就绪", nil)
+}
+
+func oauthBoundToEnvironmentCredential() error {
+	return apperr.New(apperr.Conflict, "当前变量已绑定普通环境凭据", nil)
+}
+
+func oauthBoundToDifferentProvider() error {
+	return apperr.New(apperr.Conflict, "当前变量已绑定其他 OAuth 连接", nil)
+}

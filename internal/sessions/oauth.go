@@ -7,7 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -94,11 +93,7 @@ func (h *Handler) waitForOAuthResult(ctx context.Context, code db.CodeSession, i
 	if !found {
 		return nil, db.ErrNotFound
 	}
-	thread, err := h.ensurePrimarySessionThread(ctx, session)
-	if err != nil {
-		return nil, err
-	}
-	subscription, err := h.subscribeSession(ctx, session, newStreamConnection(thread.ExternalID, true, nil), StreamOptions{AfterEventID: input.ResumeEventID})
+	subscription, err := h.subscribeSessionThread(ctx, session, StreamOptions{ThreadID: input.ResumeThreadID, AfterEventID: input.ResumeEventID})
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +118,7 @@ func (h *Handler) waitForOAuthResult(ctx context.Context, code db.CodeSession, i
 			continue
 		}
 		if event.EventType == "user.interrupt" || event.EventType == "session.status_terminated" {
-			return nil, apperr.New(apperr.Conflict, "OAuth 等待已取消", nil)
+			return nil, oauthWaitCancelled()
 		}
 		if event.EventType != "user.custom_tool_result" {
 			continue
@@ -142,17 +137,17 @@ func (h *Handler) waitForOAuthResult(ctx context.Context, code db.CodeSession, i
 			continue
 		}
 		if result.IsError {
-			return nil, apperr.New(apperr.Conflict, "OAuth 授权未完成", nil)
+			return nil, oauthAuthorizationIncomplete()
 		}
 		if len(result.Content) != 1 || !codesessions.OAuthGranted(result.Content[0].Text) {
-			return nil, apperr.New(apperr.Conflict, "OAuth 授权未确认", nil)
+			return nil, oauthAuthorizationUnconfirmed()
 		}
 		if input.Kind == "mcp_oauth" {
 			return json.RawMessage(`{"authorized":true}`), nil
 		}
 		resultJSON, err := h.oauthEnvironmentResult(ctx, code, input, prepare, true)
 		if err == nil && resultJSON == nil {
-			err = apperr.New(apperr.Conflict, "OAuth 凭据未就绪", nil)
+			err = oauthCredentialNotReady()
 		}
 		return resultJSON, err
 	}
@@ -173,7 +168,7 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 		}
 		if credential.AuthType == "environment_variable" && input.Provider != "" {
 			if scope.PinBindings {
-				return nil, apperr.New(apperr.Conflict, "当前变量已绑定普通环境凭据", nil)
+				return nil, oauthBoundToEnvironmentCredential()
 			}
 			continue
 		}
@@ -184,7 +179,7 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 			}
 			if provider != input.Provider {
 				if scope.PinBindings {
-					return nil, apperr.New(apperr.Conflict, "当前变量已绑定其他 OAuth 连接", nil)
+					return nil, oauthBoundToDifferentProvider()
 				}
 				continue
 			}

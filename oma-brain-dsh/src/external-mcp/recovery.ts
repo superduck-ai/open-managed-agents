@@ -28,7 +28,7 @@ export async function recoverMcpOAuth(
   const connect =
     state.discovery === true && name === `mcp__${server?.prefix}__connect`;
 
-  if (!server || state.dispatched || (!connect && !state.invocation))
+  if (!server || state.dispatched || (!connect && typeof state.invocation !== "string"))
     return failure("TOOL_OUTCOME_UNKNOWN", CANCELLATION_UNCONFIRMED);
   recovery?.blocking();
   const waiting = recovery
@@ -59,18 +59,20 @@ export async function recoverMcpOAuth(
     return failure("TOOL_NOT_STARTED", "原连接未获授权。");
   }
   const client = new ExternalMcpClient(server, fetcher);
+  let dispatched = false;
   try {
     const tools = await client.discover(waiting);
     if (connect)
       return { content: [{ type: "text", text: connectedTools(tools) }] };
     const current = tools.find((tool) => tool.name === name);
     const args = JSON.parse(call.arguments);
-    if (!current || mcpInvocation(current, args) !== state.invocation)
+    if (!current || mcpInvocation(current, args, !state.invocation.startsWith("v2:")) !== state.invocation)
       return failure(
         "TOOL_NOT_STARTED",
         "工具定义或获准参数已变化，原操作未重放。",
       );
     await markDispatched(callId);
+    dispatched = true;
     const result = await persistToolOutput(
       await client.call(current, args, waiting),
       sandbox,
@@ -78,6 +80,12 @@ export async function recoverMcpOAuth(
       { threadId },
     );
     return result;
+  } catch (error) {
+    signal.throwIfAborted();
+    if (!recovery?.interrupt.aborted) throw error;
+    return dispatched
+      ? failure("TOOL_OUTCOME_UNKNOWN", CANCELLATION_UNCONFIRMED)
+      : failure("TOOL_NOT_STARTED", "原连接已中断。");
   } finally {
     await client.close();
   }

@@ -71,7 +71,7 @@ func managedAgentSessionConfig(
 		if err != nil {
 			return nil, err
 		}
-		providers := map[string]string{}
+		providers := clitools.OAuthProviders{}
 		for _, cli := range clitools.Bindings {
 			if provider := variables[cli.ProviderVariable]; provider != "" {
 				providers[cli.Variable] = provider

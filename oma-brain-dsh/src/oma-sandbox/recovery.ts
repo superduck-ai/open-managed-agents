@@ -11,7 +11,7 @@ import type { SandboxRecovery } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
 import type { Payload } from "../json.ts";
 
-const names = new Set(["Bash", "Read", "Write", "Edit", "Grep", "Glob"]);
+const names = new Set(["Friday", "Bash", "Read", "Write", "Edit", "Grep", "Glob"]);
 
 async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery): Promise<Payload> {
   const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;

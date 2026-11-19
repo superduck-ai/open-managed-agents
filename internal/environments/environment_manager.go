@@ -65,6 +65,15 @@ func managedAgentSessionConfig(
 		"worker_transport":      runtimeResources.workerTransport,
 		"sandbox_memory_stores": memoryStoreDefinitions(runtimeResources.memoryMounts),
 	}
+	if len(runtimeResources.environmentConfig) > 0 {
+		variables, err := environmentVariablesFromConfig(runtimeResources.environmentConfig)
+		if err != nil {
+			return nil, err
+		}
+		if provider := variables["OMA_FRIDAY_OAUTH_PROVIDER"]; provider != "" {
+			body["friday_oauth_provider"] = provider
+		}
+	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
 		body["system_prompt"] = system
 	}

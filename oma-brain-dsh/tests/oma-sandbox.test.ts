@@ -247,3 +247,29 @@ test("call deadlines leave time for Bash background handoff and process exit", (
   expect(sandboxCallTimeoutMs(bash, {})).toBe(150_000);
   expect(sandboxCallTimeoutMs(tools.find(tool => tool.name === "Read")!, {})).toBe(180_000);
 });
+
+test("Friday 只在授权成功后用原调用 ID 提交 CLI", async () => {
+  const submissions: Payload[] = [];
+  let authorized = false;
+  const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.url.endsWith("/original/friday-oauth"))
+      return authorized ? Response.json({ authorized, placeholder: "oma_ph_test" }) : new Response(null, { status: 409 });
+    if (request.method === "POST") {
+      submissions.push(await request.json());
+      return Response.json({ state: "pending" });
+    }
+    return Response.json({ state: "succeeded", result: { content: [{ type: "text", text: "完成" }] } });
+  }, { preconnect: fetch.preconnect }));
+  const a = assignment();
+  api.assignments.set(a.session_id, a);
+  const executor = new SandboxCalls(api, a.session_id);
+  const tool = { name: "Friday", remoteName: "friday", inputSchema: {}, description: "" };
+  const run = () => executor.call(tool, { args: ["app", "list"] }, new AbortController().signal, undefined, "original");
+  await expect(run()).rejects.toThrow("CLI 尚未启动");
+  expect(submissions).toHaveLength(0);
+  authorized = true;
+  await run();
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0]).toMatchObject({ call_id: "original", tool: "bash", input: { env: { FRIDAY_4A_TOKEN: "oma_ph_test" } } });
+});

@@ -46,6 +46,30 @@ export class SandboxCalls implements SandboxExecutor {
   async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload> {
     if (!callId) throw new Error("Sandbox call requires a native call ID");
     signal.throwIfAborted();
+    if (tool.remoteName === "friday") {
+      const argv = args.args;
+      if (threadId && threadId !== "root" || Object.keys(args).length !== 1 || !Array.isArray(argv)
+        || !["app", "mart", "event", "schema", "meta", "chart", "property", "dashboard", "analysis", "sql", "log"].includes(argv[0])
+        || argv.some(arg => typeof arg !== "string" || arg.includes("\0") || /^--(api-key|base-url|proxy-auth|skip-ssl-verify)(=|$)/.test(arg)))
+        throw new ToolNotForwardedError("Friday 查询参数无效");
+      const path = this.path(callId, threadId) + "/friday-oauth";
+      let grant: Payload;
+      try {
+        grant = await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", {},
+          this.api.traceHeaders(this.sessionId), signal, 0);
+      } catch (error) {
+        signal.throwIfAborted();
+        throw new ToolNotForwardedError("Friday 授权检查失败，CLI 尚未启动。", { cause: error });
+      }
+      if (grant.authorized !== true || typeof grant.placeholder !== "string" || !grant.placeholder)
+        throw new ToolNotForwardedError("Friday 授权未就绪");
+      const quoted = argv.map(arg => "'" + arg.replaceAll("'", "'\\''") + "'").join(" ");
+      tool = { ...tool, remoteName: "bash" };
+      args = {
+        command: 'set -e; FRIDAY_CLI_CONFIG_DIR="$(mktemp -d)"; export FRIDAY_CLI_CONFIG_DIR; trap \'rm -rf "$FRIDAY_CLI_CONFIG_DIR"\' EXIT; unset FRIDAY_API_KEY OMA_FRIDAY_OAUTH_PROVIDER OMA_TOOL_CALL_ID; "${OMA_FRIDAY_EXECUTABLE:-friday}" ' + quoted,
+        env: { FRIDAY_BASE_URL: "https://friday-tx.seewo.com", FRIDAY_PROXY_AUTH: "0", FRIDAY_SKIP_SSL_VERIFY: "false", FRIDAY_4A_TOKEN: grant.placeholder },
+      };
+    }
     try {
       await this.request(this.path("", threadId), "POST", { call_id: callId, tool: tool.remoteName, input: args, timeout_ms: sandboxCallTimeoutMs(tool, args) }, signal);
       return normalizeSandboxResult(await this.wait(callId, signal, threadId), tool.name);

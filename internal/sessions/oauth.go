@@ -148,6 +148,12 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 		if credential.AuthType != "env_oauth" && credential.AuthType != "environment_variable" || credential.CredentialKey != input.SecretName {
 			continue
 		}
+		if credential.AuthType == "environment_variable" && input.Provider != "" {
+			if scope.PinBindings {
+				return nil, errors.New("当前变量已绑定普通环境凭据")
+			}
+			continue
+		}
 		if credential.AuthType == "env_oauth" {
 			provider, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
 			if err != nil {

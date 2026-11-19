@@ -164,7 +164,7 @@ Friday 入口可只声明变量名与目标域名。已有匹配的挂载凭据�
 - MCP 的未授权服务按需发现；普通 403 和没有 OAuth challenge 的 401 不触发连接。只读或明确未转发的调用才允许重发，定义变化和结果未知写操作不重放。
 - main 新增工作区 OAuth 提供方后，本分支渠道迁移顺排为 `00147` 至 `00153`；本次交接字段迁移为 `00154`。这不修改 main 已发布迁移。
 
-## CLI 入口与工具预算
+## 旧版 Bash 脚本入口与工具预算
 
 `scripts/friday-oauth.py` 作为环境中的 `friday` 入口。原 CLI 通过 `OMA_FRIDAY_EXECUTABLE` 指定，或从排除入口自身的 PATH 中查找。`OMA_FRIDAY_OAUTH_PROVIDER` 为已有 ENV OAuth 提供方引用，`FRIDAY_BASE_URL` 指向服务地址。提供方的默认变量必须为 `FRIDAY_4A_TOKEN`。令牌保存于原生 Vault，进入沙箱的只有占位符；验收中的非敏感入口参数由命令显式指定，不修改 Environment 变量传递链路，没有新增渠道配置表或凭据类型。
 
@@ -204,3 +204,9 @@ Manager 通过原工具执行上下文传入当前调用 ID 和 UUID。入口经
 迁移156仅回填身份字段齐全、且旧vlt_channel_标识与历史派生规则完全一致的记录；普通Vault的可编辑metadata不构成身份凭据，也不会因缺字段或重复声明身份阻断升级。此校验只承接旧数据，新Vault仍使用原生vlt_标识。删除Vault后，渠道在原工作区事务锁下重建原生Vault并替换已失效的关联；原会话仍引用旧挂载时切换到新会话，不改写旧执行历史。归档仍明确阻断，不自动换身份。迁移159只为存在真实渠道绑定、组织和工作区一致的旧群聊补齐first_vault模式，保留原Session、上下文及共享挂载，不给群聊补个人Vault。
 
 普通消息、/resume恢复和无参数/resume的历史列表共用挂载兼容性判断：入口按当前消息操作者解析一次原生Vault关联，并把该Vault ID作为可信期望值传入。历史会话自带的personal_vault_id不能作为期望身份；关联已重建的旧会话不出现在可恢复列表，也不会先提示恢复成功再切换会话。关联读取失败时明确停止，不回退到历史声明。
+
+### Friday 查询工具
+
+在会话环境的环境变量中设置 `OMA_FRIDAY_OAUTH_PROVIDER`，值为原生 ENV OAuth 客户端引用。环境应安装 Friday CLI。带有此配置的新 DSH 主会话启用 Bash 后可使用 Friday 工具，例如传入 `{"args":["app","list"]}`。工具沿用 Bash 执行权限。
+
+OMA 在提交 CLI 前读取会话环境的客户端引用，并检查 `FRIDAY_4A_TOKEN` 和目标主机 `friday-tx.seewo.com`。渠道沿用当前操作者、个人 Vault 和显式共享挂载的凭据范围。需要授权时，原生会话发布 OAuth 请求。授权完成后，工具使用原调用 ID 提交 Bash，沙箱只接收凭据占位符。Manager 按原有协议执行普通 Bash 调用。

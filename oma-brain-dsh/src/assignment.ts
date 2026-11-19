@@ -64,6 +64,7 @@ export function validateAssignment(a: Assignment): void {
   validateModels(a.launch.models);
   const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
   tools.add("ask_user_question");
+  tools.add("Friday");
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");

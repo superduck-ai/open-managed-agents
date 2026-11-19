@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -775,11 +776,15 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 		}
 	}
 	config := codeSessionConfig(record.Metadata)
+	tools := catalog.runtimeTools(permissions.Tools)
+	if stringField(config, "friday_oauth_provider") != "" && slices.Contains(tools, "Bash") {
+		tools = append(tools, "Friday")
+	}
 	return map[string]any{
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
-		"runtime_tools":            catalog.runtimeTools(permissions.Tools),
+		"runtime_tools":            tools,
 		"runtime_tool_permissions": catalog.toolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],
 		"outcomes":                 arrayConfigValue(config["outcomes"]),

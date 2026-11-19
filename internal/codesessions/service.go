@@ -101,6 +101,11 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	}
 }
 
+func (s *Service) WithCLITools(tools []clitools.Binding) *Service {
+	s.cliTools = tools
+	return s
+}
+
 // WithWorkerEventBroker wires the live transport copy of durable inbound events.
 func (s *Service) WithWorkerEventBroker(broker workerevents.Broker) *Service {
 	if s != nil && broker != nil {

@@ -178,6 +178,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	// runner 与 worker-event 过期处置共享同一个 code-session Service，
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
+		WithCLITools(cfg.CLITools).
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
 		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).

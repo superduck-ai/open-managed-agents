@@ -167,6 +167,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	billingCalculator := deps.DB.BillingCalculator()
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
+		WithCLITools(deps.Config.CLITools).
 		WithSandboxProvisioner(deps.SandboxProvisioner).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).

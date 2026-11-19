@@ -113,6 +113,23 @@
         AND status = 'active' AND revision = #{params.ExpectedRevision}
     </update>
 
+    <select id="ListCleanupIdentityConfigs" resultType="IdentityConfigRecord">
+        SELECT <include refid="configColumns"/>
+        FROM identity_configs
+        WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID}
+        AND status IN ('active', 'archived')
+        <if test="cursor != ''">AND external_id &lt; #{cursor}</if>
+        ORDER BY external_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="CleanupEffects" resultType="CleanupEffectCounts">
+        SELECT
+            (SELECT count(*) FROM identity_configs WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'archived') AS archived_configs,
+            (SELECT count(*) FROM channel_pairings WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'unbound') AS unbound_pairings,
+            (SELECT count(*) FROM channels WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND identity_resolution_mode = 'fixed' AND entry_closed = true AND deleted_at IS NULL) AS closed_entries
+    </select>
+
     <update id="ArchiveIdentityConfigs" result="rows">
         UPDATE identity_configs SET status = 'archived', updated_at = now()
         WHERE workspace_uuid = #{workspaceUUID} AND identity_uuid = #{identityUUID} AND status = 'active'
@@ -260,19 +277,19 @@
     <insert id="InsertSessionIdentity" result="exec">
         INSERT INTO session_identity_bindings (
             uuid, organization_uuid, workspace_uuid, session_uuid, session_external_id, identity_uuid,
-            agent_external_id, binding_revision, config_revision, personal_vault_external_id,
+            agent_external_id, binding_revision, config_revision, pairing_external_id, personal_vault_external_id,
             scope_kind, scope_key, channel_external_id
         ) VALUES (
             #{params.UUID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.SessionUUID},
             #{params.SessionExternalID}, #{params.IdentityUUID}, #{params.AgentExternalID},
-            #{params.BindingRevision}, #{params.ConfigRevision}, #{params.PersonalVaultID},
+            #{params.BindingRevision}, #{params.ConfigRevision}, #{params.PairingExternalID}, #{params.PersonalVaultID},
             #{params.ScopeKind}, #{params.ScopeKey}, #{params.ChannelExternalID}
         )
     </insert>
 
     <select id="FindSessionIdentity" result="optional" resultType="SessionIdentityRecord">
         SELECT b.session_uuid, b.session_external_id, b.identity_uuid, b.agent_external_id,
-            b.binding_revision, b.config_revision, b.personal_vault_external_id, b.scope_kind,
+            b.binding_revision, b.config_revision, b.pairing_external_id, b.personal_vault_external_id, b.scope_kind,
             b.scope_key, b.channel_external_id, s.status AS session_status, b.created_at
         FROM session_identity_bindings b
         JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid
@@ -282,7 +299,7 @@
 
     <select id="ListIdentitySessions" resultType="SessionIdentityRecord">
         SELECT b.session_uuid, b.session_external_id, b.identity_uuid, b.agent_external_id,
-            b.binding_revision, b.config_revision, b.personal_vault_external_id, b.scope_kind,
+            b.binding_revision, b.config_revision, b.pairing_external_id, b.personal_vault_external_id, b.scope_kind,
             b.scope_key, b.channel_external_id, s.status AS session_status, b.created_at
         FROM session_identity_bindings b
         JOIN sessions s ON s.uuid = b.session_uuid AND s.workspace_uuid = b.workspace_uuid

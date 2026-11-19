@@ -18,6 +18,8 @@ type Store interface {
 	CreateIdentityConfig(context.Context, db.InsertIdentityConfigParams) (db.IdentityConfigRecord, error)
 	FindActiveIdentityConfig(context.Context, string, string, string) (db.IdentityConfigRecord, error)
 	ListIdentityConfigs(context.Context, string, string, string, string, int) ([]db.IdentityConfigRecord, error)
+	ListCleanupIdentityConfigs(context.Context, string, string, string, int) ([]db.IdentityConfigRecord, error)
+	CleanupEffects(context.Context, string, string) (db.CleanupEffectCounts, error)
 	UpdateIdentityConfig(context.Context, db.UpdateIdentityConfigParams) error
 	ArchiveIdentityConfigs(context.Context, string, string) (int64, error)
 	FindExecutionContext(context.Context, string, string) (db.ExecutionContextRecord, error)

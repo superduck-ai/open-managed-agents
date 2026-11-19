@@ -119,6 +119,6 @@ func ResolveEnvOAuthCredentialProvider(ctx context.Context, service *secrets.Ser
 		AuthorizeEndpoint: custom.AuthorizeEndpoint, TokenEndpoint: custom.TokenEndpoint, Scope: custom.Scope,
 		ClientID: custom.ClientID, ClientSecret: custom.ClientSecret,
 		TokenEndpointAuthMethod: cmp.Or(custom.TokenEndpointAuthMethod, "client_secret_post"), TokenEndpointEncoding: "form",
-		DefaultSecretName: credential.CredentialKey, DefaultAllowedHosts: hosts,
+		DefaultSecretName: credential.CredentialKey, DefaultAllowedHosts: hosts, NetworkingType: public.Networking.Type,
 	}, nil
 }

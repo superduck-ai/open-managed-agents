@@ -80,7 +80,7 @@ func PlanCredentials(input CredentialInput) (CredentialSet, error) {
 		return set, nil
 	}
 	if !input.PersonalActive {
-		return CredentialSet{}, errors.New("personal vault unavailable")
+		return CredentialSet{}, errPersonalVaultUnavailable
 	}
 	set.PersonalVaultID = input.PersonalVault
 	if !slices.Contains(set.VaultIDs, input.PersonalVault) {

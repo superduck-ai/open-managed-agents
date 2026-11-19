@@ -87,23 +87,22 @@ func (s *Service) ApplyCleanup(ctx context.Context, workspaceUUID, identityUUID 
 		shared = listed
 	}
 	outcome := CleanupOutcome{RetainedSharedVaults: append([]string{}, shared...), PersonalVaultsDeleted: false}
-	archived, err := s.store.ArchiveIdentityConfigs(ctx, workspaceUUID, identityUUID)
-	if err != nil {
+	if _, err := s.store.ArchiveIdentityConfigs(ctx, workspaceUUID, identityUUID); err != nil {
 		outcome.Failures = append(outcome.Failures, "archive identity config failed")
-	} else {
-		outcome.ArchivedConfigs = int(archived)
 	}
-	unbound, err := s.store.UnbindIdentityPairings(ctx, workspaceUUID, identityUUID)
-	if err != nil {
+	if _, err := s.store.UnbindIdentityPairings(ctx, workspaceUUID, identityUUID); err != nil {
 		outcome.Failures = append(outcome.Failures, "unbind pairings failed")
-	} else {
-		outcome.UnboundPairings = int(unbound)
 	}
-	closed, err := s.store.CloseFixedIdentityEntries(ctx, workspaceUUID, identityUUID)
-	if err != nil {
+	if _, err := s.store.CloseFixedIdentityEntries(ctx, workspaceUUID, identityUUID); err != nil {
 		outcome.Failures = append(outcome.Failures, "close fixed entries failed")
+	}
+	effects, err := s.store.CleanupEffects(ctx, workspaceUUID, identityUUID)
+	if err != nil {
+		outcome.Failures = append(outcome.Failures, "read cleanup effects failed")
 	} else {
-		outcome.ClosedEntries = int(closed)
+		outcome.ArchivedConfigs = int(effects.ArchivedConfigs)
+		outcome.UnboundPairings = int(effects.UnboundPairings)
+		outcome.ClosedEntries = int(effects.ClosedEntries)
 	}
 	return FinishCleanup(outcome)
 }
@@ -113,7 +112,7 @@ func (s *Service) sharedVaults(ctx context.Context, workspaceUUID, identityUUID 
 	var ids []string
 	cursor := ""
 	for {
-		rows, err := s.store.ListIdentityConfigs(ctx, workspaceUUID, identityUUID, "", cursor, pageMax)
+		rows, err := s.store.ListCleanupIdentityConfigs(ctx, workspaceUUID, identityUUID, cursor, pageMax)
 		if err != nil {
 			return nil, err
 		}

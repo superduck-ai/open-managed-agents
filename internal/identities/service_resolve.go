@@ -40,6 +40,7 @@ type Decision struct {
 	IdentityExternalID string
 	BindingRevision    int64
 	ConfigRevision     int64
+	PairingExternalID  string
 	VaultIDs           []string
 	PersonalVaultID    string
 	ScopeKind          string
@@ -95,7 +96,7 @@ func (s *Service) resolveFixed(ctx context.Context, ingress Ingress, execution d
 		}
 	}
 	ingress.ScopeKind = ScopeKind(ingress.ChatType)
-	return s.finishDecision(ctx, ingress, identity, agentID, version, execution.Revision, ingress.ScopeKind)
+	return s.finishDecision(ctx, ingress, identity, agentID, version, execution.Revision, "", ingress.ScopeKind)
 }
 
 func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create bool) (Decision, error) {
@@ -123,7 +124,10 @@ func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create boo
 		}
 	}
 	if pairing.Status != "active" || pairing.IdentityUUID == nil {
-		notice := "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "。请管理员绑定后重新发送，本条消息不会执行。"
+		notice := "该范围尚未绑定执行身份。请先发送一条普通消息生成配对，再由管理员绑定。本条消息不会执行。"
+		if pairing.ExternalID != "" {
+			notice = "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "。请管理员绑定后重新发送，本条消息不会执行。"
+		}
 		if created {
 			notice = "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "，配对码 " + code + "，10 分钟内有效。请管理员绑定后重新发送，本条消息不会执行。"
 		}
@@ -143,11 +147,11 @@ func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create boo
 			return Decision{Mode: "hold", Notice: "配对的智能体版本不可用，未回退到最新版本，本条消息未执行。"}, nil
 		}
 	}
-	decision, err := s.finishDecision(ctx, ingress, identity, pairing.AgentExternalID, version, pairing.Revision, ingress.ScopeKind)
+	decision, err := s.finishDecision(ctx, ingress, identity, pairing.AgentExternalID, version, pairing.Revision, pairing.ExternalID, ingress.ScopeKind)
 	return decision, err
 }
 
-func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity db.IdentityRecord, agentID string, version int, bindingRevision int64, scopeKind string) (Decision, error) {
+func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity db.IdentityRecord, agentID string, version int, bindingRevision int64, pairingID, scopeKind string) (Decision, error) {
 	state := ConfigState{}
 	revision := int64(0)
 	cfg, err := s.store.FindActiveIdentityConfig(ctx, ingress.WorkspaceUUID, identity.UUID, agentID)
@@ -170,12 +174,15 @@ func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity 
 		ChatType: ingress.ChatType, SharedMounts: mounts, Availability: availability,
 		PersonalVault: ingress.PersonalVaultID, PersonalActive: ingress.PersonalActive,
 	})
+	if errors.Is(err, errPersonalVaultUnavailable) {
+		return Decision{Mode: "hold", Notice: "个人凭据不可用，本条消息未执行。"}, nil
+	}
 	if err != nil {
 		return Decision{Mode: "hold", Notice: "共享凭据不可用，未改用个人凭据，本条消息未执行。"}, nil
 	}
 	return Decision{
 		Mode: "execute", AgentExternalID: agentID, AgentVersion: version, IdentityUUID: identity.UUID,
-		IdentityExternalID: identity.ExternalID, BindingRevision: bindingRevision, ConfigRevision: revision,
+		IdentityExternalID: identity.ExternalID, BindingRevision: bindingRevision, ConfigRevision: revision, PairingExternalID: pairingID,
 		VaultIDs: credentials.VaultIDs, PersonalVaultID: credentials.PersonalVaultID,
 		ScopeKind: scopeKind, ScopeKey: ingress.ScopeKey,
 	}, nil

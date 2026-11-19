@@ -100,6 +100,14 @@ func (d *DB) ListIdentityConfigs(ctx context.Context, workspaceUUID, identityUUI
 	return NewIdentityMapper(d.mapperDB).ListIdentityConfigs(ctx, workspaceUUID, identityUUID, agentExternalID, cursor, limit)
 }
 
+func (d *DB) ListCleanupIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID, cursor string, limit int) ([]IdentityConfigRecord, error) {
+	return NewIdentityMapper(d.mapperDB).ListCleanupIdentityConfigs(ctx, workspaceUUID, identityUUID, cursor, limit)
+}
+
+func (d *DB) CleanupEffects(ctx context.Context, workspaceUUID, identityUUID string) (CleanupEffectCounts, error) {
+	return NewIdentityMapper(d.mapperDB).CleanupEffects(ctx, workspaceUUID, identityUUID)
+}
+
 func (d *DB) UpdateIdentityConfig(ctx context.Context, params UpdateIdentityConfigParams) error {
 	count, err := NewIdentityMapper(d.mapperDB).UpdateIdentityConfig(ctx, params)
 	if err != nil {

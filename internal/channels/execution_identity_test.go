@@ -82,6 +82,15 @@ func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
 		t.Fatal("旧配置修订可恢复")
 	}
 	store.identityBinding.ConfigRevision = decision.ConfigRevision
+	decision.PairingExternalID = "chsp_new"
+	target.decision = decision
+	session.Metadata["pairing_id"] = "chsp_old"
+	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
+		t.Fatal("另一配对的会话可恢复")
+	}
+	session.Metadata["pairing_id"] = "chsp_new"
+	store.identityBinding.PairingExternalID = "chsp_new"
+	store.identityBinding.ConfigRevision = decision.ConfigRevision
 	store.identityBinding = db.SessionIdentityRecord{}
 	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
 		t.Fatal("无正式身份绑定的会话可恢复")

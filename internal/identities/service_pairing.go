@@ -75,6 +75,9 @@ func (s *Service) CompletePairing(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) validatePairingAgent(ctx context.Context, principal auth.Principal, agentID string, version *int) error {
+	if version != nil && *version < 1 {
+		return invalid("智能体版本必须大于 0", nil)
+	}
 	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, agentID, versionValue(version)); err != nil {
 		return err
 	}
@@ -127,6 +130,15 @@ func (s *Service) activatePairing(ctx context.Context, principal auth.Principal,
 			WorkspaceUUID: principal.WorkspaceUUID, ExternalID: row.ExternalID, IdentityUUID: identity.UUID,
 			AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion,
 		}); err != nil {
+			if errors.Is(err, db.ErrInvalidState) {
+				current, findErr := s.store.FindScopePairing(ctx, principal.WorkspaceUUID, row.ExternalID)
+				if findErr != nil {
+					return mapStore(findErr, "配对不存在")
+				}
+				if current.Status == "active" && sameScopeTarget(current, identity.UUID, input.AgentID, input.AgentVersion) {
+					return nil
+				}
+			}
 			return mapStore(err, "配对不存在")
 		}
 	}

@@ -7,7 +7,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-var errCredentialUnavailable = errors.New("shared credential unavailable")
+var (
+	errCredentialUnavailable    = errors.New("shared credential unavailable")
+	errPersonalVaultUnavailable = errors.New("personal vault unavailable")
+)
 
 func invalid(message string, cause error) error {
 	return apperr.New(apperr.InvalidArgument, message, cause)

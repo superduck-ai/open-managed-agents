@@ -134,6 +134,7 @@ type acceptanceStore struct {
 	activated             *db.ScopePairingRecord
 	rejectPairingList     bool
 	pairingEnvironmentErr error
+	activateErr           error
 }
 
 func newAcceptanceStore() *acceptanceStore {
@@ -257,6 +258,27 @@ func (s *acceptanceStore) ListRunningIdentitySessions(context.Context, string, s
 	return append([]string{}, s.running...), nil
 }
 
+func (s *acceptanceStore) ListCleanupIdentityConfigs(ctx context.Context, workspace, identity, cursor string, limit int) ([]db.IdentityConfigRecord, error) {
+	rows, err := s.ListIdentityConfigs(ctx, workspace, identity, "", cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range s.configs {
+		if row.IdentityUUID != identity || row.Status == "active" {
+			continue
+		}
+		if cursor != "" && row.ExternalID >= cursor {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (s *acceptanceStore) CleanupEffects(context.Context, string, string) (db.CleanupEffectCounts, error) {
+	return db.CleanupEffectCounts{ArchivedConfigs: 1, UnboundPairings: 1, ClosedEntries: 1}, nil
+}
+
 func (s *acceptanceStore) ListIdentityConfigs(_ context.Context, _, identity, agent, cursor string, limit int) ([]db.IdentityConfigRecord, error) {
 	if s.listConfigErr != nil {
 		return nil, s.listConfigErr
@@ -362,7 +384,18 @@ func (s *acceptanceStore) ActivateScopePairingByCode(_ context.Context, params d
 	s.activated = &row
 	return nil
 }
-func (s *acceptanceStore) ActivateScopePairingByID(context.Context, db.ActivateScopePairingParams) error {
+func (s *acceptanceStore) ActivateScopePairingByID(_ context.Context, params db.ActivateScopePairingParams) error {
+	if s.activateErr != nil {
+		if s.activated != nil {
+			active := *s.activated
+			active.Status = "active"
+			active.IdentityUUID = &params.IdentityUUID
+			active.AgentExternalID = params.AgentExternalID
+			active.AgentVersion = params.AgentVersion
+			s.activated = &active
+		}
+		return s.activateErr
+	}
 	return nil
 }
 func (s *acceptanceStore) RebindScopePairing(context.Context, db.RebindScopePairingParams) error {
@@ -456,5 +489,19 @@ func TestPairingWriteRequiresAgentEnvironment(t *testing.T) {
 	_, err = service.UpdatePairing(t.Context(), principal, "chsp_alice", PairingWrite{AgentID: "agent_friday", Revision: 1})
 	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.Conflict || !strings.Contains(public.PublicMessage, "渠道执行环境") {
 		t.Fatalf("缺少执行环境时应拒绝改绑：%v", err)
+	}
+	store.pairingEnvironmentErr = nil
+	version := 0
+	_, err = service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday", AgentVersion: &version})
+	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.InvalidArgument {
+		t.Fatalf("版本 0 应被拒绝：%v", err)
+	}
+	pending := store.pairings["ou_alice"]
+	pending.Status = "pending"
+	store.activated = &pending
+	store.activateErr = db.ErrInvalidState
+	completed, err := service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday"})
+	if err != nil || completed["status"] != "active" {
+		t.Fatalf("相同目标的并发激活应返回已有绑定：%v %#v", err, completed)
 	}
 }

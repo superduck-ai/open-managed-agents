@@ -181,5 +181,6 @@ drop table if exists identity_configs;
 drop table if exists identities;
 drop index if exists sessions_identity_v1_idx;
 alter table sessions drop column if exists identity_uuid;
+update channels set binding_status = 'unbound' where binding_status = 'expired';
 alter table channels drop constraint channels_binding_status_check;
 alter table channels add constraint channels_binding_status_check check (binding_status in ('unbound', 'bound'));

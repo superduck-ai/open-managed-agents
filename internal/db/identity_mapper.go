@@ -181,6 +181,7 @@ type SessionIdentityRecord struct {
 	AgentExternalID   string    `db:"agent_external_id"`
 	BindingRevision   int64     `db:"binding_revision"`
 	ConfigRevision    int64     `db:"config_revision"`
+	PairingExternalID string    `db:"pairing_external_id"`
 	PersonalVaultID   string    `db:"personal_vault_external_id"`
 	ScopeKind         string    `db:"scope_kind"`
 	ScopeKey          string    `db:"scope_key"`
@@ -199,10 +200,17 @@ type InsertSessionIdentityParams struct {
 	AgentExternalID   string
 	BindingRevision   int64
 	ConfigRevision    int64
+	PairingExternalID string
 	PersonalVaultID   string
 	ScopeKind         string
 	ScopeKey          string
 	ChannelExternalID string
+}
+
+type CleanupEffectCounts struct {
+	ArchivedConfigs int64 `db:"archived_configs"`
+	UnboundPairings int64 `db:"unbound_pairings"`
+	ClosedEntries   int64 `db:"closed_entries"`
 }
 
 type IdentityStatsRecord struct {
@@ -256,6 +264,8 @@ type IdentityMapper interface {
 	InsertIdentityConfig(ctx context.Context, params InsertIdentityConfigParams) (IdentityConfigRecord, error)
 	FindActiveIdentityConfig(ctx context.Context, workspaceUUID, identityUUID, agentExternalID string) (IdentityConfigRecord, bool, error)
 	ListIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID, agentExternalID, cursor string, limit int) ([]IdentityConfigRecord, error)
+	ListCleanupIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID, cursor string, limit int) ([]IdentityConfigRecord, error)
+	CleanupEffects(ctx context.Context, workspaceUUID, identityUUID string) (CleanupEffectCounts, error)
 	UpdateIdentityConfig(ctx context.Context, params UpdateIdentityConfigParams) (int64, error)
 	ArchiveIdentityConfigs(ctx context.Context, workspaceUUID, identityUUID string) (int64, error)
 	FindExecutionContext(ctx context.Context, workspaceUUID, channelExternalID string) (ExecutionContextRecord, bool, error)

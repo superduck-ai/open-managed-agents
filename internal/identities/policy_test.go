@@ -1,6 +1,7 @@
 package identities
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,9 @@ func TestCleanupConflictPartialAndSharedRetention(t *testing.T) {
 	done := FinishCleanup(CleanupOutcome{ArchivedConfigs: 1, UnboundPairings: 1, ClosedEntries: 1})
 	if !done.Completed || done.PersonalVaultsDeleted {
 		t.Fatalf("cleanup reported the wrong completion: %#v", done)
+	}
+	if _, err := PlanCredentials(CredentialInput{ChatType: "p2p", PersonalVault: "vlt_personal", PersonalActive: false}); !errors.Is(err, errPersonalVaultUnavailable) {
+		t.Fatalf("personal vault: %v", err)
 	}
 	retried := MergeCleanupOutcome(CleanupOutcome{ArchivedConfigs: 1, UnboundPairings: 2, ClosedEntries: 1, RetainedSharedVaults: []string{"vlt_shared"}}, FinishCleanup(CleanupOutcome{Failures: []string{"list shared vaults failed"}}))
 	if retried.Completed || retried.ArchivedConfigs != 1 || retried.UnboundPairings != 2 || len(retried.RetainedSharedVaults) != 1 || retried.RetainedSharedVaults[0] != "vlt_shared" {

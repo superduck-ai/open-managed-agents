@@ -144,6 +144,7 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	metadata["identity_id"] = decision.IdentityExternalID
 	metadata["binding_revision"] = strconv.FormatInt(decision.BindingRevision, 10)
 	metadata["config_revision"] = strconv.FormatInt(decision.ConfigRevision, 10)
+	metadata["pairing_id"] = decision.PairingExternalID
 	metadata["execution_agent_id"] = decision.AgentExternalID
 	if decision.PersonalVaultID != "" {
 		metadata["personal_vault_id"] = decision.PersonalVaultID
@@ -161,7 +162,8 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	}
 	created, err := w.supervisor.createIdentitySession(ctx, apiKey, body, db.InsertSessionIdentityParams{
 		IdentityUUID: decision.IdentityUUID, BindingRevision: decision.BindingRevision, ConfigRevision: decision.ConfigRevision,
-		PersonalVaultID: decision.PersonalVaultID, ScopeKind: decision.ScopeKind, ScopeKey: scopeKey,
+		PairingExternalID: decision.PairingExternalID,
+		PersonalVaultID:   decision.PersonalVaultID, ScopeKind: decision.ScopeKind, ScopeKey: scopeKey,
 		ChannelExternalID: w.record.ExternalID,
 	})
 	if err != nil {
@@ -179,7 +181,8 @@ func (w *channelWorker) sessionIdentityBound(ctx context.Context, sessionID stri
 		return false, nil
 	}
 	return err == nil && binding.IdentityUUID == decision.IdentityUUID && binding.ChannelExternalID == w.record.ExternalID &&
-		binding.ScopeKey == scopeKey && binding.BindingRevision == decision.BindingRevision && binding.ConfigRevision == decision.ConfigRevision, err
+		binding.ScopeKey == scopeKey && binding.BindingRevision == decision.BindingRevision && binding.ConfigRevision == decision.ConfigRevision &&
+		binding.PairingExternalID == decision.PairingExternalID, err
 }
 
 func (w *channelWorker) decisionCompatible(session omaSession, decision identities.Decision, environmentID, scopeKey string) bool {
@@ -189,7 +192,7 @@ func (w *channelWorker) decisionCompatible(session omaSession, decision identiti
 	if session.Metadata["app_id"] != w.record.AppID || session.Metadata["identity_id"] != decision.IdentityExternalID || session.Metadata["scope_id"] != scopeKey {
 		return false
 	}
-	if session.Metadata["binding_revision"] != strconv.FormatInt(decision.BindingRevision, 10) {
+	if session.Metadata["binding_revision"] != strconv.FormatInt(decision.BindingRevision, 10) || session.Metadata["pairing_id"] != decision.PairingExternalID {
 		return false
 	}
 	if session.Metadata["config_revision"] != strconv.FormatInt(decision.ConfigRevision, 10) {

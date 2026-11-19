@@ -25,10 +25,10 @@ func (s *Service) personalVaultIdentity(ctx context.Context, record db.ChannelRe
 	if err != nil {
 		return key, err
 	}
+	key.IdentityUUID = owner.UUID
 	if !owner.Enabled {
 		return key, errChannelPersonalIdentityDisabled
 	}
-	key.IdentityUUID = owner.UUID
 	if create {
 		return key, s.store.AdoptChannelUserVault(ctx, key)
 	}

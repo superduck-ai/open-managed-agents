@@ -149,7 +149,7 @@ func (h *Handler) resolveSandboxOAuthProvider(ctx context.Context, input OAuthRe
 		if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != input.SecretName {
 			continue
 		}
-		if input.TargetHost != "" {
+		if input.TargetHost != "" && provider.NetworkingType != "unrestricted" {
 			allowed, err := networkpolicy.AllowsHost(provider.DefaultAllowedHosts, input.TargetHost, "443")
 			if err != nil || !allowed {
 				continue

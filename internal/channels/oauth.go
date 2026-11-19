@@ -28,7 +28,7 @@ func (s *Service) WithOAuthProviders(providers vaults.EnvOAuthProviderResolver, 
 	return s
 }
 
-func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.SessionEvent, continuation *db.OAuthContinuation) (OAuthTarget, error) {
+func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.SessionEvent, continuation *db.OAuthContinuation, allowDisabled bool) (OAuthTarget, error) {
 	var payload struct {
 		Name  string                    `json:"name"`
 		Input codesessions.OAuthRequest `json:"input"`
@@ -57,6 +57,9 @@ func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.
 		}
 	}
 	identity, err := s.personalVaultIdentity(ctx, scope.Channel, scope.ActorID, true)
+	if errors.Is(err, errChannelPersonalIdentityDisabled) && allowDisabled {
+		err = nil
+	}
 	if err != nil {
 		return OAuthTarget{}, err
 	}
@@ -87,7 +90,7 @@ func (s *Service) BeginOAuth(ctx context.Context, channelID, sessionID, eventID,
 		return "", err
 	}
 	continuation := &db.OAuthContinuation{SessionUUID: scope.Session.UUID, EventUUID: event.UUID, ChannelUUID: scope.Channel.UUID, BrowserHash: browserHash, Identity: true}
-	target, err := s.oauthTarget(ctx, scope, event, continuation)
+	target, err := s.oauthTarget(ctx, scope, event, continuation, false)
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +135,7 @@ func (s *Service) OAuthContinuationTarget(ctx context.Context, workspaceUUID str
 	if err != nil {
 		return OAuthTarget{}, err
 	}
-	return s.oauthTarget(ctx, scope, event, continuation)
+	return s.oauthTarget(ctx, scope, event, continuation, true)
 }
 
 func (s *Service) OAuthIdentityProvider(ctx context.Context, flow db.EnvOAuthFlow) (vaults.EnvOAuthProviderSnapshot, error) {

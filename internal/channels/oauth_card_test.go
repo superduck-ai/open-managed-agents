@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,40 @@ func TestOAuthCardRequiresPrivateConversationAndTrustedOrigin(t *testing.T) {
 	}
 	if strings.Contains(string(data), "untrusted.example") || !strings.Contains(string(data), "https://oma.example/oauth/channels/channel_1/sessions/session_1/requests/evnt_oauth") {
 		t.Fatal("OAuth 入口必须由渠道配置和实际请求生成")
+	}
+	var card struct {
+		Body struct {
+			Elements []struct {
+				Tag     string `json:"tag"`
+				Columns []struct {
+					Elements []struct {
+						Tag  string `json:"tag"`
+						Text struct {
+							Content string `json:"content"`
+						} `json:"text"`
+					} `json:"elements"`
+				} `json:"columns"`
+			} `json:"elements"`
+		} `json:"body"`
+	}
+	rendered := reply.render()
+	if err := json.Unmarshal([]byte(rendered), &card); err != nil {
+		t.Fatal(err)
+	}
+	var labels []string
+	for _, element := range card.Body.Elements {
+		if element.Tag == "button" {
+			t.Fatal("授权卡片按钮应在同一分栏内")
+		}
+		for _, column := range element.Columns {
+			if len(column.Elements) != 1 || column.Elements[0].Tag != "button" {
+				t.Fatal("每个授权分栏应只有一个按钮")
+			}
+			labels = append(labels, column.Elements[0].Text.Content)
+		}
+	}
+	if !slices.Equal(labels, []string{"前往授权", "取消", "停止对话"}) {
+		t.Fatalf("授权按钮顺序不符：%v", labels)
 	}
 	if !reply.consumeInteraction(omaEvent{Type: "user.custom_tool_result", CustomToolUseID: event.ID}) || len(reply.interactions) != 0 {
 		t.Fatal("原生结果应清除授权交互")

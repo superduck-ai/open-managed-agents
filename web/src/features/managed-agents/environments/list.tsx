@@ -174,7 +174,10 @@ export function EnvironmentList({
             </TableHeader>
             <TableBody>
               {query.isPending ? (
-                <TableSkeletonRows colCount={8} />
+                <TableSkeletonRows
+                  colCount={8}
+                  label={msg('managedAgents.environments.loading', 'Loading environments...')}
+                />
               ) : (
                 table.getRowModel().rows.map((row) => (
                   <EnvironmentRow

@@ -1,5 +1,36 @@
+import { useSyncExternalStore } from 'react';
+
 import { useI18n } from '@/shared/i18n';
 import { cn } from '@/shared/lib/utils';
+
+const RELATIVE_TIME_TICK_MS = 60_000;
+const clockListeners = new Set<() => void>();
+let clockNow = Date.now();
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+
+function subscribeRelativeTimeClock(listener: () => void) {
+  clockListeners.add(listener);
+  if (clockTimer === null && typeof setInterval === 'function') {
+    clockNow = Date.now();
+    clockTimer = setInterval(() => {
+      clockNow = Date.now();
+      for (const notify of clockListeners) {
+        notify();
+      }
+    }, RELATIVE_TIME_TICK_MS);
+  }
+  return () => {
+    clockListeners.delete(listener);
+    if (clockListeners.size === 0 && clockTimer !== null) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+    }
+  };
+}
+
+function getRelativeTimeNow() {
+  return clockNow;
+}
 
 export function formatFullDateTime(value: string | number | Date | null | undefined, locale: string): string {
   if (value === null || value === undefined || value === '') {
@@ -22,6 +53,7 @@ export function formatRelativeDateTime(
   value: string | number | Date | null | undefined,
   locale: string,
   justNowLabel: string,
+  now = Date.now(),
 ): string {
   if (value === null || value === undefined || value === '') {
     return '—';
@@ -31,7 +63,7 @@ export function formatRelativeDateTime(
   if (Number.isNaN(timestamp)) {
     return typeof value === 'string' ? value : '—';
   }
-  const diffSeconds = Math.round((timestamp - Date.now()) / 1000);
+  const diffSeconds = Math.round((timestamp - now) / 1000);
   const absSeconds = Math.abs(diffSeconds);
   if (absSeconds < 45) {
     return justNowLabel;
@@ -66,13 +98,16 @@ export function RelativeTimeText({
   className?: string;
 }) {
   const { locale, msg } = useI18n();
+  const now = useSyncExternalStore(subscribeRelativeTimeClock, getRelativeTimeNow, getRelativeTimeNow);
   if (value === null || value === undefined || value === '') {
     return <span className={cn('text-muted-foreground', className)}>{emptyLabel}</span>;
   }
   const date = value instanceof Date ? value : new Date(value);
   const isValid = !Number.isNaN(date.getTime());
   const full = isValid ? formatFullDateTime(date, locale) : String(value);
-  const relative = isValid ? formatRelativeDateTime(date, locale, msg('common.justNow', 'just now')) : String(value);
+  const relative = isValid
+    ? formatRelativeDateTime(date, locale, msg('common.justNow', 'just now'), now)
+    : String(value);
   return (
     <time
       dateTime={isValid ? date.toISOString() : undefined}

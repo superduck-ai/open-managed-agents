@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { useI18n } from '@/shared/i18n';
 import { copyText } from '@/shared/lib/clipboard';
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
@@ -110,6 +111,7 @@ export function CopyIdCell({
   stopPropagation?: boolean;
   alwaysVisible?: boolean;
 }) {
+  const { msg } = useI18n();
   const [copied, setCopied] = useState(false);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const resetCopiedTimeoutRef = useRef<number | null>(null);
@@ -163,6 +165,9 @@ export function CopyIdCell({
       >
         {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
       </Button>
+      <span role="status" className="sr-only">
+        {copied ? msg('common.copied', 'Copied') : ''}
+      </span>
     </span>
   );
 }

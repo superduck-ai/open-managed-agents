@@ -127,8 +127,13 @@ function DestinationRow({
   return (
     <DataTableRow>
       <DataTableCell edge="start" className={`${dataTablePrimaryColumnClassName} py-2`}>
-        <div className="max-w-[340px] truncate font-medium">{destination.display_name || destination.id}</div>
-        <div className="max-w-[340px] truncate font-mono text-xs text-muted-foreground">
+        <div title={destination.display_name || destination.id} className="max-w-[340px] truncate font-medium">
+          {destination.display_name || destination.id}
+        </div>
+        <div
+          title={destination.traces.endpoint_url}
+          className="max-w-[340px] truncate font-mono text-xs text-muted-foreground"
+        >
           {destination.traces.endpoint_url}
         </div>
       </DataTableCell>

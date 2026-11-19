@@ -489,6 +489,11 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setSelectedEntityIds(new Set());
   }, [activeWorkspaceId, config.section]);
 
+  const sessionAgentNames = useMemo(
+    () => new Map(deploymentAgentOptions.map((option) => [option.id, option.label])),
+    [deploymentAgentOptions],
+  );
+
   const visibleEntities = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     return entities.filter((entity) => {
@@ -507,12 +512,20 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       if (!normalized) {
         return true;
       }
-      return [entity.id, entityDisplayName(config.section, entity), entityStatusLabel(entity), entityAgentLabel(entity)]
+      const agentId = entityAgentId(entity);
+      return [
+        entity.id,
+        entityDisplayName(config.section, entity),
+        entityStatusLabel(entity),
+        entityAgentLabel(entity),
+        agentId ? sessionAgentNames.get(agentId) : undefined,
+      ]
+        .filter(Boolean)
         .join(' ')
         .toLowerCase()
         .includes(normalized);
     });
-  }, [config.section, deploymentAgentFilter, deploymentStatusFilter, entities, search]);
+  }, [config.section, deploymentAgentFilter, deploymentStatusFilter, entities, search, sessionAgentNames]);
   const sessionIdSearch = useSessionIdSearch(
     activeWorkspaceId,
     search,
@@ -910,10 +923,6 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       />
       {config.filters.map((filter) => renderManagedFilter(filter))}
     </>
-  );
-  const sessionAgentNames = useMemo(
-    () => new Map(deploymentAgentOptions.map((option) => [option.id, option.label])),
-    [deploymentAgentOptions],
   );
   const sessionListActions = useMemo(
     () => ({

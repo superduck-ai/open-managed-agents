@@ -4113,6 +4113,7 @@
   "managedAgents.identities.lastUsed": "最近活跃",
   "managedAgents.identities.copySubject": "复制外部用户 ID",
   "managedAgents.identities.agentDetails": "展开 Agent",
+  "managedAgents.identities.loadMoreAgents": "加载更多 Agent",
   "managedAgents.identities.noAgents": "暂无 Agent 使用记录",
   "managedAgents.identities.channelBound": "已绑定",
   "managedAgents.identities.channelUnbound": "未绑定",

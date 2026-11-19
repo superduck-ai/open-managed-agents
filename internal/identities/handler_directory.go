@@ -16,12 +16,9 @@ func (h *Handler) directory(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	query := r.URL.Query()
-	page := 1
-	if raw := query.Get("page"); raw != "" {
-		page, err = strconv.Atoi(raw)
-		if err != nil || page < 1 || page > 1_000_000 {
-			return invalid("页码无效", err)
-		}
+	page, err := identityPageNumber(query.Get("page"))
+	if err != nil {
+		return err
 	}
 	result, err := h.service.identityDirectory(r.Context(), db.IdentityDirectoryParams{
 		OrganizationUUID: principal.OrganizationUUID,
@@ -38,4 +35,15 @@ func (h *Handler) directory(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpapi.WriteJSON(w, http.StatusOK, jsontext.Value(result))
 	return nil
+}
+
+func identityPageNumber(raw string) (int, error) {
+	if raw == "" {
+		return 1, nil
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil || page < 1 || page > 1_000_000 {
+		return 0, invalid("页码无效", err)
+	}
+	return page, nil
 }

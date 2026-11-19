@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 
@@ -114,10 +114,12 @@ function IdentityRow({
   const { msg } = useI18n();
   const format = useFormatters();
   const [expanded, setExpanded] = useState(false);
-  const agents = useQuery({
+  const agents = useInfiniteQuery({
     queryKey: ['identity-agents', orgUuid, workspaceId, identity.id],
     enabled: expanded && identity.agents > 0,
-    queryFn: ({ signal }) => listIdentityAgents(orgUuid, workspaceId, identity.id, signal),
+    initialPageParam: 1,
+    queryFn: ({ pageParam, signal }) => listIdentityAgents(orgUuid, workspaceId, identity.id, pageParam, signal),
+    getNextPageParam: (page) => page.next_page,
   });
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const panelId = `agents-${identity.id}`;
@@ -194,7 +196,7 @@ function IdentityRow({
       {expanded && (
         <TableRow className="bg-muted/30 hover:bg-muted/30">
           <TableCell id={panelId} colSpan={7} className="whitespace-normal pl-12">
-            {agents.isError ? (
+            {agents.isError && !agents.data ? (
               <Button size="sm" variant="outline" onClick={() => void agents.refetch()}>
                 {msg('common.retry', '重试')}
               </Button>
@@ -207,21 +209,38 @@ function IdentityRow({
                 {msg('common.loading', '正在加载...')}
               </p>
             ) : (
-              <ul className="max-w-xl divide-y divide-border">
-                {agents.data.data.map((agent) => (
-                  <li key={agent.agent_id} className="flex items-center justify-between gap-4 py-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="min-w-0 truncate">
-                        {agentOptions.find(({ id }) => id === agent.agent_id)?.name ?? agent.agent_id}
-                      </span>
-                      <IdentityChannelLogos channels={agent.channels} />
-                    </div>
-                    <span className="shrink-0 text-muted-foreground">
-                      {msg('managedAgents.identities.sessions', '会话')} {format.number(agent.sessions)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="max-w-xl divide-y divide-border">
+                  {agents.data?.pages
+                    .flatMap((page) => page.data)
+                    .map((agent) => (
+                      <li key={agent.agent_id} className="flex items-center justify-between gap-4 py-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="min-w-0 truncate">
+                            {agentOptions.find(({ id }) => id === agent.agent_id)?.name ?? agent.agent_id}
+                          </span>
+                          <IdentityChannelLogos channels={agent.channels} />
+                        </div>
+                        <span className="shrink-0 text-muted-foreground">
+                          {msg('managedAgents.identities.sessions', '会话')} {format.number(agent.sessions)}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+                {agents.hasNextPage && (
+                  <Button
+                    className="mt-2"
+                    size="sm"
+                    variant="outline"
+                    disabled={agents.isFetching}
+                    onClick={() => void agents.fetchNextPage()}
+                  >
+                    {agents.isFetchNextPageError
+                      ? msg('common.retry', '重试')
+                      : msg('managedAgents.identities.loadMoreAgents', '加载更多 Agent')}
+                  </Button>
+                )}
+              </>
             )}
           </TableCell>
         </TableRow>

@@ -690,3 +690,26 @@ test('两个文件与两个仓库完整回显，无修改保存保留顺序与�
   );
   expect(body.git_repository).toBeUndefined();
 });
+
+test('已绑定渠道在第一步直接保存并保留原应用凭据', async () => {
+  resetTestDom('/');
+  const posts: { url: string; body: Record<string, unknown> }[] = [];
+  const saved = { ...channel, binding_status: 'bound' as const, app_id: 'cli_test' };
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (init?.method === 'POST') {
+      posts.push({ url, body: JSON.parse(String(init.body)) });
+      return Response.json(saved);
+    }
+    return Response.json(targets(url));
+  }) as typeof fetch;
+  const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
+  const save = screen.getByRole('button', { name: '保存配置' });
+  expect(save.hasAttribute('disabled')).toBe(false);
+  fireEvent.click(save);
+  await waitFor(() => expect(navigated).toHaveBeenCalled());
+  expect(posts).toHaveLength(1);
+  expect(posts[0].url).toContain('/channels/ch-test');
+  expect(posts[0].body).toMatchObject({ name: saved.name, environment_id: 'env-test' });
+  expect(posts[0].body.app_secret).toBeUndefined();
+});

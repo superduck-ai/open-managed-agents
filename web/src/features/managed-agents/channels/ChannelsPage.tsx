@@ -47,6 +47,7 @@ import {
   channelConnectionStatusNotice,
   type ChannelConnectionStatus,
 } from './status';
+import { useChannelStatusTime } from './useChannelStatusTime';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
@@ -93,9 +94,10 @@ export function ChannelsPageContent({
     queryKey: ['channel-environment-options', workspaceId],
     queryFn: () => listChannelEnvironments(workspaceId),
   });
+  const observedAt = useChannelStatusTime(query.data?.channels, query.dataUpdatedAt);
   const rows = useMemo(
-    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }, query.dataUpdatedAt),
-    [query.data, query.dataUpdatedAt, statusFilter, search],
+    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }, observedAt),
+    [query.data, observedAt, statusFilter, search],
   );
   const pageCount = Math.max(1, Math.ceil(rows.length / channelListPageSize));
   const page = Math.min(pageIndex, pageCount);
@@ -168,7 +170,7 @@ export function ChannelsPageContent({
           rows={[]}
           loading
           workspaceId={workspaceId}
-          observedAt={query.dataUpdatedAt}
+          observedAt={observedAt}
           environmentLabel={environmentLabel}
           onNavigate={onNavigate}
         />
@@ -177,7 +179,7 @@ export function ChannelsPageContent({
           <ChannelListTable
             rows={visibleRows}
             workspaceId={workspaceId}
-            observedAt={query.dataUpdatedAt}
+            observedAt={observedAt}
             environmentLabel={environmentLabel}
             onNavigate={onNavigate}
           />
@@ -362,7 +364,7 @@ function ChannelListRow({
                 <Settings className="size-4" />
                 {msg('managedAgents.channels.configure', '配置')}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => reportConnectionCheck(row, msg)}>
+              <DropdownMenuItem onClick={() => reportConnectionCheck(row, observedAt, msg)}>
                 <Plug className="size-4" />
                 {msg('managedAgents.channels.connectionCheck', '连接检测')}
               </DropdownMenuItem>
@@ -374,6 +376,6 @@ function ChannelListRow({
   );
 }
 
-function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {
-  toast.message(channelConnectionStatusNotice(channelConnectionStatus(row), msg));
+function reportConnectionCheck(row: WorkspaceChannel, observedAt: number, msg: ReturnType<typeof useI18n>['msg']) {
+  toast.message(channelConnectionStatusNotice(channelConnectionStatus(row, observedAt), msg));
 }

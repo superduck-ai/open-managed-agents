@@ -6,7 +6,7 @@ export function ChannelStatusBadge({ channel, observedAt }: { channel: Channel; 
   const { msg } = useI18n();
   const status = channelConnectionStatus(channel, observedAt);
   return (
-    <span className={`inline-flex items-center gap-1.5 text-sm ${channelConnectionStatusClass(status)}`}>
+    <span role="status" className={`inline-flex items-center gap-1.5 text-sm ${channelConnectionStatusClass(status)}`}>
       <span className="size-1.5 rounded-full bg-current" aria-hidden />
       {channelConnectionStatusLabel(status, msg)}
     </span>

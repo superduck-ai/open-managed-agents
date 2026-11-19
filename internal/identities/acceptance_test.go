@@ -427,7 +427,7 @@ func (s *acceptanceStore) ListIdentityChannels(context.Context, string, string) 
 	return nil, nil
 }
 
-func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int) ([]db.IdentityAgentUsageRecord, error) {
+func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int, int) ([]db.IdentityAgentUsageRecord, error) {
 	return nil, nil
 }
 func (s *acceptanceStore) ListAgentIdentityBindings(context.Context, string, string) ([]db.AgentBindingRecord, error) {

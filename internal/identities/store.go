@@ -43,7 +43,7 @@ type Store interface {
 	ListIdentitySessions(context.Context, string, string, int) ([]db.SessionIdentityRecord, error)
 	BusinessIdentityStats(context.Context, string, string, *time.Time) (db.IdentityStatsRecord, error)
 	ListIdentityChannels(context.Context, string, string) ([]db.IdentityChannelBindingRecord, error)
-	ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int) ([]db.IdentityAgentUsageRecord, error)
+	ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int, int) ([]db.IdentityAgentUsageRecord, error)
 	ListRunningIdentitySessions(context.Context, string, string) ([]string, error)
 	ListAgentIdentityBindings(context.Context, string, string) ([]db.AgentBindingRecord, error)
 	IsPersonalChannelVault(context.Context, string, string) (bool, error)

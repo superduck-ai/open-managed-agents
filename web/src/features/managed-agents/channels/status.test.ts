@@ -37,3 +37,9 @@ test('waits for a newly bound channel to connect before showing an error', () =>
   expect(channelConnectionStatus({ ...starting, connection_status: 'disconnected' }, now + 5_000)).toBe('abnormal');
   expect(channelConnectionStatus(starting, now + 30_000)).toBe('abnormal');
 });
+
+test('缺少有效创建时间时不启动初次连接等待期', () => {
+  const unknown = channel({ connected: false, connection_status: 'unknown' });
+  expect(channelConnectionStatus(unknown)).toBe('abnormal');
+  expect(channelConnectionStatus({ ...unknown, created_at: 'invalid' })).toBe('abnormal');
+});

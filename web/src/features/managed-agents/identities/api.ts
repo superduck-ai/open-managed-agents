@@ -54,9 +54,18 @@ export type IdentityAgentChannel = {
   binding_status: 'bound' | 'unbound' | 'expired';
 };
 
-export function listIdentityAgents(orgUuid: string, workspaceId: string, identityId: string, signal: AbortSignal) {
-  return consoleApi<{ data: { agent_id: string; sessions: number; channels: IdentityAgentChannel[] }[] }>(
-    `${identityBase(orgUuid, workspaceId)}/identities/${encodeURIComponent(identityId)}/agents?window=all&include_channels=true`,
+export function listIdentityAgents(
+  orgUuid: string,
+  workspaceId: string,
+  identityId: string,
+  page: number,
+  signal: AbortSignal,
+) {
+  return consoleApi<{
+    data: { agent_id: string; sessions: number; channels: IdentityAgentChannel[] }[];
+    next_page?: number;
+  }>(
+    `${identityBase(orgUuid, workspaceId)}/identities/${encodeURIComponent(identityId)}/agents?window=all&include_channels=true&page=${page}`,
     { signal },
   );
 }

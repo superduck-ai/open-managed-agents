@@ -12,6 +12,7 @@ import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
 import { channelApi, channelVaultIds, channelResourceValues, type Channel, type ChannelCheck } from './api';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
+import { useChannelStatusTime } from './useChannelStatusTime';
 import { PairingsDialog } from './PairingsDialog';
 import { channelDetailPath, channelEditPath, channelSessionsTabPath, channelsListPath } from './paths';
 
@@ -128,6 +129,7 @@ export function ChannelDetailContent({
   });
 
   const channel = query.data?.channel;
+  const observedAt = useChannelStatusTime(channel, query.dataUpdatedAt);
   const connectionCheck = useMutation({
     mutationFn: async () => {
       const checked = await channelApi<ChannelCheck>(agentId, workspaceId, `/${channelId}/check`);
@@ -174,7 +176,7 @@ export function ChannelDetailContent({
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-2xl font-medium">{channel.name}</h1>
-                <ChannelStatusBadge channel={channel} observedAt={query.dataUpdatedAt} />
+                <ChannelStatusBadge channel={channel} observedAt={observedAt} />
               </div>
               <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
                 <div>

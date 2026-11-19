@@ -9,11 +9,15 @@ export function channelConnectionStatus(channel: Channel, observedAt = Date.now(
   if (!channel.enabled) return 'disabled';
   if (channel.binding_status !== 'bound') return 'pending_test';
   if (channel.connected) return 'connected';
+  const deadline = channelConnectionDeadline(channel);
+  return deadline !== undefined && observedAt < deadline ? 'connecting' : 'abnormal';
+}
+
+export function channelConnectionDeadline(channel: Channel) {
+  if (!channel.enabled || channel.binding_status !== 'bound' || channel.connected) return;
+  if (channel.connection_status === 'disconnected') return;
   const createdAt = Date.parse(channel.created_at ?? '');
-  if (channel.connection_status !== 'disconnected' && observedAt - createdAt < initialConnectionWindowMs) {
-    return 'connecting';
-  }
-  return 'abnormal';
+  if (Number.isFinite(createdAt)) return createdAt + initialConnectionWindowMs;
 }
 
 export function channelConnectionStatusLabel(status: ChannelConnectionStatus, msg: ReturnType<typeof useI18n>['msg']) {

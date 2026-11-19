@@ -325,8 +325,8 @@
         WHERE b.workspace_uuid = #{workspaceUUID} AND b.identity_uuid = #{identityUUID} AND s.deleted_at IS NULL
         <if test="since != nil">AND s.updated_at &gt;= #{since}</if>
         GROUP BY b.agent_external_id
-        ORDER BY MAX(s.updated_at) DESC
-        LIMIT #{limit}
+        ORDER BY last_used_at DESC, b.agent_external_id
+        LIMIT #{limit} OFFSET #{offset}
     </select>
 
     <select id="ListRunningIdentitySessions" resultType="string">
@@ -359,19 +359,20 @@
             WHERE b.organization_uuid = #{params.OrganizationUUID} AND b.workspace_uuid = #{params.WorkspaceUUID} AND s.deleted_at IS NULL
             GROUP BY b.identity_uuid, b.agent_external_id
         ), identity_usage AS (
-            SELECT identity_uuid, count(*) AS agents, sum(sessions) AS sessions, max(last_used_at) AS last_used_at
+            SELECT identity_uuid, count(*) AS agents, sum(sessions) AS sessions, max(last_used_at) AS last_used_at,
+                max(last_used_at) &gt;= now() - interval '7 days' AS active
             FROM usage GROUP BY identity_uuid
         ), directory AS (
             SELECT i.id, i.namespace, i.external_subject_id, i.display_name, i.enabled, i.created_at,
                 EXISTS (SELECT 1 FROM identity_actor_links l WHERE l.identity_uuid = i.uuid AND l.personal) AS personal,
                 coalesce(u.agents, 0) AS agents, coalesce(u.sessions, 0) AS sessions, u.last_used_at,
-                coalesce(u.last_used_at &gt;= now() - interval '7 days', false) AS active
+                coalesce(u.active, false) AS active
             FROM subjects i LEFT JOIN identity_usage u ON u.identity_uuid = i.uuid
             WHERE true
             <if test="params.AgentID != ''">AND EXISTS (
                 SELECT 1 FROM usage a WHERE a.identity_uuid = i.uuid AND a.agent_id = #{params.AgentID}
             )</if>
-            <if test="params.Status == 'active'">AND i.enabled AND u.last_used_at &gt;= now() - interval '7 days'</if>
+            <if test="params.Status == 'active'">AND u.active</if>
             <if test="params.Status == 'enabled'">AND i.enabled</if>
             <if test="params.Status == 'disabled'">AND NOT i.enabled</if>
             <if test="params.Search != ''">AND (
@@ -400,7 +401,7 @@
             'agent_options', coalesce((SELECT jsonb_agg(to_jsonb(agent_options) ORDER BY name, id) FROM agent_options), '[]'::jsonb),
             'overview', jsonb_build_object(
                 'identities', (SELECT count(*) FROM subjects),
-                'active', (SELECT count(*) FROM identity_usage WHERE last_used_at &gt;= now() - interval '7 days'),
+                'active', (SELECT count(*) FROM identity_usage WHERE active),
                 'agents', (SELECT count(*) FROM used_agents),
                 'sessions', (SELECT coalesce(sum(sessions), 0) FROM identity_usage)
             )

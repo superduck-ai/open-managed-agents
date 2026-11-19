@@ -234,9 +234,14 @@ func (h *Handler) agents(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	window := r.URL.Query().Get("window")
-	includeChannels := r.URL.Query().Get("include_channels") == "true"
-	rows, channels, err := h.service.IdentityAgents(r.Context(), principal, chi.URLParam(r, "identity_id"), window, includeChannels)
+	query := r.URL.Query()
+	window := query.Get("window")
+	page, err := identityPageNumber(query.Get("page"))
+	if err != nil {
+		return err
+	}
+	includeChannels := query.Get("include_channels") == "true"
+	rows, channels, hasMore, err := h.service.IdentityAgents(r.Context(), principal, chi.URLParam(r, "identity_id"), window, page, includeChannels)
 	if err != nil {
 		return err
 	}
@@ -260,7 +265,11 @@ func (h *Handler) agents(w http.ResponseWriter, r *http.Request) error {
 		}
 		data = append(data, view)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"data": data, "window": windowLabel(window)})
+	body := map[string]any{"data": data, "window": windowLabel(window)}
+	if hasMore {
+		body["next_page"] = page + 1
+	}
+	httpapi.WriteJSON(w, http.StatusOK, body)
 	return nil
 }
 

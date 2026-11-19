@@ -310,7 +310,7 @@ type IdentityMapper interface {
 	IdentityStats(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time) (IdentityStatsRecord, error)
 	IdentityDirectory(ctx context.Context, params IdentityDirectoryParams) (string, error)
 	ListIdentityChannels(ctx context.Context, workspaceUUID, identityUUID string) ([]IdentityChannelBindingRecord, error)
-	ListIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit int) ([]IdentityAgentUsageRecord, error)
+	ListIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit, offset int) ([]IdentityAgentUsageRecord, error)
 	ListRunningIdentitySessions(ctx context.Context, workspaceUUID, identityUUID string) ([]string, error)
 	ListAgentBindings(ctx context.Context, workspaceUUID, agentExternalID string) ([]AgentBindingRecord, error)
 	PersonalVault(ctx context.Context, workspaceUUID, vaultExternalID string) (bool, error)

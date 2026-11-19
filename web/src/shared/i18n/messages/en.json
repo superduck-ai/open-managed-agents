@@ -4113,6 +4113,7 @@
   "managedAgents.identities.lastUsed": "Last active",
   "managedAgents.identities.copySubject": "Copy external user ID",
   "managedAgents.identities.agentDetails": "Expand agents",
+  "managedAgents.identities.loadMoreAgents": "Load more agents",
   "managedAgents.identities.noAgents": "No agent usage yet",
   "managedAgents.identities.channelBound": "Bound",
   "managedAgents.identities.channelUnbound": "Unbound",

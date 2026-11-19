@@ -297,8 +297,8 @@ func (d *DB) ListIdentityChannels(ctx context.Context, workspaceUUID, identityUU
 	return NewIdentityMapper(d.mapperDB).ListIdentityChannels(ctx, workspaceUUID, identityUUID)
 }
 
-func (d *DB) ListBusinessIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit int) ([]IdentityAgentUsageRecord, error) {
-	return NewIdentityMapper(d.mapperDB).ListIdentityAgents(ctx, workspaceUUID, identityUUID, since, limit)
+func (d *DB) ListBusinessIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit, offset int) ([]IdentityAgentUsageRecord, error) {
+	return NewIdentityMapper(d.mapperDB).ListIdentityAgents(ctx, workspaceUUID, identityUUID, since, limit, offset)
 }
 
 func (d *DB) ListRunningIdentitySessions(ctx context.Context, workspaceUUID, identityUUID string) ([]string, error) {

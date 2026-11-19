@@ -76,11 +76,8 @@ func (r *replyRunner) settleOAuthCards(ctx context.Context, event omaEvent) erro
 					status = "已取消授权"
 				}
 			} else {
-				var grant struct {
-					Authorized bool `json:"authorized"`
-				}
 				status = "连接失效"
-				if json.Unmarshal([]byte(eventText(event)), &grant) == nil && grant.Authorized {
+				if codesessions.OAuthGranted(eventText(event)) {
 					status = "已连接"
 				}
 			}

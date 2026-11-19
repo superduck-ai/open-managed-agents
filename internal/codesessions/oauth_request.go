@@ -105,3 +105,10 @@ func (s *Service) handleOAuthRequest(ctx context.Context, codeSessionID string, 
 	}
 	return s.publishWorkerPublicPayloads(ctx, codeSessionID, []json.RawMessage{raw, pending})
 }
+
+func OAuthGranted(text string) bool {
+	var grant struct {
+		Authorized bool `json:"authorized"`
+	}
+	return jsonv2.Unmarshal([]byte(text), &grant) == nil && grant.Authorized
+}

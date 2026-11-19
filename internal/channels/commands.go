@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 )
 
@@ -140,7 +142,12 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		_ = w.replyText(ctx, msg, "该会话不属于当前渠道/话题，或配置不兼容、当前不可恢复。")
 		return
 	}
-	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, session.ID); err != nil {
+	err = w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, session.ID, target.decision.PairingExternalID, target.decision.BindingRevision)
+	if errors.Is(err, db.ErrVersionConflict) {
+		_ = w.replyText(ctx, msg, "当前配对已变化，请重新选择要恢复的会话。")
+		return
+	}
+	if err != nil {
 		_ = w.replyText(ctx, msg, "恢复会话失败，请稍后重试。")
 		return
 	}

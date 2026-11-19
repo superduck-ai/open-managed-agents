@@ -170,9 +170,18 @@
         AND scope_key = #{scopeKey}
     </select>
 
-    <insert id="UpsertChannelSession" result="exec">
+    <insert id="UpsertChannelSession" result="rows">
         INSERT INTO channel_sessions (channel_external_id, scope_key, session_external_id)
-        VALUES (#{channelExternalID}, #{scopeKey}, #{sessionExternalID})
+        SELECT #{channelExternalID}, #{scopeKey}, #{sessionExternalID}
+        <if test="pairingExternalID != ''">
+            WHERE EXISTS (
+                SELECT 1 FROM channel_pairings
+                WHERE external_id = #{pairingExternalID}
+                  AND channel_external_id = #{channelExternalID}
+                  AND status = 'active' AND revision = #{pairingRevision}
+                FOR SHARE
+            )
+        </if>
         ON CONFLICT (channel_external_id, scope_key)
         DO UPDATE SET session_external_id = EXCLUDED.session_external_id, updated_at = now()
     </insert>

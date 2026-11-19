@@ -47,7 +47,7 @@ type runtimeStore interface {
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
 	GetChannelSessionBinding(context.Context, string, string) (string, error)
 	FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error)
-	SetChannelSessionBinding(context.Context, string, string, string) error
+	SetChannelSessionBinding(context.Context, string, string, string, string, int64) error
 	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
 	ListChannelPairingRecords(context.Context, string) ([]db.ChannelPairingRecord, error)

@@ -69,6 +69,26 @@ func TestConsolidateChannelExecutionPostgres(t *testing.T) {
 	if err != nil || len(bindings) != 2 {
 		t.Fatalf("Agent 的固定身份和范围绑定应同时可查：%+v %v", bindings, err)
 	}
+	if err := store.SetChannelSessionBinding(ctx, "paired", "chat:test", "sesn_current", scope.ExternalID, scope.Revision); err != nil {
+		t.Fatalf("匹配当前配对修订号应恢复会话：%v", err)
+	}
+	if err := store.SetChannelSessionBinding(ctx, "paired", "chat:test", "sesn_stale", scope.ExternalID, scope.Revision+1); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("活跃配对的修订号不匹配时应拒绝恢复：%v", err)
+	}
+	if err := store.UnbindScopePairing(ctx, workspace, scope.ExternalID, scope.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChannelSessionBinding(ctx, "paired", "chat:test", "sesn_stale", scope.ExternalID, scope.Revision); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("过期配对不应恢复会话：%v", err)
+	}
+	bound, err := store.GetChannelSessionBinding(ctx, "paired", "chat:test")
+	if err != nil || bound != "sesn_current" {
+		t.Fatalf("过期配对覆盖了当前会话：%q %v", bound, err)
+	}
+	if err := store.SetChannelSessionBinding(ctx, "legacy", "chat:test", "sesn_legacy", "", 0); err != nil {
+		t.Fatalf("旧渠道不依赖范围配对：%v", err)
+	}
+
 	changed, err := store.UpdateChannelRecord(ctx, ChannelRecordUpdate{
 		WorkspaceUUID: workspace, ExternalID: "fixed", Name: "fixed", Enabled: true,
 		BindingStatus: "unbound", Mounts: `{"agent_version":2}`,

@@ -70,7 +70,7 @@ func (f *fakeRuntimeStore) binding(scopeKey string) string {
 	return f.bindings[scopeKey]
 }
 
-func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID string) error {
+func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID, _ string, _ int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bindings[scopeKey] = sessionID

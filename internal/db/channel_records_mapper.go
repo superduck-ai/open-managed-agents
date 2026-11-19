@@ -116,7 +116,7 @@ type ChannelRecordMapper interface {
 	InsertPairing(ctx context.Context, params insertChannelPairingParams) error
 	UpdatePairingStatus(ctx context.Context, channelExternalID, pairingExternalID, status string) error
 	FindChannelSession(ctx context.Context, channelExternalID, scopeKey string) (string, error)
-	UpsertChannelSession(ctx context.Context, channelExternalID, scopeKey, sessionExternalID string) error
+	UpsertChannelSession(ctx context.Context, channelExternalID, scopeKey, sessionExternalID, pairingExternalID string, pairingRevision int64) (int64, error)
 	FindChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID string) (string, error)
 	UpsertChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, environmentExternalID string) error
 	ArchiveChannelSessions(ctx context.Context, channelExternalID string) error

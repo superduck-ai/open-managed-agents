@@ -169,7 +169,7 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	if err != nil {
 		return "", err
 	}
-	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created); err != nil {
+	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created, "", 0); err != nil {
 		return "", err
 	}
 	return created, nil

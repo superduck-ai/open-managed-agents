@@ -445,6 +445,18 @@ func (s *Server) registerPlatformConsoleRoutes(
 	})
 }
 
+func platformSessionCSRF(next http.Handler) http.Handler {
+	protected := platformCSRFMiddleware(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		if principal.CredentialType == auth.CredentialTypePlatformSession {
+			protected.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func platformCSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -468,7 +480,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 		r.Mount("/channels", s.workspaceChannels)
 	}
 	if s.identities != nil {
-		s.identities.RegisterV1(r)
+		s.identities.RegisterV1(r.With(platformSessionCSRF))
 	}
 	r.Mount("/deployment_runs", s.deploymentRuns)
 	r.Mount("/deployments", s.deployments)

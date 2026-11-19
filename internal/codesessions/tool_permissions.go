@@ -436,7 +436,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 		if err != nil {
 			return false, err
 		}
-		return true, s.publishControlResponse(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, ack, "self-hosted-tool-confirmation", "external-confirmation:"+event.ExternalID, "")
+		return true, s.publishControlResponse(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, ack, "self-hosted-tool-confirmation", "external-confirmation:"+event.ExternalID, "", false)
 	}
 	denyMessage := stringField(payload, "deny_message")
 	sessionThreadID := firstNonEmpty(toolPermissionSessionThreadID(payload), request.SessionThreadID)
@@ -513,7 +513,7 @@ type userCustomToolResultPayload struct {
 	SessionThreadID string                  `json:"session_thread_id"`
 }
 
-func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, session db.Session, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {
+func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {
 	var payload userCustomToolResultPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return false, err
@@ -532,14 +532,9 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, s
 		if err := s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID}); err != nil {
 			return true, err
 		}
-		if usesBrainClaimTransport(codeSession) {
-			if err := s.DispatchWorker(ctx, session, codeSession.ExternalID); err != nil {
-				return true, err
-			}
-		}
 	}
 	if sandboxOAuthRequest(request) {
-		return true, s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(db.CodeSession) error { return nil })
+		return true, s.publishToolHandoff(ctx, codeSession, request.PublicEventID, true, func(db.CodeSession) error { return nil })
 	}
 	if payload.IsError && len(payload.Content) == 0 {
 		payload.Content = []selfHostedToolContent{{Type: "text", Text: "User declined to answer."}}
@@ -616,7 +611,7 @@ func (s *Service) sendToolDecision(ctx context.Context, codeSessionID string, wo
 	if inputEventID != "" {
 		completedToolID = request.PublicEventID
 	}
-	return s.publishControlResponse(ctx, codeSessionID, workerEpoch, payload, source, "control-response:"+request.RequestID, completedToolID)
+	return s.publishControlResponse(ctx, codeSessionID, workerEpoch, payload, source, "control-response:"+request.RequestID, completedToolID, request.ToolName == "RequestOAuth")
 }
 
 // controlResponseUUID preserves the UUIDv5 output previously produced with the

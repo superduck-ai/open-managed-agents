@@ -140,7 +140,11 @@ func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID,
 }
 
 func (d *DB) RequestCodeSessionWorker(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, traceParent string) error {
-	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Request(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, nullableString(traceParent))
+	return requestCodeSessionWorker(ctx, d.mapperDB, organizationUUID, workspaceUUID, codeSessionExternalID, traceParent)
+}
+
+func requestCodeSessionWorker(ctx context.Context, executor yourbatis.Executor, organizationUUID, workspaceUUID, codeSessionExternalID, traceParent string) error {
+	rows, err := NewCodeSessionClaimMapper(executor).Request(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, nullableString(traceParent))
 	if err != nil {
 		return err
 	}

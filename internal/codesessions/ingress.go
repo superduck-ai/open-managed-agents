@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -770,32 +768,18 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	if len(mcpConfig) == 0 {
 		mcpConfig = json.RawMessage(`{}`)
 	}
-	var permissions struct {
-		toolPermissionSnapshot
-		clitools.OAuthConfig
-	}
+	var permissions toolPermissionSnapshot
 	if len(metadata.Config) > 0 {
 		if err := json.Unmarshal(metadata.Config, &permissions); err != nil {
 			return nil, err
 		}
 	}
 	config := codeSessionConfig(record.Metadata)
-	tools := catalog.runtimeTools(permissions.Tools)
-	installed := []clitools.Definition{}
-	if slices.Contains(tools, "Bash") {
-		for _, cli := range cfg.CLITools {
-			if permissions.Providers[cli.Variable] != "" {
-				installed = append(installed, cli.Definition)
-				tools = append(tools, cli.Name)
-			}
-		}
-	}
 	return map[string]any{
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
-		"runtime_tools":            tools,
-		"cli_tools":                installed,
+		"runtime_tools":            catalog.runtimeTools(permissions.Tools),
 		"runtime_tool_permissions": catalog.toolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],
 		"outcomes":                 arrayConfigValue(config["outcomes"]),

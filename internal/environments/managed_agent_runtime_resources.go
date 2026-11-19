@@ -6,14 +6,12 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 type managedAgentRuntimeResources struct {
-	cliTools          []clitools.Binding
 	runtimeSkills     []skillsapi.RuntimeSkill
 	workerTransport   string
 	sources           []json.RawMessage

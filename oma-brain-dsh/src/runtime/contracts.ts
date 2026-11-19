@@ -1,4 +1,3 @@
-import type { CliDefinition } from "../sandbox-tools/cli.ts";
 import { HarnessError } from "@deepseek-ai/dsh-llm";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
@@ -89,7 +88,7 @@ export interface SandboxRecovery {
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;
-  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string, bridge?: ToolExecutionBridge): Promise<Payload>;
+  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload>;
 }
 
 declare module "@deepseek-ai/cordis" {
@@ -100,9 +99,8 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
-  cliTools?: CliDefinition[];
   configureModel?(call: LlmCallConfig): LlmCallConfig;
-  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; cliTools?: CliDefinition[]; externalMcpConfig: unknown }>;
+  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
   threadMcpContext?(threadId: string): Promise<ThreadMcpContext>;
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;

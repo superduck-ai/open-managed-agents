@@ -1,4 +1,3 @@
-import { lookupCli } from "./cli-package.ts";
 import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -247,44 +246,4 @@ test("call deadlines leave time for Bash background handoff and process exit", (
   expect(sandboxCallTimeoutMs(bash, { timeout: 900 })).toBe(630_000);
   expect(sandboxCallTimeoutMs(bash, {})).toBe(150_000);
   expect(sandboxCallTimeoutMs(tools.find(tool => tool.name === "Read")!, {})).toBe(180_000);
-});
-
-test("Lookup 只在授权成功后用原调用 ID 提交 CLI", async () => {
-  const submissions: Payload[] = [];
-  let authorized = false;
-  let approvals = 0;
-  const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init);
-    if (request.url.endsWith("/original/oauth-credential")) {
-      const requirement = {...await request.json(),provider:"custom:query"};
-      return Response.json(authorized ? {authorized,placeholder:"oma_ph_test"} : {requirement});
-    }
-    if (request.method === "POST") {
-      submissions.push(await request.json());
-      return Response.json({ state: "pending" });
-    }
-    return Response.json({ state: "succeeded", result: { content: [{ type: "text", text: "完成" }] } });
-  }, { preconnect: fetch.preconnect }));
-  const a = assignment();
-  a.cli_tools = [lookupCli];
-  api.assignments.set(a.session_id, a);
-  const executor = new SandboxCalls(api, a.session_id);
-  const tool = { name: "Lookup", remoteName: "Lookup", inputSchema: {}, description: "" };
-  const run = () => executor.call(tool, { args: ["app", "list"] }, new AbortController().signal, undefined, "original");
-  await expect(run()).rejects.toThrow("CLI 尚未启动");
-  expect(submissions).toHaveLength(0);
-  await executor.call(tool, { args: ["app", "list", "--help"] }, new AbortController().signal, undefined, "help");
-  expect(submissions.pop()?.input.env.LOOKUP_TOKEN).toBe("");
-  await executor.call(tool, {args:["app","list"]}, new AbortController().signal,undefined,"original",{
-    approve: async request => {
-      expect(request).toMatchObject({kind:"oauth",toolName:"RequestOAuth",callId:"original:oauth:custom:query",input:{parent_call_id:"original"}});
-      approvals++;
-      authorized = true;
-      return {allowed:true,externalResult:{isError:false,content:[{type:"text",text:'{"authorized":true}'}]}};
-    },
-    runTool: (_id, execute) => execute(), approvalChanged: () => {},
-  });
-  expect(approvals).toBe(1);
-  expect(submissions).toHaveLength(1);
-  expect(submissions[0]).toMatchObject({ call_id: "original", tool: "bash", input: { env: { LOOKUP_TOKEN: "oma_ph_test" } } });
 });

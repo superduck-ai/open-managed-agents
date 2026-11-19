@@ -1,4 +1,3 @@
-import { lookupCli } from "./cli-package.ts";
 import { expect, test } from "bun:test";
 import { OmaApi, HttpError } from "../src/api.ts";
 import { registerWorkerTask, validateBrainTask } from "../src/worker-registration.ts";
@@ -93,18 +92,6 @@ test("assignment rejects unknown launch tools", () => {
  const a = assignment();
  a.launch.tools = ["Read", "UnknownTool"];
  expect(() => validateAssignment(a)).toThrow("Invalid launch tools");
-});
-
-test("根会话可使用 CLI，子 Agent 仅接受能在子线程执行的工具", () => {
- const a = assignment();
- a.launch.tools = ["Lookup"];
- expect(() => validateAssignment(a)).toThrow("Invalid launch tools");
- a.cli_tools = [lookupCli];
- expect(() => validateAssignment(a)).not.toThrow();
- a.launch.subagents = { agents: [{name:"reader", description:"读取", systemPrompt:"读取", tools:["Lookup"]}] };
- expect(() => validateAssignment(a)).toThrow("Invalid subagent definition");
- a.launch.subagents.agents![0]!.tools = ["Read"];
- expect(() => validateAssignment(a)).not.toThrow();
 });
 
 test("trace context ignores malformed and all-zero traceparent values", () => {

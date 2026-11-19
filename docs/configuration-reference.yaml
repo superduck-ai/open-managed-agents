@@ -1,11 +1,5 @@
 llm_provider_presets_file: ""
 
-# 可选。生产配置省略此列表时不安装任何 CLI 工具。
-cli_tool_packages:
-  - manifest: /etc/oma/tools/catalog/tool.json
-    oauth_provider: ""
-    provider_env: CATALOG_OAUTH_PROVIDER
-
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is

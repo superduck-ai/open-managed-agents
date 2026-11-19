@@ -14,7 +14,6 @@ import (
 )
 
 type OAuthRequest struct {
-	CheckOnly      bool   `json:"-"`
 	ResumeThreadID string `json:"-"`
 	ResumeEventID  string `json:"-"`
 	Kind           string `json:"kind"`

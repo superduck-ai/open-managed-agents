@@ -1,9 +1,8 @@
-import { cliInvocation } from "../sandbox-tools/cli.ts";
-import { requestToolOAuth, type OAuthRequirement } from "../runtime/oauth.ts";
+import type { OAuthRequirement } from "../runtime/oauth.ts";
 import { HttpError, OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { normalizeSandboxResult } from "./output.ts";
-import { isShutdownCancel, UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxExecutor, type ToolExecutionBridge, type RemoteTool } from "../runtime/contracts.ts";
+import { isShutdownCancel, UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { sleep } from "../ccrv2/retry.ts";
 
 export const CANCELLATION_UNCONFIRMED = "Cancellation could not be confirmed. Verify external state before repeating operations with side effects.";
@@ -11,7 +10,6 @@ export const CANCELLATION_UNCONFIRMED = "Cancellation could not be confirmed. Ve
 export class SandboxCalls implements SandboxExecutor {
   constructor(readonly api: OmaApi, readonly sessionId: string) {}
 
-  get cliTools() { return this.api.assignment(this.sessionId).cli_tools ?? []; }
 
   async provision(signal: AbortSignal): Promise<void> { signal.throwIfAborted(); }
 
@@ -47,35 +45,9 @@ export class SandboxCalls implements SandboxExecutor {
     }
   }
 
-  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string, bridge?: ToolExecutionBridge, resume = false): Promise<Payload> {
+  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload> {
     if (!callId) throw new Error("Sandbox call requires a native call ID");
     signal.throwIfAborted();
-    const definition = this.cliTools.find(candidate => candidate.name === tool.name);
-    if (definition) {
-      const cli = cliInvocation(definition, args, threadId);
-      if (resume && !cli.credential) throw new ToolNotForwardedError("当前调用没有待恢复的授权");
-      let placeholder = "";
-      if (cli.credential) {
-        const requirement: OAuthRequirement = {kind:"env_oauth",parent_call_id:callId,reason:"missing",...cli.credential};
-        try {
-          let grant = await this.credential(requirement,signal,resume,threadId);
-          if (!resume && grant.requirement && bridge) {
-            await requestToolOAuth(bridge,grant.requirement,signal);
-            grant = await this.credential(requirement,signal,false,threadId);
-          }
-          if (grant.authorized !== true || !grant.placeholder || typeof grant.placeholder !== "string")
-            throw new Error("工具授权未就绪");
-          placeholder = grant.placeholder;
-        } catch (error) {
-          if (resume && signal.aborted) throw new ToolNotForwardedError("授权检查已取消，CLI 尚未启动。",{cause:error});
-          signal.throwIfAborted();
-          if (resume && (!(error instanceof HttpError) || error.status >= 500)) throw error;
-          throw new ToolNotForwardedError("工具授权检查失败，CLI 尚未启动。",{cause:error});
-        }
-      }
-      tool = {...tool,remoteName:"bash"};
-      args = cli.command(placeholder);
-    }
     try {
       await this.request(this.path("", threadId), "POST", { call_id: callId, tool: tool.remoteName, input: args, timeout_ms: sandboxCallTimeoutMs(tool, args) }, signal);
       return normalizeSandboxResult(await this.wait(callId, signal, threadId), tool.name);

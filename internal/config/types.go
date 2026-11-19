@@ -2,8 +2,6 @@ package config
 
 import (
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 )
 
 const (
@@ -18,8 +16,6 @@ type ChannelsConfig struct {
 }
 
 type Config struct {
-	CLIToolPackages        []clitools.Package         `yaml:"cli_tool_packages"`
-	CLITools               []clitools.Binding         `yaml:"-"`
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	Channels               ChannelsConfig             `yaml:"channels"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`

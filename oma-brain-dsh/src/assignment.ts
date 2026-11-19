@@ -2,7 +2,6 @@ import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
-import type { CliDefinition } from "./sandbox-tools/cli.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 import { portToolDefinition } from "./port-tools/definitions.ts";
 
@@ -28,7 +27,6 @@ export interface Assignment {
   trace_parent?: string;
   mcp_config: unknown;
   external_mcp_config?: unknown;
-  cli_tools?: CliDefinition[];
   launch: {
     version: number;
     model: string;
@@ -66,9 +64,8 @@ export function validateAssignment(a: Assignment): void {
   validateModels(a.launch.models);
   const childTools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
   childTools.add("ask_user_question");
-  const tools = new Set([...childTools, ...(a.cli_tools ?? []).map(tool => tool.name)]);
   if (!Array.isArray(a.launch.tools)
-    || a.launch.tools.some((name) => !tools.has(name)))
+    || a.launch.tools.some((name) => !childTools.has(name)))
     throw new Error("Invalid launch tools");
   validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;

@@ -734,7 +734,6 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "claim"
 	}
-	runtimeResources.cliTools = r.cfg.CLITools
 	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills, r.cfg.Env)
 	if err != nil {
 		return nil, err

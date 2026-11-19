@@ -45,32 +45,7 @@ description: "将飞书机器人连接到 OMA 智能体，配置私聊和群聊�
 
 ## 在飞书对话中授权工具
 
-### 安装需要个人授权的 CLI
-
-管理员先通过环境已有的软件包或镜像安装 CLI 可执行文件，然后在 OMA Server 部署配置中登记工具包的 JSON 清单。Server 启动时读取清单，未登记的工具不会出现在会话中。以下示例登记目录查询工具。
-
-```yaml
-cli_tool_packages:
-  - manifest: /etc/oma/tools/catalog/tool.json
-    provider_env: CATALOG_OAUTH_PROVIDER
-```
-
-```json
-{
-  "name": "CatalogLookup",
-  "description": "查询应用目录",
-  "executable": "catalog-lookup",
-  "oauth_variable": "CATALOG_TOKEN",
-  "target_host": "catalog.example.org",
-  "subcommands": ["list"],
-  "blocked_flags": ["--base-url"],
-  "public_help": true
-}
-```
-
-在需要此工具的环境中，将 `CATALOG_OAUTH_PROVIDER` 设为已有 ENV OAuth 客户端引用，并为 Agent 开启 Bash。若所有启用 Bash 的环境都应使用该工具，可在部署条目中指定 `oauth_provider` 作为默认引用。工具包负责安装命令、设置服务地址及实现服务专属的参数规则。清单中的 `public_help` 只放行形如 `list --help` 的帮助调用。
-
-私聊用户第一次调用受保护命令时，OMA 复用当前操作者的 Identity、Vault 和原生工具授权，收到授权后继续原调用。企业可通过新增清单接入其他 CLI，Server 与 Brain 使用相同的会话工具目录。
+沙箱中的 CLI 通过已有 Bash 工具运行。已挂载且有效的凭据由 Vault 注入。工具需要个人授权时，可以在实际执行中通过原生沙箱 OAuth 入口请求连接，OMA 根据当前调用、凭据变量和目标域名核对适用的客户端。普通 Bash 命令本身不会触发授权卡片。MCP 服务在实际调用返回 OAuth 质询时触发授权。
 
 1. 工具缺少适用凭据，或已有凭据需要重新授权时，回复会显示 **等待授权**。
 2. 原消息发送者点击 **前往授权**，通过飞书账号核验后，同意外部服务的 OAuth 授权。

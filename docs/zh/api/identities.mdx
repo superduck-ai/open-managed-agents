@@ -34,7 +34,7 @@ curl --fail-with-body -sS -X POST "$OMA_BASE_URL/v1/identities" \
 
 `external_subject_id` 和 `display_name` 必填。可以提供 `namespace` 区分业务场景，或用 `enabled` 设置初始状态，默认启用。也可以设置 `auto_memory_store`，指定是否启用身份的自动记忆存储配置。响应中的 `id` 是 OMA 生成的 `idn_` 标识，可用于配置固定渠道或范围配对。飞书个人身份由渠道生成，归属随原操作者保留。
 
-使用[创建会话](/docs/zh/api/endpoints/create-session)接口时，支持传入当前工作区内已启用身份的 `identity_id`。
+使用[创建会话](/docs/zh/api/sessions/create-session)接口时，支持传入当前工作区内已启用身份的 `identity_id`。
 
 ## 身份在智能体下的配置
 

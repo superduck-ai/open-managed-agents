@@ -428,8 +428,8 @@
                   {
                     "group": "渠道与身份",
                     "pages": [
-                      "docs/zh/api/resources/channels",
-                      "docs/zh/api/resources/identities"
+                      "docs/zh/api/channels",
+                      "docs/zh/api/identities"
                     ]
                   },
                   {

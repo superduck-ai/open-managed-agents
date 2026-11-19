@@ -25,13 +25,23 @@ func (w *channelWorker) confirmSelfPairing(ctx context.Context, event *contracts
 		return invalidChannelCardReceipt()
 	}
 	msg := &channelMessage{ChatID: event.ChatID, ChatType: "p2p", UserID: event.OpenID}
-	decision, err := w.admission(ctx, msg)
+	if record.Mode == "pairing" {
+		decision, err := w.pairingFor(ctx, "user", event.OpenID)
+		if err != nil {
+			return err
+		}
+		if decision == pairingRejected {
+			w.notifyChat(ctx, event.ChatID, "当前私聊未获渠道授权，无法绑定执行身份。")
+			return nil
+		}
+	}
+	input := db.ChannelPairingResume{MessageID: value.SourceID, ScopeKey: value.ScopeKey, ActorID: event.OpenID, PairingID: value.PairingID}
+	waiting, err := w.supervisor.store.HasWaitingChannelPairingInput(ctx, w.inputScope(), input)
 	if err != nil {
 		return err
 	}
-	if decision != pairingApproved {
-		w.notifyChat(ctx, event.ChatID, "当前私聊未获渠道授权，无法绑定执行身份。")
-		return nil
+	if !waiting {
+		return w.replyText(ctx, msg, "这条消息已处理或配对已失效。")
 	}
 	var version *int
 	if fixed := parseChannelMounts(record.Mounts).AgentVersion; fixed > 0 {
@@ -44,9 +54,7 @@ func (w *channelWorker) confirmSelfPairing(ctx context.Context, event *contracts
 	if err != nil {
 		return err
 	}
-	id, resumed, err := w.supervisor.store.ResumeChannelInputAfterPairing(ctx, w.inputScope(), db.ChannelPairingResume{
-		MessageID: value.SourceID, ScopeKey: value.ScopeKey, ActorID: event.OpenID, PairingID: value.PairingID,
-	})
+	id, resumed, err := w.supervisor.store.ResumeChannelInputAfterPairing(ctx, w.inputScope(), input)
 	if err != nil {
 		return err
 	}

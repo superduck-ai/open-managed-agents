@@ -24,6 +24,7 @@ type Message struct {
 	RawContentType string           `json:"raw_content_type"`
 	RootID         string           `json:"root_id"`
 	ThreadID       string           `json:"thread_id"`
+	PairingID      string           `json:"pairing_id,omitempty"`
 	Resources      []Attachment     `json:"resources"`
 	Input          *db.ChannelInput `json:"-"`
 }

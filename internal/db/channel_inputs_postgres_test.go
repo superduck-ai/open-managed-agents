@@ -34,6 +34,33 @@ func TestChannelInputsPostgres(t *testing.T) {
 		}
 		return row
 	}
+	wait, fresh, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{
+		MessageID: "waiting", ScopeKey: "chat:fixture", Payload: `{"user_id":"actor","pairing_id":"pair"}`,
+	})
+	if err != nil || !fresh {
+		t.Fatalf("创建历史等待回执：%v %v", fresh, err)
+	}
+	if _, err := database.ExecContext(t.Context(), `UPDATE channel_inputs SET state='pairing_wait' WHERE uuid=$1`, wait.UUID); err != nil {
+		t.Fatal(err)
+	}
+	card := ChannelPairingResume{MessageID: wait.MessageID, ScopeKey: wait.ScopeKey, ActorID: "other", PairingID: "pair"}
+	if ok, err := store.HasWaitingChannelPairingInput(t.Context(), scope, card); err != nil || ok {
+		t.Fatalf("其他操作者可以重放等待回执：%v %v", ok, err)
+	}
+	card.ActorID = "actor"
+	if ok, err := store.HasWaitingChannelPairingInput(t.Context(), scope, card); err != nil || !ok {
+		t.Fatalf("未找到原消息的等待回执：%v %v", ok, err)
+	}
+	if id, ok, err := store.ResumeChannelInputAfterPairing(t.Context(), scope, card); err != nil || !ok || id != wait.UUID {
+		t.Fatalf("原等待回执未续跑：%s %v %v", id, ok, err)
+	}
+	if ok, err := store.HasWaitingChannelPairingInput(t.Context(), scope, card); err != nil || ok {
+		t.Fatalf("旧确认卡可以重复续跑：%v %v", ok, err)
+	}
+	if _, err := database.ExecContext(t.Context(), `UPDATE channel_inputs SET state='handed_off' WHERE uuid=$1`, wait.UUID); err != nil {
+		t.Fatal(err)
+	}
+
 	a, b := receive("a"), receive("b")
 	if _, fresh, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: "a", ScopeKey: "chat:fixture", Payload: `{"content":"不应覆盖"}`}); err != nil || fresh {
 		t.Fatalf("重复回调不能再次接受或覆盖原文: %v %v", fresh, err)

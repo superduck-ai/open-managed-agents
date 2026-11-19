@@ -17,7 +17,7 @@ func TestConsolidateChannelExecutionPostgres(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, url)
-	if _, err := migrations.UpTo(ctx, 160); err != nil {
+	if _, err := migrations.UpTo(ctx, 161); err != nil {
 		t.Fatal(err)
 	}
 	org, workspace, identity := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
@@ -41,7 +41,7 @@ func TestConsolidateChannelExecutionPostgres(t *testing.T) {
 		(external_id,organization_uuid,workspace_uuid,channel_uuid,channel_external_id,scope_kind,platform_account,remote_id,status,identity_uuid,agent_external_id,agent_version)
 		select 'scope',organization_uuid,workspace_uuid,uuid,external_id,'direct','app','ou_actor','active',$1,'agent_test',3 from channels where external_id='paired'`, identity)
 
-	if _, err := migrations.UpTo(ctx, 163); err != nil {
+	if _, err := migrations.UpTo(ctx, 164); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}

@@ -13,6 +13,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
+const EnvOAuthInlineNameMaxRunes = 200
+
 type EnvOAuthProviderDefinition struct {
 	Name                    string `json:"name"`
 	AuthorizeEndpoint       string `json:"authorize_endpoint"`
@@ -43,7 +45,7 @@ func NormalizeEnvOAuthCustomProvider(providerKey string, provider *EnvOAuthCusto
 	provider.Scope = strings.TrimSpace(provider.Scope)
 	provider.ClientID = strings.TrimSpace(provider.ClientID)
 	provider.ClientSecret = strings.TrimSpace(provider.ClientSecret)
-	if provider.Name == "" || utf8.RuneCountInString(provider.Name) > 200 {
+	if provider.Name == "" || utf8.RuneCountInString(provider.Name) > EnvOAuthInlineNameMaxRunes {
 		return errors.New("custom_provider.name is required and must not exceed 200 characters")
 	}
 	if provider.TokenEndpointAuthMethod != "" && provider.TokenEndpointAuthMethod != "client_secret_post" && provider.TokenEndpointAuthMethod != "client_secret_basic" {

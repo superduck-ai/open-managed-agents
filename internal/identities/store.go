@@ -47,6 +47,7 @@ type Store interface {
 	SaveIdentityCleanupRun(context.Context, string, string, string, string) error
 	FindIdentityCleanupRun(context.Context, string, string) (db.CleanupRunRecord, error)
 	GetVault(context.Context, string, string) (db.Vault, error)
+	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)

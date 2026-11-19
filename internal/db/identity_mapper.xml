@@ -39,6 +39,13 @@
         WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{identityUUID} AND deleted_at IS NULL
     </select>
 
+    <select id="LockIdentityForSession" result="optional" resultType="IdentityRecord">
+        SELECT <include refid="identityColumns"/>
+        FROM identities
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{identityUUID} AND deleted_at IS NULL
+        FOR SHARE
+    </select>
+
     <select id="ListIdentities" resultType="IdentityRecord">
         SELECT <include refid="identityColumns"/>
         FROM identities

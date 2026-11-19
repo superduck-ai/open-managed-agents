@@ -10,24 +10,25 @@ import (
 )
 
 type Ingress struct {
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	ChannelUUID       string
-	ChannelExternalID string
-	ChannelType       string
-	ChannelMode       string
-	AppID             string
-	AgentExternalID   string
-	AgentVersion      *int
-	ChatType          string
-	RemoteID          string
-	ActorID           string
-	ScopeKey          string
-	ScopeKind         string
-	DisplayName       string
-	PersonalVaultID   string
-	PersonalActive    bool
-	SharedVaultIDs    []string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	ChannelUUID        string
+	ChannelExternalID  string
+	ChannelType        string
+	ChannelMode        string
+	ConfirmedPairingID string
+	AppID              string
+	AgentExternalID    string
+	AgentVersion       *int
+	ChatType           string
+	RemoteID           string
+	ActorID            string
+	ScopeKey           string
+	ScopeKind          string
+	DisplayName        string
+	PersonalVaultID    string
+	PersonalActive     bool
+	SharedVaultIDs     []string
 }
 
 type Decision struct {
@@ -56,8 +57,8 @@ func (s *Service) Preview(ctx context.Context, ingress Ingress) (Decision, error
 func (s *Service) resolve(ctx context.Context, ingress Ingress, create bool) (Decision, error) {
 	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
 	if errors.Is(err, db.ErrNotFound) {
-		if ingress.ChannelMode == "pairing" && ingress.ChatType == "p2p" {
-			return s.resolvePaired(ctx, ingress, create)
+		if create && ingress.ConfirmedPairingID != "" && ingress.ChannelMode == "pairing" && ingress.ChannelType == "feishu" && ingress.ChatType == "p2p" {
+			return s.resolvePaired(ctx, ingress, false)
 		}
 		return Decision{Mode: "legacy"}, nil
 	}
@@ -102,9 +103,12 @@ func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create boo
 	if ingress.ChatType == "p2p" {
 		ingress.RemoteID = ingress.ActorID
 	}
-	pairing, code, created, err := s.openPairing(ctx, ingress, create)
+	pairing, code, created, err := s.openPairing(ctx, ingress, create && ingress.ConfirmedPairingID == "")
 	if err != nil {
 		return Decision{}, err
+	}
+	if ingress.ConfirmedPairingID != "" && (pairing.ExternalID != ingress.ConfirmedPairingID || pairing.Status != "active") {
+		return Decision{Mode: "hold", Notice: "旧配对已失效，本条消息未执行。"}, nil
 	}
 	if create && ingress.ChannelType == "feishu" && ingress.ChatType == "p2p" && pairing.Status == "pending" {
 		if err := s.activatePersonalPairing(ctx, ingress, pairing, ingress.AgentVersion); err != nil {

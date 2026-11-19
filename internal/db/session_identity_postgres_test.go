@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func TestCreateSessionIdentityIsAtomicPostgres(t *testing.T) {
@@ -61,7 +64,7 @@ func testCreateSessionIdentityIsAtomic(t *testing.T, bindingParams InsertSession
 	if err := store.SetBusinessIdentityEnabled(ctx, workspace, identity.ExternalID, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil); !errors.Is(err, ErrConsoleIdentityDisabled) {
+	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil, nil); !errors.Is(err, ErrConsoleIdentityDisabled) {
 		t.Fatalf("停用身份拒绝创建会话：%v", err)
 	}
 	var sessions, work int
@@ -75,7 +78,22 @@ func testCreateSessionIdentityIsAtomic(t *testing.T, bindingParams InsertSession
 	if err := store.SetBusinessIdentityEnabled(ctx, workspace, identity.ExternalID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil); err != nil {
+	rollback := errors.New("结束锁定测试，回滚临时会话")
+	err = store.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if _, _, _, _, err := insertSessionTx(ctx, executor, input); err != nil {
+			return err
+		}
+		var locked string
+		err := database.QueryRowContext(ctx, `SELECT uuid::text FROM identities WHERE workspace_uuid=$1 AND uuid=$2 FOR NO KEY UPDATE NOWAIT`, workspace, identity.UUID).Scan(&locked)
+		if pgError, ok := errors.AsType[*pgconn.PgError](err); !ok || pgError.Code != "55P03" {
+			t.Errorf("会话创建后停用身份应等待事务提交：%v", err)
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatal(err)
+	}
+	if _, _, _, _, _, err := store.CreateSessionWithEvents(ctx, input, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	binding, err := store.FindSessionIdentity(ctx, workspace, input.Session.ExternalID)

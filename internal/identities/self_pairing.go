@@ -11,17 +11,18 @@ import (
 func (s *Service) AllowsSelfPairing(ctx context.Context, ingress Ingress) (bool, error) {
 	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
 	if errors.Is(err, db.ErrNotFound) {
-		return ingress.ChannelMode == "pairing", nil
+		return false, nil
 	}
 	return execution.Mode == "pairing" && !execution.EntryClosed, err
 }
 
 func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairingID string, version *int) error {
-	enabled, err := s.AllowsSelfPairing(ctx, ingress)
-	if err != nil {
+	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
+	legacy := errors.Is(err, db.ErrNotFound) && ingress.ChannelMode == "pairing"
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return unavailable(err)
 	}
-	if !enabled {
+	if !legacy && (execution.Mode != "pairing" || execution.EntryClosed) {
 		return conflict("当前渠道未开放私聊自助配对", nil)
 	}
 	row, err := s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, pairingID)
@@ -45,10 +46,10 @@ func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairi
 }
 
 func (s *Service) activatePersonalPairing(ctx context.Context, ingress Ingress, row db.ScopePairingRecord, version *int) error {
-	if _, err := s.visibleAgent(ctx, ingress.WorkspaceUUID, ingress.AgentExternalID, versionValue(version)); err != nil {
+	principal := auth.Principal{OrganizationUUID: ingress.OrganizationUUID, WorkspaceUUID: ingress.WorkspaceUUID}
+	if err := s.validatePairingAgent(ctx, principal, ingress.AgentExternalID, version); err != nil {
 		return err
 	}
-	principal := auth.Principal{OrganizationUUID: ingress.OrganizationUUID, WorkspaceUUID: ingress.WorkspaceUUID}
 	identity, err := s.PersonalActorIdentity(ctx, ingress, true)
 	if err != nil {
 		return err

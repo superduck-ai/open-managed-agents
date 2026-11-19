@@ -65,13 +65,27 @@ func (s *Service) CompletePairing(ctx context.Context, principal auth.Principal,
 	if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
 		return nil, err
 	}
-	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, input.AgentID, versionValue(input.AgentVersion)); err != nil {
+	if err := s.validatePairingAgent(ctx, principal, input.AgentID, input.AgentVersion); err != nil {
 		return nil, err
 	}
 	if input.Code != "" {
 		return s.completeByCode(ctx, principal, identity, input)
 	}
 	return s.completeByID(ctx, principal, identity, input)
+}
+
+func (s *Service) validatePairingAgent(ctx context.Context, principal auth.Principal, agentID string, version *int) error {
+	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, agentID, versionValue(version)); err != nil {
+		return err
+	}
+	_, err := s.store.GetChannelAgentEnvironment(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, agentID)
+	if errors.Is(err, db.ErrNotFound) {
+		return conflict("请先配置目标智能体的渠道执行环境", err)
+	}
+	if err != nil {
+		return unavailable(err)
+	}
+	return nil
 }
 
 func (s *Service) completeByCode(ctx context.Context, principal auth.Principal, identity db.IdentityRecord, input PairingWrite) (map[string]any, error) {
@@ -164,7 +178,7 @@ func (s *Service) UpdatePairing(ctx context.Context, principal auth.Principal, p
 	if input.AgentVersion != nil {
 		version = input.AgentVersion
 	}
-	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, agentID, versionValue(version)); err != nil {
+	if err := s.validatePairingAgent(ctx, principal, agentID, version); err != nil {
 		return nil, err
 	}
 	_, changed, rebindErr := Rebind(pairingFromRecord(row), input.Revision, identityUUID, agentID, version)

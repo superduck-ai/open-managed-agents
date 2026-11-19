@@ -248,6 +248,7 @@ type IdentityMapper interface {
 	InsertIdentity(ctx context.Context, params InsertIdentityParams) (IdentityRecord, error)
 	FindIdentity(ctx context.Context, workspaceUUID, externalID string) (IdentityRecord, bool, error)
 	FindIdentityByUUID(ctx context.Context, workspaceUUID, identityUUID string) (IdentityRecord, bool, error)
+	LockIdentityForSession(ctx context.Context, workspaceUUID, identityUUID string) (IdentityRecord, bool, error)
 	ListIdentities(ctx context.Context, params ListIdentityParams) ([]IdentityRecord, error)
 	UpdateIdentity(ctx context.Context, params UpdateIdentityParams) (int64, error)
 	SetIdentityEnabled(ctx context.Context, workspaceUUID, externalID string, enabled bool) (int64, error)

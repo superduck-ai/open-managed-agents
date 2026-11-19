@@ -119,20 +119,21 @@ func contains(values []string, want string) bool {
 }
 
 type acceptanceStore struct {
-	identities        map[string]db.IdentityRecord
-	configs           map[string]db.IdentityConfigRecord
-	pairings          map[string]db.ScopePairingRecord
-	vaults            map[string]db.Vault
-	running           []string
-	pairingCreates    int
-	channelMutations  int
-	archiveErr        error
-	listConfigErr     error
-	vaultErr          error
-	pendingCode       db.ScopePairingRecord
-	pendingHash       string
-	activated         *db.ScopePairingRecord
-	rejectPairingList bool
+	identities            map[string]db.IdentityRecord
+	configs               map[string]db.IdentityConfigRecord
+	pairings              map[string]db.ScopePairingRecord
+	vaults                map[string]db.Vault
+	running               []string
+	pairingCreates        int
+	channelMutations      int
+	archiveErr            error
+	listConfigErr         error
+	vaultErr              error
+	pendingCode           db.ScopePairingRecord
+	pendingHash           string
+	activated             *db.ScopePairingRecord
+	rejectPairingList     bool
+	pairingEnvironmentErr error
 }
 
 func newAcceptanceStore() *acceptanceStore {
@@ -433,5 +434,27 @@ func TestChannelSharedVaultsEnterIdentityCredentialScope(t *testing.T) {
 	decision, err = service.Preview(t.Context(), ingress)
 	if err != nil || decision.Mode != "hold" || len(decision.VaultIDs) != 0 {
 		t.Fatalf("共享资源不可用时回退到了个人凭据：%v %#v", err, decision)
+	}
+}
+
+func (s *acceptanceStore) GetChannelAgentEnvironment(context.Context, string, string, string) (string, error) {
+	return "env_configured", s.pairingEnvironmentErr
+}
+
+func TestPairingWriteRequiresAgentEnvironment(t *testing.T) {
+	store := newAcceptanceStore()
+	service := NewService(store, nil)
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	store.pairingEnvironmentErr = db.ErrNotFound
+	store.activated = new(store.pairings["ou_alice"])
+	_, err := service.CompletePairing(t.Context(), principal, PairingWrite{
+		PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday",
+	})
+	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.Conflict || !strings.Contains(public.PublicMessage, "渠道执行环境") {
+		t.Fatalf("缺少执行环境时应拒绝配对：%v", err)
+	}
+	_, err = service.UpdatePairing(t.Context(), principal, "chsp_alice", PairingWrite{AgentID: "agent_friday", Revision: 1})
+	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.Conflict || !strings.Contains(public.PublicMessage, "渠道执行环境") {
+		t.Fatalf("缺少执行环境时应拒绝改绑：%v", err)
 	}
 }

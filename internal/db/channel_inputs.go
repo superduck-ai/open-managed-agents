@@ -60,6 +60,10 @@ func (d *DB) ListRecoverableChannelInputs(ctx context.Context, scope ChannelInpu
 	return NewChannelInputMapper(d.mapperDB).ListRecoverable(ctx, scope)
 }
 
+func (d *DB) HasWaitingChannelPairingInput(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (bool, error) {
+	return NewChannelInputMapper(d.mapperDB).HasPairingWait(ctx, scope, input)
+}
+
 func (d *DB) ResumeChannelInputAfterPairing(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (string, bool, error) {
 	return NewChannelInputMapper(d.mapperDB).ResumeAfterPairing(ctx, scope, input)
 }

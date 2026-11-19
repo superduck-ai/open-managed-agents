@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type OAuthRequest struct {
@@ -29,7 +30,11 @@ func (r OAuthRequest) Validate() error {
 	if r.ParentCallID == "" || len(r.ParentCallID) > 256 {
 		return errors.New("OAuth request requires a tool call")
 	}
-	if len(r.InvocationID) > 128 || len(r.ProviderName) > 256 {
+	nameTooLong := len(r.ProviderName) > 256
+	if r.Provider == vaults.EnvOAuthProviderInline {
+		nameTooLong = utf8.RuneCountInString(r.ProviderName) > vaults.EnvOAuthInlineNameMaxRunes
+	}
+	if len(r.InvocationID) > 128 || nameTooLong {
 		return errors.New("invalid OAuth invocation")
 	}
 	if r.Reason != "missing" && r.Reason != "reauthorization_required" {

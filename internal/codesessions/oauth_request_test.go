@@ -1,6 +1,11 @@
 package codesessions
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
+)
 
 func TestOAuthRequestValidation(t *testing.T) {
 	for _, input := range []OAuthRequest{
@@ -22,5 +27,20 @@ func TestOAuthRequestValidation(t *testing.T) {
 		if err := input.Validate(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestInlineOAuthProviderNameUsesCharacterLimit(t *testing.T) {
+	request := OAuthRequest{
+		Kind: "env_oauth", Provider: vaults.EnvOAuthProviderInline, SecretName: "FRIDAY_4A_TOKEN",
+		ParentCallID: "bash-call", Reason: "reauthorization_required",
+		ProviderName: strings.Repeat("授", vaults.EnvOAuthInlineNameMaxRunes+1),
+	}
+	if err := request.Validate(); err == nil {
+		t.Fatal("超过字符限制的名称校验通过")
+	}
+	request.ProviderName = strings.Repeat("授", vaults.EnvOAuthInlineNameMaxRunes)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("合法的中文 OAuth 名称不能重新授权：%v", err)
 	}
 }

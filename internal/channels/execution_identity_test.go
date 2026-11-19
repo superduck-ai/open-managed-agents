@@ -62,6 +62,11 @@ func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
 	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || !ok || lookups != 1 {
 		t.Fatal("当前配对会话不可恢复，或重复读取 Vault")
 	}
+	worker.record.AppID = "app_rebound"
+	if worker.decisionCompatible(session, decision, "env_current", "chat:user") {
+		t.Fatal("更换飞书应用后普通消息可以复用旧会话")
+	}
+	worker.record.AppID = "app"
 	session.EnvironmentID = "env_old"
 	if ok, err := worker.recoverableSession(t.Context(), session, "chat:user", "", target); err != nil || ok {
 		t.Fatal("旧执行环境可恢复")

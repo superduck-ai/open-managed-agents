@@ -78,6 +78,9 @@ func (w *channelWorker) executionDecision(ctx context.Context, msg *channelMessa
 		ingress.AgentVersion = new(mounts.AgentVersion)
 	}
 	if create {
+		if msg.Input != nil {
+			ingress.ConfirmedPairingID = msg.PairingID
+		}
 		return w.supervisor.ingress.Resolve(ctx, ingress)
 	}
 	if !personalActive {
@@ -183,7 +186,7 @@ func (w *channelWorker) decisionCompatible(session omaSession, decision identiti
 	if session.Agent.ID != decision.AgentExternalID || session.EnvironmentID != environmentID {
 		return false
 	}
-	if session.Metadata["identity_id"] != decision.IdentityExternalID || session.Metadata["scope_id"] != scopeKey {
+	if session.Metadata["app_id"] != w.record.AppID || session.Metadata["identity_id"] != decision.IdentityExternalID || session.Metadata["scope_id"] != scopeKey {
 		return false
 	}
 	if session.Metadata["binding_revision"] != strconv.FormatInt(decision.BindingRevision, 10) {

@@ -87,7 +87,7 @@ func insertSessionTx(
 	}
 	if input.IdentityBinding != nil {
 		binding := *input.IdentityBinding
-		identity, found, err := NewIdentityMapper(executor).FindIdentityByUUID(ctx, session.WorkspaceUUID, binding.IdentityUUID)
+		identity, found, err := NewIdentityMapper(executor).LockIdentityForSession(ctx, session.WorkspaceUUID, binding.IdentityUUID)
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}

@@ -88,6 +88,37 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	}
 }
 
+func TestLegacyChannelKeepsAdmissionAndOnlyResumesMatchingConfirmedInput(t *testing.T) {
+	store := newAcceptanceStore()
+	service := NewService(store, nil)
+	ingress := Ingress{
+		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelUUID: "channel", ChannelExternalID: "chn_legacy",
+		ChannelType: "feishu", ChannelMode: "pairing", ChatType: "p2p", AppID: "app", ActorID: "ou_alice",
+	}
+	allow, err := service.AllowsSelfPairing(t.Context(), ingress)
+	if err != nil || allow {
+		t.Fatalf("旧准入模式启用了新自助配对：%v %v", allow, err)
+	}
+	decision, err := service.Resolve(t.Context(), ingress)
+	if err != nil || decision.Mode != "legacy" {
+		t.Fatalf("旧渠道的新消息使用了范围配对：%+v %v", decision, err)
+	}
+	decision, err = service.Preview(t.Context(), ingress)
+	if err != nil || decision.Mode != "legacy" || store.pairingCreates != 0 {
+		t.Fatalf("旧历史恢复被身份配对拦截：%+v %v", decision, err)
+	}
+	ingress.ConfirmedPairingID = "chsp_other"
+	decision, err = service.Resolve(t.Context(), ingress)
+	if err != nil || decision.Mode != "hold" {
+		t.Fatalf("旧消息可以换用其他配对：%+v %v", decision, err)
+	}
+	ingress.ConfirmedPairingID = "chsp_alice"
+	decision, err = service.Resolve(t.Context(), ingress)
+	if err != nil || decision.Mode != "execute" || decision.IdentityUUID != "id_friday" {
+		t.Fatalf("匹配的旧确认没有续跑原输入：%+v %v", decision, err)
+	}
+}
+
 func TestSelfPairingRejectsConcurrentDifferentTarget(t *testing.T) {
 	store := &selfPairingStore{acceptanceStore: newAcceptanceStore(), pairings: map[string]db.ScopePairingRecord{}, links: map[string]string{}}
 	store.activateErr = db.ErrInvalidState

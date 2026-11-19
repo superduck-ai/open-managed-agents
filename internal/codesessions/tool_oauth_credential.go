@@ -65,7 +65,7 @@ func (h *Handler) handleToolOAuthCredential(w http.ResponseWriter, r *http.Reque
 			h.errorAdapter.Write(w, r, toolCallOperationError(err))
 			return
 		}
-		providerKey := snapshot.Config.Provider(input.SecretName)
+		providerKey := snapshot.Config.ProviderFor(h.cfg.CLITools, input.SecretName, input.TargetHost)
 		if providerKey == "" || (input.Provider != "" && input.Provider != providerKey) {
 			h.errorAdapter.Write(w, r, sandboxToolDenied())
 			return

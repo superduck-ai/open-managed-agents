@@ -1,12 +1,13 @@
 package environments
 
 import (
+	"cmp"
 	"encoding/json"
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"path"
 	"strconv"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -66,14 +67,18 @@ func managedAgentSessionConfig(
 		"worker_transport":      runtimeResources.workerTransport,
 		"sandbox_memory_stores": memoryStoreDefinitions(runtimeResources.memoryMounts),
 	}
-	if len(runtimeResources.environmentConfig) > 0 {
-		variables, err := environmentVariablesFromConfig(runtimeResources.environmentConfig)
-		if err != nil {
-			return nil, err
+	if len(runtimeResources.cliTools) > 0 {
+		var variables map[string]string
+		if len(runtimeResources.environmentConfig) > 0 {
+			var err error
+			variables, err = environmentVariablesFromConfig(runtimeResources.environmentConfig)
+			if err != nil {
+				return nil, err
+			}
 		}
 		providers := clitools.OAuthProviders{}
-		for _, cli := range clitools.Bindings {
-			if provider := variables[cli.ProviderVariable]; provider != "" {
+		for _, cli := range runtimeResources.cliTools {
+			if provider := cmp.Or(variables[cli.ProviderVariable], cli.Provider); provider != "" {
 				providers[cli.Variable] = provider
 			}
 		}

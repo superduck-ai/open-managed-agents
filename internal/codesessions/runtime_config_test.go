@@ -2,10 +2,10 @@ package codesessions
 
 import (
 	"encoding/json"
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"slices"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -129,29 +129,13 @@ func TestRuntimeAutoPolicyDefersToAuthoritativeServerEvaluation(t *testing.T) {
 	}
 }
 
-func TestFridayUsesBashPolicy(t *testing.T) {
+func TestInstalledCLIUsesBashPolicy(t *testing.T) {
 	for _, policy := range []string{"always_allow", "always_ask", "always_deny"} {
 		snapshot := json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"` + policy + `"}}]}]}`)
 		expected, _ := resolveToolPermissionFromAgentSnapshot(snapshot, "Bash")
-		actual, identity := resolveToolPermissionFromAgentSnapshot(snapshot, "Friday")
-		if actual != expected || identity.ToolName != "Friday" {
-			t.Fatalf("Friday 权限或展示名称有误：%v %v", actual, identity)
-		}
-	}
-}
-
-func TestCLIProviderPrecedence(t *testing.T) {
-	for _, tc := range []struct{ config, want string }{
-		{`{"cli_oauth_providers":{"FRIDAY_4A_TOKEN":"custom:new"},"friday_oauth_provider":"custom:old"}`, "custom:new"},
-		{`{"friday_oauth_provider":"custom:old"}`, "custom:old"},
-		{`{}`, ""},
-	} {
-		var config clitools.OAuthConfig
-		if err := json.Unmarshal([]byte(tc.config), &config); err != nil {
-			t.Fatal(err)
-		}
-		if got := config.Provider("FRIDAY_4A_TOKEN"); got != tc.want {
-			t.Errorf("提供方为 %q，期望 %q", got, tc.want)
+		actual, identity := resolveToolPermissionFromAgentSnapshot(snapshot, "Lookup", clitools.Binding{Definition: clitools.Definition{Name: "Lookup"}})
+		if actual != expected || identity.ToolName != "Lookup" {
+			t.Fatalf("Catalog 权限或展示名称有误：%v %v", actual, identity)
 		}
 	}
 }

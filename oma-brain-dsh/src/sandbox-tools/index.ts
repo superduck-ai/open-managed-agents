@@ -5,7 +5,7 @@ import { object } from "../json.ts";
 import { ToolExecution } from "../runtime/execution.ts";
 import type { ToolExecutionBridge, ToolPermissions } from "../runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./definitions.ts";
-import { cliTools } from "./cli.ts";
+import { cliTool, type CliDefinition } from "./cli.ts";
 
 export const name = "sandbox-tools";
 export const inject = ["tools", "sandboxExecutor"];
@@ -13,6 +13,7 @@ export const inject = ["tools", "sandboxExecutor"];
 export interface Config {
   bridge: ToolExecutionBridge;
   tools?: string[];
+  cliTools?: CliDefinition[];
   permissions?: ToolPermissions;
   threadId?: string;
 }
@@ -41,7 +42,7 @@ function registerTools(ctx: Context, config: Config): void {
   const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions, config.threadId);
   ctx.tools.restrict({ allow: [] });
   const tools = sandboxToolDefinitions();
-  if (!config.threadId && config.tools?.includes("Bash")) tools.push(...cliTools);
+  if (!config.threadId && config.tools?.includes("Bash")) tools.push(...(config.cliTools ?? []).map(cliTool));
   for (const tool of tools) {
     if (config.tools && !config.tools.includes(tool.name)) continue;
     ctx.tools.register({

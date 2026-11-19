@@ -2,6 +2,7 @@ package environments
 
 import (
 	"encoding/json"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"strings"
@@ -29,9 +30,10 @@ func TestManagedRuntimePromptAndSkills(t *testing.T) {
 	}
 }
 
-func TestFridayProviderSnapshot(t *testing.T) {
+func TestInstalledCLIProviderSnapshot(t *testing.T) {
 	raw, err := managedAgentSessionConfig(db.Session{}, managedAgentRuntimeResources{
-		environmentConfig: json.RawMessage(`{"type":"cloud","environment":{"OMA_FRIDAY_OAUTH_PROVIDER":"custom:example"}}`),
+		cliTools:          []clitools.Binding{{Definition: clitools.Definition{Variable: "LOOKUP_TOKEN"}, Package: clitools.Package{ProviderVariable: "LOOKUP_PROVIDER"}}},
+		environmentConfig: json.RawMessage(`{"type":"cloud","environment":{"LOOKUP_PROVIDER":"custom:example"}}`),
 	}, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +41,7 @@ func TestFridayProviderSnapshot(t *testing.T) {
 	var snapshot struct {
 		Providers map[string]string `json:"cli_oauth_providers"`
 	}
-	if err := json.Unmarshal(raw, &snapshot); err != nil || snapshot.Providers["FRIDAY_4A_TOKEN"] != "custom:example" {
-		t.Fatalf("Friday 客户端引用未保存到会话配置：%v", err)
+	if err := json.Unmarshal(raw, &snapshot); err != nil || snapshot.Providers["LOOKUP_TOKEN"] != "custom:example" {
+		t.Fatalf("Catalog 客户端引用未保存到会话配置：%v", err)
 	}
 }

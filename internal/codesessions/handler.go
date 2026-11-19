@@ -89,6 +89,7 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 	if service == nil {
 		panic("codesessions: service is required")
 	}
+	service.cliTools = cfg.CLITools
 	logger = logging.LoggerOrDefault(logger)
 	handler := &Handler{
 		cfg:                    cfg,

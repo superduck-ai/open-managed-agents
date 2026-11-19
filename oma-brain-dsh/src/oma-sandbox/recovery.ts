@@ -1,7 +1,7 @@
 import { recoverMcpOAuth } from "../external-mcp/recovery.ts";
 import { externalServers } from "../external-mcp/config.ts";
 import { sandboxToolDefinitions } from "../sandbox-tools/definitions.ts";
-import { cliTools } from "../sandbox-tools/cli.ts";
+import { cliTool } from "../sandbox-tools/cli.ts";
 import { normalizeSandboxResult } from "./output.ts";
 import { admitEncodedImages } from "@deepseek-ai/dsh-attachment";
 import { withAttachmentSession } from "../attachments/remote.ts";
@@ -15,7 +15,7 @@ import { UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxRecovery
 import { toolText } from "../runtime/tools.ts";
 import { object, type Payload } from "../json.ts";
 
-const names = new Set([...cliTools, ...sandboxToolDefinitions()].map(tool => tool.name));
+const names = new Set(sandboxToolDefinitions().map(tool => tool.name));
 
 async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery): Promise<Payload> {
   const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;
@@ -57,7 +57,12 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
       await handle.flush();
       await ctx.ccrReplication.flush(id);
     }
-    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (mcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
+    const installed = new Map(sandbox.cliTools.map(cli => [cli.name, cliTool(cli)]));
+    const calls = [...pending].filter(([id, event]) => {
+      const name = event.data.name;
+      if (name.startsWith("mcp__")) return !!mcp && authorizations.has(id);
+      return names.has(name) || installed.has(name) || authorizations.has(id);
+    });
     const servers = externalServers(mcp?.config);
     const settled = await Promise.all(calls.map(async ([callId, event]) => {
       const state = authorizations.get(callId);
@@ -71,7 +76,7 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
         return { event, result, code: result.errorCode as string | undefined };
       } catch (error) {
         if (!(error instanceof HttpError) || error.status !== 404) throw error;
-        const cli = cliTools.find(tool => tool.name === event.data.name);
+        const cli = installed.get(event.data.name);
         if (cli) {
           recovery?.blocking();
           const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;

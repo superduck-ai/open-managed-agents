@@ -45,7 +45,32 @@ description: "将飞书机器人连接到 OMA 智能体，配置私聊和群聊�
 
 ## 在飞书对话中授权工具
 
-以 Friday CLI 为例。先让智能体能够在选定环境中运行 Friday CLI，并在 OMA 配置适用的 ENV OAuth 客户端、工具读取的变量名和目标服务域名。使用自定义客户端时，在服务方登记该 OMA 部署的 HTTPS 回调 `/oauth/vault/env-success`。用户在私聊中提出需要访问 Friday 的问题后，实际工具调用才会检查可用凭据。
+### 安装需要个人授权的 CLI
+
+管理员先通过环境已有的软件包或镜像安装 CLI 可执行文件，然后在 OMA Server 部署配置中登记工具包的 JSON 清单。Server 启动时读取清单，未登记的工具不会出现在会话中。以下示例登记目录查询工具。
+
+```yaml
+cli_tool_packages:
+  - manifest: /etc/oma/tools/catalog/tool.json
+    provider_env: CATALOG_OAUTH_PROVIDER
+```
+
+```json
+{
+  "name": "CatalogLookup",
+  "description": "查询应用目录",
+  "executable": "catalog-lookup",
+  "oauth_variable": "CATALOG_TOKEN",
+  "target_host": "catalog.example.org",
+  "subcommands": ["list"],
+  "blocked_flags": ["--base-url"],
+  "public_help": true
+}
+```
+
+在需要此工具的环境中，将 `CATALOG_OAUTH_PROVIDER` 设为已有 ENV OAuth 客户端引用，并为 Agent 开启 Bash。若所有启用 Bash 的环境都应使用该工具，可在部署条目中指定 `oauth_provider` 作为默认引用。工具包负责安装命令、设置服务地址及实现服务专属的参数规则。清单中的 `public_help` 只放行形如 `list --help` 的帮助调用。
+
+私聊用户第一次调用受保护命令时，OMA 复用当前操作者的 Identity、Vault 和原生工具授权，收到授权后继续原调用。企业可通过新增清单接入其他 CLI，Server 与 Brain 使用相同的会话工具目录。
 
 1. 工具缺少适用凭据，或已有凭据需要重新授权时，回复会显示 **等待授权**。
 2. 原消息发送者点击 **前往授权**，通过飞书账号核验后，同意外部服务的 OAuth 授权。

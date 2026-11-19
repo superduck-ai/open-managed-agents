@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 )
 
 type optional[T any] struct {
@@ -35,6 +37,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	CLIToolPackages        []clitools.Package         `yaml:"cli_tool_packages"`
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	Channels               ChannelsConfig             `yaml:"channels"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
@@ -213,6 +216,7 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
+		CLIToolPackages:        input.CLIToolPackages,
 		Channels:               input.Channels,
 		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
 		Env:                    input.Env,

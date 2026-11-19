@@ -5,13 +5,13 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"maps"
 	"slices"
 	"strings"
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
@@ -172,7 +172,7 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 	if !found {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
 	}
-	permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName)
+	permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName, s.cliTools...)
 	return permission, identity, nil
 }
 
@@ -189,14 +189,14 @@ type toolPermissionSnapshot struct {
 	Multiagent json.RawMessage         `json:"multiagent"`
 }
 
-func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) (resolvedToolPermission, toolIdentity) {
+func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string, installed ...clitools.Binding) (resolvedToolPermission, toolIdentity) {
 	identity := parseClaudeToolIdentity(claudeToolName)
 	var snapshot toolPermissionSnapshot
 	if err := json.Unmarshal(agentSnapshot, &snapshot); err != nil {
 		return resolvedToolPermissionAsk, identity
 	}
 	switch {
-	case slices.ContainsFunc(clitools.Bindings[:], func(binding clitools.Binding) bool { return binding.Name == claudeToolName }):
+	case slices.ContainsFunc(installed, func(tool clitools.Binding) bool { return tool.Name == claudeToolName }):
 		return resolvedToolPermissionEvaluation(resolveAgentToolPermission(snapshot.Tools, "bash"), toolIdentity{Kind: "agent_toolset", ToolName: claudeToolName})
 	case isDelegationTool(claudeToolName):
 		return delegationToolPermission(snapshot.Multiagent), toolIdentity{Kind: "delegation", ToolName: claudeToolName}

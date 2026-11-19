@@ -19,12 +19,12 @@ func (d sandboxOAuthDirectory) ResolveEnvOAuthProvider(context.Context, string) 
 }
 
 func TestSandboxOAuthMatchesConfiguredClient(t *testing.T) {
-	provider := vaults.EnvOAuthProviderSnapshot{ProviderKey: "custom:friday", Enabled: true, Configured: true, DefaultSecretName: "FRIDAY_4A_TOKEN", DefaultAllowedHosts: []string{"friday.example"}}
-	input := OAuthRequest{Kind: "env_oauth", SecretName: "FRIDAY_4A_TOKEN", TargetHost: "friday.example"}
+	provider := vaults.EnvOAuthProviderSnapshot{ProviderKey: "custom:catalog", Enabled: true, Configured: true, DefaultSecretName: "CATALOG_TOKEN", DefaultAllowedHosts: []string{"catalog.example"}}
+	input := OAuthRequest{Kind: "env_oauth", SecretName: "CATALOG_TOKEN", TargetHost: "catalog.example"}
 	wildcard := provider
 	wildcard.DefaultAllowedHosts = []string{"*.example"}
 	withPort := provider
-	withPort.DefaultAllowedHosts = []string{"friday.example:443"}
+	withPort.DefaultAllowedHosts = []string{"catalog.example:443"}
 	disabled := provider
 	disabled.Enabled = false
 	for _, test := range []struct {

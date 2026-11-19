@@ -34,6 +34,7 @@ export function createOmaSession(
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
+    cliTools: assignment.cli_tools,
     externalMcpConfig: assignment.external_mcp_config,
     externalMcpFetch: externalMcpFetch(api, assignment.session_id),
     threadMcpContext: async (threadId) => {
@@ -42,7 +43,8 @@ export function createOmaSession(
     },
     refreshTools: async (signal) => {
       const context = await omaToolContext(api, assignment.session_id, undefined, signal);
-      return { tools: context.runtime_tools, externalMcpConfig: context.mcp_config };
+      assignment.cli_tools = context.cli_tools ?? [];
+      return { tools: context.runtime_tools, cliTools: assignment.cli_tools, externalMcpConfig: context.mcp_config };
     },
     toolPermissions: { ...assignment.launch.tool_permissions },
     refreshSessionContext: async (signal, threadId) => {

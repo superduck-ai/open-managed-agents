@@ -11,6 +11,8 @@ export const CANCELLATION_UNCONFIRMED = "Cancellation could not be confirmed. Ve
 export class SandboxCalls implements SandboxExecutor {
   constructor(readonly api: OmaApi, readonly sessionId: string) {}
 
+  get cliTools() { return this.api.assignment(this.sessionId).cli_tools ?? []; }
+
   async provision(signal: AbortSignal): Promise<void> { signal.throwIfAborted(); }
 
   private path(callId: string, threadId = "root"): string {
@@ -48,8 +50,9 @@ export class SandboxCalls implements SandboxExecutor {
   async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string, bridge?: ToolExecutionBridge, resume = false): Promise<Payload> {
     if (!callId) throw new Error("Sandbox call requires a native call ID");
     signal.throwIfAborted();
-    const cli = cliInvocation(tool, args, threadId);
-    if (cli) {
+    const definition = this.cliTools.find(candidate => candidate.name === tool.name);
+    if (definition) {
+      const cli = cliInvocation(definition, args, threadId);
       if (resume && !cli.credential) throw new ToolNotForwardedError("当前调用没有待恢复的授权");
       let placeholder = "";
       if (cli.credential) {

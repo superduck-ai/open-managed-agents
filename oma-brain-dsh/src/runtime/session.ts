@@ -76,6 +76,7 @@ export class SessionRuntime {
     this.sandboxTools = await scope.plugin(SandboxTools, {
       bridge: this.bridge,
       tools: this.config.tools,
+      cliTools: this.config.cliTools,
       permissions: toolPermissions,
       threadId: this.parent ? this.config.id : undefined,
     });
@@ -188,9 +189,9 @@ export class SessionRuntime {
     this.abort.signal.throwIfAborted();
     const next = await this.config.refreshTools(this.abort.signal);
     this.abort.signal.throwIfAborted();
-    if (JSON.stringify(next.tools) !== JSON.stringify(this.config.tools)) {
+    if (JSON.stringify(next.tools) !== JSON.stringify(this.config.tools) || JSON.stringify(next.cliTools) !== JSON.stringify(this.config.cliTools)) {
       if (!this.sandboxTools) throw new Error("Session tools are not initialized");
-      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, permissions: this.config.toolPermissions });
+      this.sandboxTools.update({ bridge: this.bridge, tools: next.tools, cliTools:next.cliTools, permissions: this.config.toolPermissions });
       await this.sandboxTools.await();
       if (this.hostTools) {
         this.hostTools.update({ ...this.hostTools.config, tools: next.tools, permissions: this.config.toolPermissions });
@@ -201,6 +202,7 @@ export class SessionRuntime {
         await this.questionTools.await();
       }
       this.config.tools = next.tools;
+      this.config.cliTools = next.cliTools;
     }
     await this.externalMcp.update(next.externalMcpConfig);
     this.config.externalMcpConfig = next.externalMcpConfig;

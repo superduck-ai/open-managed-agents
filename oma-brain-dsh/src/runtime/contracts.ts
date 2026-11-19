@@ -1,3 +1,4 @@
+import type { CliDefinition } from "../sandbox-tools/cli.ts";
 import { HarnessError } from "@deepseek-ai/dsh-llm";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
@@ -99,8 +100,9 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  cliTools?: CliDefinition[];
   configureModel?(call: LlmCallConfig): LlmCallConfig;
-  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
+  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; cliTools?: CliDefinition[]; externalMcpConfig: unknown }>;
   threadMcpContext?(threadId: string): Promise<ThreadMcpContext>;
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;

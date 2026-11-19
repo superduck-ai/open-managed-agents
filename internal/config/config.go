@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 )
 
 const DefaultAPIKey = "sk-ant-local-default"
@@ -25,6 +27,10 @@ func Load() (Config, error) {
 	}
 
 	cfg, err := loadYAMLConfig(configPath)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.CLITools, err = clitools.Load(cfg.CLIToolPackages, configFileDirectory(configPath))
 	if err != nil {
 		return Config{}, err
 	}

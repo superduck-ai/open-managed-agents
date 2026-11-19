@@ -8,7 +8,6 @@
   "llmModels.apiBackend": "API 后端",
   "managedAgents.sessions.editDescription": "修改当前会话的设置。",
   "managedAgents.sessions.errors.agentRequiresIdle": "请在会话空闲时修改 Agent 配置。",
-  "managedAgents.sessions.errors.idleRequired": "只有空闲且未归档的会话可以修改。",
   "managedAgents.sessions.errors.agentUpdate": "会话创建后，只能修改 Agent 的工具和 MCP 服务器配置。",
   "managedAgents.sessions.errors.forbidden": "你没有编辑此会话的权限。",
   "managedAgents.sessions.errors.notFound": "找不到此会话。",

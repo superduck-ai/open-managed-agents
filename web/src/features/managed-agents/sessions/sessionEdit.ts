@@ -29,9 +29,6 @@ export function sessionEditErrorMessage(error: unknown, msg: I18nMsg) {
   if (detail === 'session must be idle to update the agent') {
     return msg('managedAgents.sessions.errors.agentRequiresIdle', 'Wait until the session is idle to edit the agent.');
   }
-  if (detail === 'session must be idle and unarchived to update') {
-    return msg('managedAgents.sessions.errors.idleRequired', 'Only idle, unarchived sessions can be updated.');
-  }
   if (
     detail === 'agent update must be an object' ||
     detail === 'only tools and mcp_servers can be updated in an existing session'

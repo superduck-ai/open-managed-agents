@@ -47,7 +47,7 @@ func TestChannelInputMapperScopesAndPayloadBindings(t *testing.T) {
 	assertMapperSQLContains(t, queries[3], "ORDER BY i.created_at,i.uuid FOR UPDATE")
 	assertMapperSQLContains(t, queries[7], "payload=payload-'content'-'resources'")
 	for _, query := range queries[10:] {
-		for _, part := range []string{"i.state='pairing_wait'", "i.message_id=$6", "i.scope_key=$7", "i.payload->>'user_id'=$8", "i.payload->>'pairing_id'=$9"} {
+		for _, part := range []string{"i.state='pairing_wait'", "i.message_id=$9", "i.scope_key=$6", "i.payload->>'user_id'=$7", "i.payload->>'pairing_id'=$8"} {
 			assertMapperSQLContains(t, query, part)
 		}
 	}

@@ -39,19 +39,26 @@
     SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/> AND i.uuid=#{inputUUID}
   </select>
   <sql id="pairingWait">
-    <include refid="scope"/> AND i.state='pairing_wait' AND i.message_id=#{input.MessageID}
+    <include refid="scope"/> AND i.state='pairing_wait'
     AND i.scope_key=#{input.ScopeKey} AND i.payload->>'user_id'=#{input.ActorID}
     AND i.payload->>'pairing_id'=#{input.PairingID}
   </sql>
   <select id="HasPairingWait" result="scalar">
-    SELECT EXISTS (SELECT 1 FROM channel_inputs i WHERE <include refid="pairingWait"/>)
+    SELECT EXISTS (SELECT 1 FROM channel_inputs i WHERE <include refid="pairingWait"/> AND i.message_id=#{input.MessageID})
   </select>
   <select id="ResumeAfterPairing" result="optional">
     WITH resumed AS (
       UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
-      WHERE <include refid="pairingWait"/>
+      WHERE <include refid="pairingWait"/> AND i.message_id=#{input.MessageID}
       RETURNING i.uuid::text AS uuid
     ) SELECT uuid FROM resumed
+  </select>
+  <select id="ResumeOAuthWaiters">
+    WITH resumed AS (
+      UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
+      WHERE <include refid="pairingWait"/> AND i.payload->>'oauth_provider'=#{provider}
+      RETURNING i.*
+    ) SELECT <include refid="columns"/> FROM resumed i ORDER BY i.created_at,i.uuid
   </select>
   <select id="LockSources">
     SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/>

@@ -82,6 +82,10 @@ func (d *DB) ResumeChannelInputAfterPairing(ctx context.Context, scope ChannelIn
 	return NewChannelInputMapper(d.mapperDB).ResumeAfterPairing(ctx, scope, input)
 }
 
+func (d *DB) ResumeOAuthWaiters(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume, provider string) ([]ChannelInput, error) {
+	return NewChannelInputMapper(d.mapperDB).ResumeOAuthWaiters(ctx, scope, input, provider)
+}
+
 func (d *DB) PrepareChannelInputBatch(ctx context.Context, scope ChannelInputScope, owner string, batch ChannelInputBatch) (ChannelInput, error) {
 	if len(batch.MessageIDs) == 0 {
 		return ChannelInput{}, ErrInvalidState

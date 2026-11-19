@@ -66,13 +66,16 @@ func gitMountWithoutToken(mount *channelGitMount) *channelGitMount {
 
 func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Principal, record *db.ChannelRecord, input channelMutation) error {
 	mounts := parseChannelMounts(record.Mounts)
-	if input.PairingProvider != nil {
+	changedProvider := input.PairingProvider != nil && *input.PairingProvider != mounts.PairingProvider
+	if changedProvider {
 		mounts.PairingProvider = *input.PairingProvider
 	}
 	if mounts.PairingProvider != "" {
 		if record.Mode != "pairing" || record.ExecutionMode == nil || *record.ExecutionMode != "pairing" {
 			return invalidChannelMounts(errors.New("个人授权需要私聊配对模式"))
 		}
+	}
+	if changedProvider && mounts.PairingProvider != "" {
 		if _, err := s.runtime.pairingProvider(ctx, mounts.PairingProvider); err != nil {
 			return invalidChannelMounts(err)
 		}

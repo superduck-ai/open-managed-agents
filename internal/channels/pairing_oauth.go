@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 
 	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -166,12 +167,19 @@ func (s *Service) CompletePairingOAuth(ctx context.Context, workspace string, c 
 	if err = s.supervisor.ingress.ConfirmSelfPairing(ctx, channelIngress(t.Scope.Channel, msg, row.ScopeKey), receipt.PairingID, version); err != nil {
 		return err
 	}
-	if err = w.adapter.ResumeReply(receipt.Card).Update(ctx, contracts.Reply{Title: "连接 " + t.Request.ProviderName, Status: "已连接", Blocks: []contracts.ReplyBlock{{Text: "已连接"}}, Ended: true}); err != nil {
-		s.logger.WarnContext(ctx, "更新配对授权卡失败", "input_uuid", row.UUID, "error", err)
-	}
-	id, resumed, err := s.store.ResumeChannelInputAfterPairing(ctx, w.inputScope(), db.ChannelPairingResume{MessageID: row.MessageID, ScopeKey: row.ScopeKey, ActorID: t.Scope.ActorID, PairingID: receipt.PairingID})
-	if err != nil || !resumed {
+	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ScopeKey: row.ScopeKey, ActorID: t.Scope.ActorID, PairingID: receipt.PairingID}, t.Request.Provider)
+	if err != nil {
 		return err
 	}
-	return w.claimAndDispatchInput(ctx, id)
+	var dispatchErr error
+	for _, waiter := range waiters {
+		var msg channelMessage
+		if err := json.Unmarshal([]byte(waiter.Payload), &msg); err == nil && msg.PairingCard != "" {
+			if err := w.adapter.ResumeReply(msg.PairingCard).Update(ctx, contracts.Reply{Status: "已连接", Blocks: []contracts.ReplyBlock{{Text: "已连接"}}, Ended: true}); err != nil {
+				s.logger.WarnContext(ctx, "更新配对授权卡失败", "input_uuid", waiter.UUID, "error", err)
+			}
+		}
+		dispatchErr = errors.Join(dispatchErr, w.claimAndDispatchInput(ctx, waiter.UUID))
+	}
+	return dispatchErr
 }

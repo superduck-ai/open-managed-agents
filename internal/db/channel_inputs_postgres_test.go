@@ -185,3 +185,37 @@ func TestChannelInputsPostgres(t *testing.T) {
 		t.Fatalf("未知命令结果不能自动再执行: %+v %v", rows, err)
 	}
 }
+
+func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
+	store, database := newTranscriptArchiveTestDB(t)
+	scope := ChannelInputScope{OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), ChannelUUID: uuid.NewV4().String(), ChannelType: "feishu", AccountID: "app_fixture"}
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO channels(uuid,external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,binding_status,app_id) VALUES($1,'chnl_batch',$2,$3,'agent_fixture','配对恢复','feishu','pairing','bound',$4)`, scope.ChannelUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct{ id, actor, provider string }{{"one", "actor", "client"}, {"two", "actor", "client"}, {"other", "another", "client"}, {"old", "actor", "previous"}} {
+		row, _, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: input.id, ScopeKey: "chat", Payload: fmt.Sprintf(`{"user_id":%q,"pairing_id":"pair","oauth_provider":%q}`, input.actor, input.provider)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "worker"); err != nil || !found {
+			t.Fatalf("首次认领失败：%v", err)
+		}
+		if err := store.HoldPairingOAuth(t.Context(), scope, row.UUID, "worker", "{}"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	match := ChannelPairingResume{ActorID: "actor", PairingID: "pair", ScopeKey: "chat"}
+	rows, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	if err != nil || len(rows) != 2 || rows[0].MessageID != "one" || rows[1].MessageID != "two" {
+		t.Fatalf("等待消息不匹配：%+v %v", rows, err)
+	}
+	for _, row := range rows {
+		if _, ok, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "restart"); err != nil || !ok {
+			t.Fatalf("恢复的消息无法认领：%v", err)
+		}
+	}
+	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	if err != nil || len(again) != 0 {
+		t.Fatalf("重复回调恢复了已受理的消息：%+v %v", again, err)
+	}
+}

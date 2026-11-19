@@ -31,23 +31,23 @@ async function mount(backend: Backend) {
   return { session, close };
 }
 
-for (const phase of ["requested", "dispatch", "removed-tool"] as const) {
+for (const phase of ["requested", "dispatch", "removed-tool", "removed-before-oauth"] as const) {
   test(`native ${phase} tool recovery persists once across another restart`, async () => {
     const backend = new Backend();
     cleanups.push(async () => { backend.stop(); });
-    const removed = phase === "removed-tool";
+    const removed = phase.startsWith("removed");
     const name = removed ? "RemovedTool" : "Bash";
     const args = removed ? '{"args":["app","list"]}' : '{"command":"write"}';
     const first = await mount(backend);
     const callId = "interrupted-call";
     await seedInterruptedTool(first.session, "interrupted-input", callId, { name, arguments: args }, phase !== "requested");
-    if (removed) (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
+    if (phase === "removed-tool") (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
     await first.session.checkpoint();
     await first.close();
     const recovered = await mount(backend);
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
     expect(results).toHaveLength(1);
-    expect(results[0]?.data.error?.code).toBe("TOOL_NOT_STARTED");
+    expect(results[0]?.data.error?.code).toBe(phase === "removed-before-oauth" ? "TOOL_OUTCOME_UNKNOWN" : "TOOL_NOT_STARTED");
     expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
       .find(block => block.type === "tool_result" && block.tool_use_id === callId);

@@ -289,8 +289,16 @@ func (d *DB) BusinessIdentityStats(ctx context.Context, workspaceUUID, identityU
 	return NewIdentityMapper(d.mapperDB).IdentityStats(ctx, workspaceUUID, identityUUID, since)
 }
 
-func (d *DB) ListBusinessIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit int) ([]IdentityAgentUsageRecord, error) {
-	return NewIdentityMapper(d.mapperDB).ListIdentityAgents(ctx, workspaceUUID, identityUUID, since, limit)
+func (d *DB) IdentityDirectory(ctx context.Context, params IdentityDirectoryParams) (string, error) {
+	return NewIdentityMapper(d.mapperDB).IdentityDirectory(ctx, params)
+}
+
+func (d *DB) ListIdentityChannels(ctx context.Context, workspaceUUID, identityUUID string) ([]IdentityChannelBindingRecord, error) {
+	return NewIdentityMapper(d.mapperDB).ListIdentityChannels(ctx, workspaceUUID, identityUUID)
+}
+
+func (d *DB) ListBusinessIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit, offset int) ([]IdentityAgentUsageRecord, error) {
+	return NewIdentityMapper(d.mapperDB).ListIdentityAgents(ctx, workspaceUUID, identityUUID, since, limit, offset)
 }
 
 func (d *DB) ListRunningIdentitySessions(ctx context.Context, workspaceUUID, identityUUID string) ([]string, error) {

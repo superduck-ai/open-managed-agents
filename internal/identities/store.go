@@ -8,6 +8,7 @@ import (
 )
 
 type Store interface {
+	IdentityDirectory(context.Context, db.IdentityDirectoryParams) (string, error)
 	CreateBusinessIdentity(context.Context, db.InsertIdentityParams) (db.IdentityRecord, error)
 	FindBusinessIdentity(context.Context, string, string) (db.IdentityRecord, error)
 	FindBusinessIdentityByUUID(context.Context, string, string) (db.IdentityRecord, error)
@@ -41,7 +42,8 @@ type Store interface {
 	FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error)
 	ListIdentitySessions(context.Context, string, string, int) ([]db.SessionIdentityRecord, error)
 	BusinessIdentityStats(context.Context, string, string, *time.Time) (db.IdentityStatsRecord, error)
-	ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int) ([]db.IdentityAgentUsageRecord, error)
+	ListIdentityChannels(context.Context, string, string) ([]db.IdentityChannelBindingRecord, error)
+	ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int, int) ([]db.IdentityAgentUsageRecord, error)
 	ListRunningIdentitySessions(context.Context, string, string) ([]string, error)
 	ListAgentIdentityBindings(context.Context, string, string) ([]db.AgentBindingRecord, error)
 	IsPersonalChannelVault(context.Context, string, string) (bool, error)

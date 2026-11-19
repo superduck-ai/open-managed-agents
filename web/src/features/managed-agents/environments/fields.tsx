@@ -146,11 +146,7 @@ export function EnvironmentNetworking({ values, onChange, readOnly }: Environmen
               icon: LockKeyhole,
             },
           ].map(({ value, label, icon: Icon }) => (
-            <RadioGroupItem
-              key={value}
-              value={value}
-              className="h-7 w-full aspect-auto items-center justify-center gap-2 rounded-md border-[0.5px] border-transparent bg-transparent text-sm text-muted-foreground after:hidden data-checked:border-border data-checked:bg-background data-checked:text-foreground data-checked:shadow-none dark:bg-transparent dark:data-checked:bg-background [&>[data-slot=radio-group-indicator]]:hidden"
-            >
+            <RadioGroupItem key={value} value={value} variant="segment">
               <Icon className="size-4" strokeWidth={1.5} aria-hidden />
               {label}
             </RadioGroupItem>

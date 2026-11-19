@@ -34,6 +34,17 @@ type InsertIdentityParams struct {
 	AutoMemoryStore   bool
 }
 
+type IdentityDirectoryParams struct {
+	OrganizationUUID string
+	WorkspaceUUID    string
+	Search           string
+	Status           string
+	AgentID          string
+	Sort             string
+	Offset           int
+	Limit            int
+}
+
 type UpdateIdentityParams struct {
 	WorkspaceUUID     string
 	ExternalID        string
@@ -225,6 +236,14 @@ type IdentityAgentUsageRecord struct {
 	LastUsedAt      *time.Time `db:"last_used_at"`
 }
 
+type IdentityChannelBindingRecord struct {
+	AgentExternalID   string `db:"agent_external_id"`
+	ChannelExternalID string `db:"channel_external_id"`
+	ChannelType       string `db:"channel_type"`
+	Name              string `db:"name"`
+	BindingStatus     string `db:"binding_status"`
+}
+
 type AgentBindingRecord struct {
 	IdentityExternalID string `db:"identity_external_id"`
 	DisplayName        string `db:"display_name"`
@@ -289,7 +308,9 @@ type IdentityMapper interface {
 	FindSessionIdentity(ctx context.Context, workspaceUUID, sessionExternalID string) (SessionIdentityRecord, bool, error)
 	ListIdentitySessions(ctx context.Context, workspaceUUID, identityUUID string, limit int) ([]SessionIdentityRecord, error)
 	IdentityStats(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time) (IdentityStatsRecord, error)
-	ListIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit int) ([]IdentityAgentUsageRecord, error)
+	IdentityDirectory(ctx context.Context, params IdentityDirectoryParams) (string, error)
+	ListIdentityChannels(ctx context.Context, workspaceUUID, identityUUID string) ([]IdentityChannelBindingRecord, error)
+	ListIdentityAgents(ctx context.Context, workspaceUUID, identityUUID string, since *time.Time, limit, offset int) ([]IdentityAgentUsageRecord, error)
 	ListRunningIdentitySessions(ctx context.Context, workspaceUUID, identityUUID string) ([]string, error)
 	ListAgentBindings(ctx context.Context, workspaceUUID, agentExternalID string) ([]AgentBindingRecord, error)
 	PersonalVault(ctx context.Context, workspaceUUID, vaultExternalID string) (bool, error)

@@ -91,6 +91,11 @@ func (s *Service) ListIdentities(ctx context.Context, principal auth.Principal, 
 	return rows, next, nil
 }
 
+func (s *Service) identityDirectory(ctx context.Context, params db.IdentityDirectoryParams) (string, error) {
+	data, err := s.store.IdentityDirectory(ctx, params)
+	return data, mapStore(err, "身份列表不可用")
+}
+
 func (s *Service) GetIdentity(ctx context.Context, principal auth.Principal, externalID string) (db.IdentityRecord, error) {
 	row, err := s.store.FindBusinessIdentity(ctx, principal.WorkspaceUUID, externalID)
 	return row, mapStore(err, "执行身份不存在")

@@ -1,12 +1,14 @@
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, CircleAlert, Loader2, MailCheck } from 'lucide-react';
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/shared/ui/input-otp';
+import { REGEXP_ONLY_DIGITS } from 'input-otp';
 import { sendMagicLink, verifyMagicLink } from '../../shared/auth/api';
 import { useAuth } from '../../shared/auth/context';
 import { returnToFromSearch } from '../../shared/auth/redirects';
@@ -21,6 +23,8 @@ type LoginFlowProps = {
   onVerifyMagicLink?: (emailAddress: string, code: string) => Promise<unknown>;
   onAuthenticated: () => Promise<void> | void;
 };
+
+const otpSlotIndexes = [0, 1, 2, 3, 4, 5] as const;
 
 const topNavItems = [
   { id: 'auth.login.topNav.developerDocs', label: 'Developer Docs', path: 'overview' },
@@ -43,7 +47,7 @@ export function LoginPage() {
   if (status === 'loading' || status === 'authenticated') {
     return (
       <LoginShell>
-        <section className="flex min-h-[calc(100vh-9rem)] items-center justify-center py-10">
+        <section className="flex w-full items-center justify-center">
           <Card className="w-full max-w-md">
             <CardContent className="py-8 text-sm text-muted-foreground">
               {msg('app.loading', 'Loading Open Managed Agents...')}
@@ -78,6 +82,7 @@ export function LoginFlow({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   function loginErrorMessage(err: unknown, fallback: string) {
     const apiError = err as { code?: unknown } | undefined;
@@ -109,19 +114,22 @@ export function LoginFlow({
     }
   }
 
-  async function handleCodeSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitVerificationCode(codeValue: string) {
+    if (isSubmittingRef.current) {
+      return;
+    }
     setError(null);
     setNotice(null);
 
-    if (code.length !== 6) {
+    if (codeValue.length !== 6) {
       setError(msg('auth.login.codeLengthError', 'Enter the 6-digit verification code.'));
       return;
     }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
-      await onVerifyMagicLink(submittedEmail, code);
+      await onVerifyMagicLink(submittedEmail, codeValue);
       await onAuthenticated();
     } catch (err) {
       const apiError = err as { status?: unknown; code?: unknown } | undefined;
@@ -131,7 +139,21 @@ export function LoginFlow({
           : loginErrorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
       );
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleCodeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitVerificationCode(code);
+  }
+
+  function handleCodeChange(rawValue: string) {
+    const nextCode = rawValue.replace(/\D/g, '').slice(0, 6);
+    setCode(nextCode);
+    if (nextCode.length === 6 && nextCode !== code) {
+      void submitVerificationCode(nextCode);
     }
   }
 
@@ -151,7 +173,7 @@ export function LoginFlow({
 
   return (
     <LoginShell>
-      <section className="flex min-h-[calc(100dvh-4rem)] items-center justify-center py-10">
+      <section className="flex w-full items-center justify-center">
         {step === 'email' ? (
           <form className="w-full max-w-[420px]" onSubmit={handleEmailSubmit}>
             <Card className="w-full">
@@ -216,20 +238,43 @@ export function LoginFlow({
                     {msg('auth.login.verificationCode', 'Verification code')}
                   </FieldLabel>
                   <FieldDescription className="break-words">
-                    {msg('auth.login.codeSentTo', 'We sent a 6-digit code to {email}.', {
-                      email: submittedEmail,
-                    })}
+                    {msg(
+                      'auth.login.codeSentTo',
+                      'We sent a 6-digit code for {email}. Check your email or Feishu messages.',
+                      {
+                        email: submittedEmail,
+                      },
+                    )}
                   </FieldDescription>
-                  <Input
+                  <InputOTP
                     id="login-code"
+                    aria-disabled={isSubmitting || undefined}
                     autoComplete="one-time-code"
-                    className="h-12 text-center font-mono font-medium tracking-[0.24em]"
+                    autoFocus
+                    containerClassName="w-full"
                     inputMode="numeric"
                     maxLength={6}
-                    onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
+                    onChange={(nextValue) => {
+                      if (!isSubmitting) {
+                        handleCodeChange(nextValue);
+                      }
+                    }}
+                    pasteTransformer={(pasted) => pasted.replace(/\D/g, '')}
+                    pattern={REGEXP_ONLY_DIGITS}
+                    pushPasswordManagerStrategy="none"
+                    readOnly={isSubmitting}
                     value={code}
-                  />
+                  >
+                    <InputOTPGroup className="grid w-full grid-cols-6 gap-2 sm:gap-2.5">
+                      {otpSlotIndexes.map((index) => (
+                        <InputOTPSlot
+                          key={index}
+                          index={index}
+                          className="h-12 w-full rounded-lg border-[0.5px] border-input bg-background font-mono text-base font-medium shadow-none first:rounded-lg first:border-[0.5px] last:rounded-lg data-[active=true]:border-foreground data-[active=true]:ring-[0.5px] data-[active=true]:ring-foreground"
+                        />
+                      ))}
+                    </InputOTPGroup>
+                  </InputOTP>
                 </Field>
 
                 <StatusMessage error={error} notice={notice} />
@@ -262,8 +307,8 @@ function LoginShell({ children }: { children: ReactNode }) {
   const { locale, msg } = useI18n();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b-[0.5px] border-border bg-background">
+    <div className="flex min-h-dvh flex-col bg-background text-foreground">
+      <header className="shrink-0 border-b-[0.5px] border-border bg-background">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
           <a className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground" href="/">
             <BrandLogo decorative />
@@ -288,7 +333,9 @@ function LoginShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl px-5 lg:px-8">{children}</main>
+      <main className="mx-auto flex w-full max-w-7xl flex-1 items-center justify-center px-5 py-6 lg:px-8">
+        {children}
+      </main>
     </div>
   );
 }

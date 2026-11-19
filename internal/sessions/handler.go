@@ -41,6 +41,7 @@ type Handler struct {
 	eventObserver   SessionEventObserver
 	admitExecution  func(context.Context, string, string, string, bool) error
 	resolveIdentity func(context.Context, auth.Principal, string) (string, error)
+	enqueueTitle    db.SessionTitleEnqueuer
 	ports           *sessionports.Settings
 }
 

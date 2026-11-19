@@ -105,7 +105,7 @@ export function InvitationDialog({
             {action.kind === 'revoke'
               ? msg(
                   'platformAdmin.theInvitationCanNoLongerBeAcceptedAfterRevocation',
-                  'The invitation can no longer be accepted after revocation. Pending email deliveries will be canceled.',
+                  'The invitation can no longer be accepted after revocation. Pending notifications will be canceled.',
                 )
               : msg(
                   'platformAdmin.theRecipientMustSignInWithThisEmailAnd',

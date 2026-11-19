@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { retrieveSessionDetailSession } from '../api';
 import { errorMessage } from '../utils';
 import type { SessionApiResponse } from '../types';
+import { sessionTitleRefreshInterval } from './sessionTitleRefresh';
 
 export function useSessionIdSearch(workspaceId: string, value: string, enabled: boolean, onPage: boolean) {
   const queryClient = useQueryClient();
@@ -18,12 +19,13 @@ export function useSessionIdSearch(workspaceId: string, value: string, enabled: 
     queryFn: () => retrieveSessionDetailSession(debouncedId, workspaceId),
     enabled: handled && debouncedId === id,
     retry: false,
+    refetchInterval: (query) => (query.state.data ? sessionTitleRefreshInterval(query.state.data) : false),
   });
   return {
     handled,
     session: handled && id === debouncedId ? query.data : undefined,
     loading: handled && (id !== debouncedId || query.isPending),
-    error: handled && id === debouncedId && query.isError ? errorMessage(query.error) : null,
+    error: handled && id === debouncedId && query.isError && !query.data ? errorMessage(query.error) : null,
     refresh: () => void query.refetch(),
     syncSession: async (sessionId: string, session: SessionApiResponse | null) => {
       const queryKey = ['session-id-search', workspaceId, sessionId];

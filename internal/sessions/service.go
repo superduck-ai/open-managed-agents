@@ -212,7 +212,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 	if err != nil {
 		return db.Session{}, internalError("Could not prepare initial events", err)
 	}
-	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared)
+	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared, h.enqueueTitle)
 	if err != nil {
 		if mapped, ok := mapSessionCreateError(err); ok {
 			return db.Session{}, mapped
@@ -398,9 +398,13 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	var changed bool
 	if len(changedSessionFields(current, next)) > 0 {
 		next.UpdatedAt = time.Now().UTC()
-		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+		setTitle := len(body.Title) > 0
+		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next, setTitle)
 		if err != nil {
 			return mapSessionLoadError(err, sessionID)
+		}
+		if !setTitle {
+			current.Title = updated.Title
 		}
 		if fields := changedSessionFields(current, updated); changed && len(fields) > 0 {
 			event, err := h.sessionUpdatedEvent(updated, fields)
@@ -747,12 +751,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	var changes db.SessionEventChanges
-	if request != nil {
-		changes, err = h.eventPayloads.AppendSessionInputRequest(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations, *request)
-	} else {
-		changes, err = h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
-	}
+	changes, err := h.eventPayloads.AppendSessionUserEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations, request, h.enqueueTitle)
 	if err != nil {
 		recordSessionEventsRejected(r.Context(), sessionEventRejectionReason(err))
 		if errors.Is(err, db.ErrInvalidState) {

@@ -126,7 +126,7 @@ func TestChatPublicStart(t *testing.T) {
 	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
 	provider.failNext.Store(true)
-	failed := createPublicChat(t, e)
+	failed := createPublicChatWithTitle(t, e, "")
 	waitRealWorker(t, "failed work settled by background runner", func() bool {
 		work, err := e.database.GetLatestEnvironmentWorkForSession(t.Context(), e.key.WorkspaceUUID.String(), e.environment.ExternalID, failed.session.UUID)
 		requireOK(t, err)
@@ -146,25 +146,37 @@ func TestChatPublicStart(t *testing.T) {
 
 func createPublicChat(t *testing.T, e *liveEnv) *liveSession {
 	t.Helper()
+	return createPublicChatWithTitle(t, e, "Chat verification")
+}
+
+func createPublicChatWithTitle(t *testing.T, e *liveEnv, title string) *liveSession {
+	t.Helper()
 	var session struct {
 		ID string `json:"id"`
 	}
-	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}, 200), &session))
+	body := map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}
+	if title != "" {
+		body["title"] = title
+	}
+	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, body, 200), &session))
 	t.Cleanup(func() {
 		e.requestContext(context.Background(), t, "POST", "/v1/sessions/"+session.ID+"/archive", e.apiKey, nil, 200)
 		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+session.ID, e.apiKey, nil, 200)
 	})
 	record, _, err := e.database.GetSession(t.Context(), e.key.WorkspaceUUID.String(), session.ID)
 	requireOK(t, err)
-	if record.Title != nil {
+	if title == "" && record.Title != nil {
 		t.Fatalf("new session title = %q, want nil", *record.Title)
+	}
+	if title != "" && (record.Title == nil || *record.Title != title) {
+		t.Fatalf("new session did not keep explicit title %q", title)
 	}
 	return &liveSession{env: e, session: record}
 }
 
 func verifyPublicTurn(t *testing.T, e *liveEnv, previewSeen chan struct{}) {
 	t.Helper()
-	f := createPublicChat(t, e)
+	f := createPublicChatWithTitle(t, e, "")
 	ctx, cancel := context.WithTimeout(t.Context(), chatTimeout(t, 90*time.Second))
 	defer cancel()
 	events, closeStream := connectChatStream(t, ctx, f)

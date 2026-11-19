@@ -64,6 +64,7 @@ import {
   useState,
 } from 'react';
 import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from './sessionDetailData';
+import { useSessionTitleSync } from './useSessionTitleSync';
 import {
   buildSessionDetailLaneState,
   buildSessionDetailSummary,
@@ -347,6 +348,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setSession(null);
     setLoadError(null);
     setMetadataError(null);
     setThreads([]);
@@ -441,6 +443,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     refreshKey: refreshKey + eventRefreshKey,
   });
   const events = eventData.events;
+  useSessionTitleSync(session, events, activeWorkspaceId, setSession, sessionId);
   const { budget, budgetReached } = useSessionBudgetSync(session, events, activeWorkspaceId, mutationError, setSession);
   const eventsLoading = eventData.loading || eventData.childLoading;
   const eventError = eventData.error;
@@ -702,7 +705,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     if (!session) return;
     await applyBudgetChange(session, usd, {
       workspaceId: activeWorkspaceId,
-      onUpdated: setSession,
+      onUpdated: (updated) =>
+        setSession((current) =>
+          current?.id === updated.id ? { ...current, usage: updated.usage, budget: updated.budget } : current,
+        ),
       onError: setMutationError,
       onBusyChange: (busy) => setBusyAction(busy ? 'budget' : null),
       toastFor: (cents) => budgetToastMessage(cents, msg),

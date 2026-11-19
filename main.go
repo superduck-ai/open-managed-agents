@@ -42,6 +42,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -243,17 +244,6 @@ func run(bootstrap *slog.Logger) (err error) {
 	}
 	deploymentStore.Configure(jobClient)
 	prebuilds.Configure(jobClient)
-	if err := jobClient.Start(ctx); err != nil {
-		return fmt.Errorf("start deployment scheduler: %w", err)
-	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := jobClient.Stop(stopCtx); err != nil {
-			logger.Error("stop deployment scheduler", "error", err)
-		}
-	}()
-
 	stopReporter, err := startStateMetrics(ctx, cfg, database, natsConnection, logger)
 	if err != nil {
 		return err
@@ -294,6 +284,18 @@ func run(bootstrap *slog.Logger) (err error) {
 		TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
 		WorkerEventAcks:        workerEventAcks,
 	})
+	apiServer.RegisterSessionTitleWorker(workers, jobClient)
+	if err := jobClient.Start(ctx); err != nil {
+		return fmt.Errorf("start River workers: %w", err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), riverjobs.SoftStopTimeout+5*time.Second)
+		defer cancel()
+		if err := jobClient.Stop(stopCtx); err != nil {
+			logger.Error("stop River workers", "error", err)
+		}
+	}()
+
 	apiServer.StartChannels(ctx)
 	stopChannels := sync.OnceFunc(apiServer.StopChannels)
 	defer stopChannels()
@@ -335,6 +337,7 @@ func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logge
 		transcriptretention.Queue:          {MaxWorkers: 2},
 		evaluations.JobQueue:               {MaxWorkers: 4},
 		identities.CleanupQueue:            {MaxWorkers: 2},
+		sessions.TitleQueue:                {MaxWorkers: 2},
 	}
 	if invitationsEnabled {
 		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}

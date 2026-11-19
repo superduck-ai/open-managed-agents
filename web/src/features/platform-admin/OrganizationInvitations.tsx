@@ -30,7 +30,7 @@ export function OrganizationInvitations({
     pending: msg('platformAdmin.queued', 'Queued'),
     sending: msg('platformAdmin.sending', 'Sending'),
     failed: msg('platformAdmin.deliveryFailed', 'Delivery failed'),
-    sent: msg('platformAdmin.acceptedBySMTP', 'Accepted by SMTP'),
+    sent: msg('platformAdmin.acceptedBySMTP', 'Submitted for sending'),
     cancelled: msg('platformAdmin.canceled', 'Canceled'),
     not_queued: msg('platformAdmin.noPlatformDeliveryRecord', 'No platform delivery record'),
   };
@@ -52,7 +52,7 @@ export function OrganizationInvitations({
     },
     {
       accessorKey: 'delivery_status',
-      header: msg('platformAdmin.emailStatus', 'Email status'),
+      header: msg('platformAdmin.emailStatus', 'Delivery status'),
       cell: ({ row }) => deliveries[row.original.delivery_status] ?? row.original.delivery_status,
     },
     {
@@ -119,7 +119,7 @@ export function OrganizationInvitations({
       <p className="text-sm text-muted-foreground">
         {msg(
           'platformAdmin.sMTPAcceptanceDoesNotConfirmInboxDeliveryOrInvitation',
-          'SMTP acceptance does not confirm inbox delivery or invitation acceptance.',
+          'Submission does not confirm receipt or invitation acceptance.',
         )}
       </p>
       <DirectoryTable

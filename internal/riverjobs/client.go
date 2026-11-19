@@ -15,6 +15,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
+const SoftStopTimeout = 10 * time.Second
+
 func Migrate(ctx context.Context, database *db.DB, logger *slog.Logger) error {
 	migrator, err := rivermigrate.New(riverdatabasesql.New(database.SQLDB()), &rivermigrate.Config{Schema: "public", Logger: logging.LoggerOrDefault(logger)})
 	if err != nil {
@@ -34,7 +36,7 @@ func NewClient(database *db.DB, logger *slog.Logger, workers *river.Workers, que
 			Queues:              queues,
 			Logger:              riverClientLogger(logger),
 			JobTimeout:          2 * time.Minute,
-			SoftStopTimeout:     10 * time.Second,
+			SoftStopTimeout:     SoftStopTimeout,
 			DurablePeriodicJobs: river.DurablePeriodicJobsConfig{Enabled: true},
 		})
 }

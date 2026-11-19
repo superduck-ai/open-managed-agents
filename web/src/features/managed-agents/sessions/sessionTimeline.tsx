@@ -151,7 +151,7 @@ export function SessionSummaryChip({
   const chip = (
     <span
       className={clsx(
-        'inline-flex h-6 min-w-0 max-w-56 shrink-0 items-center gap-1.5 text-xs text-muted-foreground',
+        'inline-flex h-6 min-w-0 max-w-56 shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground',
         className,
       )}
     >

@@ -285,11 +285,11 @@ func (e *SessionFileMountConflictError) Error() string {
 }
 
 func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
-	session, thread, resources, work, _, err := d.CreateSessionWithEvents(ctx, input, nil)
+	session, thread, resources, work, _, err := d.CreateSessionWithEvents(ctx, input, nil, nil)
 	return session, thread, resources, work, err
 }
 
-func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInput, events []SessionEvent) (Session, SessionThread, []SessionResource, EnvironmentWork, []SessionEvent, error) {
+func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInput, events []SessionEvent, enqueueTitle SessionTitleEnqueuer) (Session, SessionThread, []SessionResource, EnvironmentWork, []SessionEvent, error) {
 	var session Session
 	var thread SessionThread
 	var resources []SessionResource
@@ -319,7 +319,7 @@ func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInp
 			return txErr
 		}
 		thread = threadRow.thread()
-		return nil
+		return enqueueFirstSessionTitle(ctx, executor, session, created, enqueueTitle)
 	})
 	return session, thread, resources, work, created, err
 }
@@ -342,13 +342,14 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 	return row.session(), true, nil
 }
 
-func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, bool, error) {
+func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session, setTitle bool) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
 		WorkspaceUUID:   workspaceUUID,
 		ExternalID:      externalID,
 		AgentSnapshot:   agentJSONArg(next.AgentSnapshot),
 		Title:           next.Title,
+		SetTitle:        setTitle,
 		Metadata:        agentJSONArg(next.Metadata),
 		Budget:          agentJSONArg(next.Budget),
 		BudgetReachedAt: next.BudgetReachedAt,
@@ -765,11 +766,15 @@ func (d *DB) AppendSessionEvents(
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
 ) (SessionEventChanges, error) {
-	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil, nil)
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil, nil, nil)
 }
 
 func (d *DB) AppendSessionInputRequest(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, outcomeEvaluations json.RawMessage, request SessionInputRequest) (SessionEventChanges, error) {
-	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, outcomeEvaluations, nil, &request)
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, outcomeEvaluations, nil, &request, nil)
+}
+
+func (d *DB) AppendSessionUserEvents(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, outcomes json.RawMessage, request *SessionInputRequest, enqueueTitle SessionTitleEnqueuer) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, outcomes, nil, request, enqueueTitle)
 }
 
 type SessionBudgetTransition struct {
@@ -778,10 +783,10 @@ type SessionBudgetTransition struct {
 }
 
 func (d *DB) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, transition SessionBudgetTransition) (SessionEventChanges, error) {
-	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition, nil)
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition, nil, nil)
 }
 
-func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition, request *SessionInputRequest) (SessionEventChanges, error) {
+func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition, request *SessionInputRequest, enqueueTitle SessionTitleEnqueuer) (SessionEventChanges, error) {
 	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -825,6 +830,9 @@ func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExte
 			if txErr != nil {
 				return mapNoRows(txErr)
 			}
+		}
+		if txErr := enqueueFirstSessionTitle(ctx, executor, session, result.Events, enqueueTitle); txErr != nil {
+			return txErr
 		}
 		if request != nil {
 			return saveSessionInputRequest(ctx, executor, session, *request, changes)

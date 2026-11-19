@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
@@ -13,7 +14,7 @@ import (
 )
 
 // 发送回执随原回复保存。重放 RequestOAuth 时继续使用同一张飞书卡片。
-func (r *replyRunner) detachFridayCard(ctx context.Context, view *contracts.Reply) error {
+func (r *replyRunner) detachOAuthCard(ctx context.Context, view *contracts.Reply) error {
 	if r.task.delivery == nil || r.msg.ChatType != "p2p" || view.OAuthOrigin == "" || view.Ended || view.Interrupted {
 		return nil
 	}
@@ -22,13 +23,14 @@ func (r *replyRunner) detachFridayCard(ctx context.Context, view *contracts.Repl
 			continue
 		}
 		var request codesessions.OAuthRequest
-		if json.Unmarshal([]byte(action.Input), &request) != nil || request.Kind != "env_oauth" || request.SecretName != "FRIDAY_4A_TOKEN" || request.TargetHost != "friday-tx.seewo.com" {
+		if json.Unmarshal([]byte(action.Input), &request) != nil || request.Validate() != nil {
 			continue
 		}
+		name := oauthServiceName(request)
 		id := action.Value.ToolUseID
 		if r.oauthCards[id] == "" {
 			action.Value.SourceID = r.task.delivery.ReplyMessageID
-			card := contracts.Reply{Title: "连接 Friday", Status: "等待授权", OAuthOrigin: view.OAuthOrigin, Interactions: []contracts.Interaction{action}, DeliveryKey: id}
+			card := contracts.Reply{Title: "连接 " + name, Status: "等待授权", OAuthOrigin: view.OAuthOrigin, Interactions: []contracts.Interaction{action}, DeliveryKey: id}
 			stream, err := r.worker.adapter.OpenReply(ctx, r.msg, card)
 			if err != nil {
 				return err
@@ -53,7 +55,7 @@ func (r *replyRunner) detachFridayCard(ctx context.Context, view *contracts.Repl
 			}
 			r.oauthCards = receipts.OAuthCards
 		}
-		view.Status = "已请求 Friday 授权"
+		view.Status = "已请求 " + name + " 授权"
 		view.StopValue = nil
 	}
 	view.Interactions = slices.DeleteFunc(view.Interactions, func(action contracts.Interaction) bool { return r.oauthCards[action.Value.ToolUseID] != "" })
@@ -85,8 +87,12 @@ func (r *replyRunner) settleOAuthCards(ctx context.Context, event omaEvent) erro
 		} else if !terminalEvent(event) && event.Type != "user.interrupt" {
 			continue
 		}
+		var input codesessions.OAuthRequest
+		if err := json.Unmarshal(pending.Input, &input); err != nil {
+			return err
+		}
 		stream := r.worker.adapter.ResumeReply(receipt)
-		if err := stream.Update(ctx, contracts.Reply{Title: "连接 Friday", Status: status, Ended: true, Blocks: []contracts.ReplyBlock{{Text: status}}}); err != nil {
+		if err := stream.Update(ctx, contracts.Reply{Title: "连接 " + oauthServiceName(input), Status: status, Ended: true, Blocks: []contracts.ReplyBlock{{Text: status}}}); err != nil {
 			return err
 		}
 		if status == "已连接" {
@@ -96,6 +102,10 @@ func (r *replyRunner) settleOAuthCards(ctx context.Context, event omaEvent) erro
 		}
 	}
 	return nil
+}
+
+func oauthServiceName(input codesessions.OAuthRequest) string {
+	return cmp.Or(input.ProviderName, input.MCPServerName, input.Provider, input.TargetHost)
 }
 
 func (r *replyRunner) continueAfterOAuth(ctx context.Context, requestID string) error {

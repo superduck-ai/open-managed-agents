@@ -251,10 +251,13 @@ test("call deadlines leave time for Bash background handoff and process exit", (
 test("Friday 只在授权成功后用原调用 ID 提交 CLI", async () => {
   const submissions: Payload[] = [];
   let authorized = false;
+  let approvals = 0;
   const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
-    if (request.url.endsWith("/original/friday-oauth"))
-      return authorized ? Response.json({ authorized, placeholder: "oma_ph_test" }) : new Response(null, { status: 409 });
+    if (request.url.endsWith("/original/oauth-credential")) {
+      const requirement = {...await request.json(),provider:"custom:query"};
+      return Response.json(authorized ? {authorized,placeholder:"oma_ph_test"} : {requirement});
+    }
     if (request.method === "POST") {
       submissions.push(await request.json());
       return Response.json({ state: "pending" });
@@ -270,8 +273,16 @@ test("Friday 只在授权成功后用原调用 ID 提交 CLI", async () => {
   expect(submissions).toHaveLength(0);
   await executor.call(tool, { args: ["app", "list", "--help"] }, new AbortController().signal, undefined, "help");
   expect(submissions.pop()?.input.env.FRIDAY_4A_TOKEN).toBe("");
-  authorized = true;
-  await run();
+  await executor.call(tool, {args:["app","list"]}, new AbortController().signal,undefined,"original",{
+    approve: async request => {
+      expect(request).toMatchObject({kind:"oauth",toolName:"RequestOAuth",callId:"original:oauth:custom:query",input:{parent_call_id:"original"}});
+      approvals++;
+      authorized = true;
+      return {allowed:true,externalResult:{isError:false,content:[{type:"text",text:'{"authorized":true}'}]}};
+    },
+    runTool: (_id, execute) => execute(), approvalChanged: () => {},
+  });
+  expect(approvals).toBe(1);
   expect(submissions).toHaveLength(1);
   expect(submissions[0]).toMatchObject({ call_id: "original", tool: "bash", input: { env: { FRIDAY_4A_TOKEN: "oma_ph_test" } } });
 });

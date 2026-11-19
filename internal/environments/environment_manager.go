@@ -2,6 +2,7 @@ package environments
 
 import (
 	"encoding/json"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"path"
 	"strconv"
 	"strings"
@@ -70,8 +71,14 @@ func managedAgentSessionConfig(
 		if err != nil {
 			return nil, err
 		}
-		if provider := variables["OMA_FRIDAY_OAUTH_PROVIDER"]; provider != "" {
-			body["friday_oauth_provider"] = provider
+		providers := map[string]string{}
+		for _, cli := range clitools.Bindings {
+			if provider := variables[cli.ProviderVariable]; provider != "" {
+				providers[cli.Variable] = provider
+			}
+		}
+		if len(providers) > 0 {
+			body["cli_oauth_providers"] = providers
 		}
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {

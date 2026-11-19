@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"io"
 	"net/http"
 	"slices"
@@ -777,8 +778,12 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 	}
 	config := codeSessionConfig(record.Metadata)
 	tools := catalog.runtimeTools(permissions.Tools)
-	if stringField(config, "friday_oauth_provider") != "" && slices.Contains(tools, "Bash") {
-		tools = append(tools, "Friday")
+	if slices.Contains(tools, "Bash") {
+		for _, cli := range clitools.Bindings {
+			if cliOAuthProvider(config, cli.Variable) != "" {
+				tools = append(tools, cli.Name)
+			}
+		}
 	}
 	return map[string]any{
 		"cwd":                      record.WorkDir,
@@ -894,6 +899,18 @@ func codeSessionWorkerSSEEventID(event db.CodeSessionEvent) string {
 		}
 	}
 	return event.ExternalID
+}
+
+func cliOAuthProvider(config map[string]any, variable string) string {
+	if provider := stringField(objectField(config, "cli_oauth_providers"), variable); provider != "" {
+		return provider
+	}
+	for _, cli := range clitools.Bindings {
+		if variable == cli.Variable {
+			return stringField(config, cli.LegacyProviderKey)
+		}
+	}
+	return ""
 }
 
 func codeSessionConfig(metadata json.RawMessage) map[string]any {

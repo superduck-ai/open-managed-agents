@@ -255,7 +255,7 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 func (r *replyRunner) update(ctx context.Context) error {
 	for attempt := range channelAskAttempts {
 		view := r.reply.view()
-		if err := r.detachFridayCard(ctx, &view); err != nil {
+		if err := r.detachOAuthCard(ctx, &view); err != nil {
 			return err
 		}
 		err := r.stream.Update(ctx, view)

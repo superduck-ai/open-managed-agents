@@ -4,7 +4,7 @@ import { ToolExecution } from "../runtime/execution.ts";
 import { requestToolOAuth } from "../runtime/oauth.ts";
 import type { RemoteTool, ToolExecutionBridge, SandboxExecutor } from "../runtime/contracts.ts";
 import { externalServers } from "./config.ts";
-import { ExternalMcpClient } from "./client.ts";
+import { connectedTools, ExternalMcpClient, mcpInvocation } from "./client.ts";
 import { persistToolOutput } from "./output.ts";
 
 interface McpRegistration {
@@ -119,7 +119,7 @@ export class ExternalMcp {
           this.failedClients.delete(client);
           this.discovery = Promise.resolve([...(await this.discovery ?? []).filter(binding => binding.client !== client), ...tools.map(tool => ({ client, tool }))]);
           for (const tool of tools) this.installTool(registration, client, tool);
-          return JSON.stringify({ tools: tools.map(tool => ({ name: tool.name, description: tool.description })) });
+          return connectedTools(tools);
         },
       }));
     }
@@ -130,10 +130,11 @@ export class ExternalMcp {
       const execution = new ToolExecution({
         provision: (signal) => client.provision(signal),
         call: async (remote, args, signal, _threadId, callId) => persistToolOutput(
-          await client.call(remote, args, signal, authenticationFailure, callId ? async () => {
+          await client.call(remote, args, signal, authenticationFailure, callId ? async canRetry => {
             await requestToolOAuth(bridge, {
               kind: "mcp_oauth", mcp_server_name: client.server.name, mcp_server_url: client.server.url.href,
               parent_call_id: callId, reason: "reauthorization_required",
+              ...(canRetry ? {invocation_id:mcpInvocation(remote,args)} : {}),
             }, signal);
           } : undefined), sandbox, signal, { threadId },
         ),

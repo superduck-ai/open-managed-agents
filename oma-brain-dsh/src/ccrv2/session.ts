@@ -29,6 +29,7 @@ import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "
 
 declare module "@deepseek-ai/dsh-session/types" {
   interface PluginRecordMap {
+    "plugin:oma/tool-oauth": {callId: string; invocation?: string; dispatched?: boolean; server?: string; discovery?: boolean};
     "plugin:oma/subagent-runtime": { version: 1; runtime: "oma" | "dsh" };
   }
 }
@@ -387,13 +388,13 @@ export class CcrSession {
       let reason: Parameters<typeof turnOutcome>[0] = this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" };
       const last = events.findLast(event => event.type === "assistant/message" || event.type === "tool/result" || event.type === "user/message");
       if (reason.kind === "interrupted" && inputId === this.inputId && last?.type === "tool/result" && !last.data.message.isError
-        && events.some(event => event.type === "tool/call" && event.data.name === "Friday" && event.data.callId === last.data.message.toolCallId)) {
+        && events.some(event => { const record = pluginRecordOf(event); return record?.type === "plugin:oma/tool-oauth" && object(record.data).callId === last.data.message.toolCallId; })) {
         this.opening = false;
         await this.checkpoint();
         this.recoveryControlsReady.resolve();
         this.recoveryBlocked?.();
         this.agent.followup(createUserMessage({ source: { kind: "system-prompt" }, content: [
-          { type: "text", text: "Friday 已完成查询，请根据刚才的工具结果回答原问题。" },
+          { type: "text", text: "授权后的工具调用已完成，请根据刚才的工具结果继续处理用户的原问题。" },
         ] }));
         await this.agent.whenIdle();
         reason = this.rootTurnReason ?? reason;
@@ -460,6 +461,13 @@ export class CcrSession {
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
     const requestId = crypto.randomUUID();
     const ownerId = threadId ?? this.id;
+    const oauthOwner = request.kind === "oauth" ? (threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session) : undefined;
+    const invocation = request.input.kind === "mcp_oauth" ? request.input.invocation_id : undefined;
+    if (oauthOwner) appendPluginRecord(oauthOwner, "plugin:oma/tool-oauth", {
+      callId:request.input.parent_call_id,
+      ...(request.input.kind === "mcp_oauth" && {server:request.input.mcp_server_name, discovery:request.input.reason === "missing"}),
+      ...(invocation && {invocation})
+    });
     const details = { tool_name: request.toolName, action_description: `Use ${request.toolName}`,
       tool_use_id: request.callId, request_id: requestId, input: request.input,
       ...(threadId ? { session_thread_id: threadId } : {}) };
@@ -517,6 +525,10 @@ export class CcrSession {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
       await this.updateStatus();
+    }
+    if (oauthOwner && invocation && !decision.externalResult?.isError && decision.behavior === "allow") {
+      appendPluginRecord(oauthOwner,"plugin:oma/tool-oauth",{callId:request.input.parent_call_id,dispatched:true});
+      await this.checkpoint();
     }
     return { allowed: decision.behavior === "allow", input: decision.updatedInput,
       ...(decision.externalResult !== undefined ? { externalResult: validatedExternalToolResult(decision.externalResult) } : {}),

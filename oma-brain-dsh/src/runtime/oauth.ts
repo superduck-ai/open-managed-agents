@@ -5,6 +5,8 @@ import { toolText } from "./tools.ts";
 export interface OAuthRequirement {
   kind: "env_oauth" | "mcp_oauth";
   provider?: string;
+  invocation_id?: string;
+  target_host?: string;
   secret_name?: string;
   mcp_server_name?: string;
   mcp_server_url?: string;

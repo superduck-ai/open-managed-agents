@@ -42,12 +42,13 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
     if (friday) {
       backend.modelScript = [toolEvents("echo check", "followup-call"), textEvents("恢复查询完成")];
       const route = backend.route.bind(backend);
-      backend.route = request => request.url.endsWith("/interrupted-call/friday-oauth?resume=1")
+      backend.route = request => request.url.endsWith("/interrupted-call/oauth-credential?resume=1")
         ? Promise.resolve(Response.json({ authorized: true, placeholder: "oma_ph_test" })) : route(request);
     }
     const first = await mount(backend);
     const callId = "interrupted-call";
     await seedInterruptedTool(first.session, "interrupted-input", callId, { name, arguments: args }, phase !== "requested");
+    if (friday) (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
     await first.session.checkpoint();
     await first.close();
     let decisions = 0;
@@ -95,7 +96,7 @@ test("Friday 恢复保留临时授权错误和已提交但无法确认的取消�
   let interrupt: () => void = () => {};
   backend.route = async request => {
     const url = new URL(request.url);
-    if (url.pathname.endsWith("/friday-oauth"))
+    if (url.pathname.endsWith("/oauth-credential"))
       return available ? Response.json({ authorized: true, placeholder: "oma_ph_test" }) : new Response(null, { status: 503 });
     if (url.pathname.endsWith("/tool-calls") && request.method === "POST") submitted = true;
     if (submitted && url.pathname.endsWith("/friday-call") && request.method === "GET") interrupt();

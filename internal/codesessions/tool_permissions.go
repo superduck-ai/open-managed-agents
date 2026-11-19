@@ -5,7 +5,9 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
+	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -194,8 +196,8 @@ func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claud
 		return resolvedToolPermissionAsk, identity
 	}
 	switch {
-	case claudeToolName == "Friday":
-		return resolvedToolPermissionEvaluation(resolveAgentToolPermission(snapshot.Tools, "bash"), toolIdentity{Kind: "agent_toolset", ToolName: "Friday"})
+	case slices.ContainsFunc(clitools.Bindings[:], func(binding clitools.Binding) bool { return binding.Name == claudeToolName }):
+		return resolvedToolPermissionEvaluation(resolveAgentToolPermission(snapshot.Tools, "bash"), toolIdentity{Kind: "agent_toolset", ToolName: claudeToolName})
 	case isDelegationTool(claudeToolName):
 		return delegationToolPermission(snapshot.Multiagent), toolIdentity{Kind: "delegation", ToolName: claudeToolName}
 	case strings.HasPrefix(claudeToolName, "mcp__"):
@@ -526,7 +528,7 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, s
 	if request.EventType != "agent.custom_tool_use" {
 		return false, nil
 	}
-	if sandboxOAuthRequest(request) {
+	if request.ToolName == "RequestOAuth" {
 		if err := s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID}); err != nil {
 			return true, err
 		}
@@ -535,6 +537,8 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, s
 				return true, err
 			}
 		}
+	}
+	if sandboxOAuthRequest(request) {
 		return true, s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(db.CodeSession) error { return nil })
 	}
 	if payload.IsError && len(payload.Content) == 0 {

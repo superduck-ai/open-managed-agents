@@ -70,7 +70,7 @@ func (h *Handler) ResolveOAuthResult(ctx context.Context, sessionID, requestID s
 }
 
 func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSession, input codesessions.OAuthRequest, prepare func(context.Context, db.VaultCredential) error) (json.RawMessage, error) {
-	if input.Kind != "env_oauth" {
+	if input.Kind != "env_oauth" && input.ResumeEventID == "" {
 		return nil, errors.New("CLI 入口只支持 ENV OAuth")
 	}
 	if input.ResumeEventID == "" && input.Reason == "missing" {
@@ -79,6 +79,9 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 		} else if err != nil || result != nil {
 			return result, err
 		}
+	}
+	if input.CheckOnly {
+		return jsonv2.Marshal(map[string]any{"requirement": input})
 	}
 	session, found, err := h.db.GetSession(ctx, code.WorkspaceUUID, code.SessionExternalID)
 	if err != nil {
@@ -133,6 +136,20 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 		}
 		if result.IsError {
 			return nil, apperr.New(apperr.Conflict, "OAuth 授权未完成", nil)
+		}
+		var grant struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		var decision struct {
+			Authorized bool `json:"authorized"`
+		}
+		if jsonv2.Unmarshal(event.Payload, &grant) != nil || len(grant.Content) != 1 || jsonv2.Unmarshal([]byte(grant.Content[0].Text), &decision) != nil || !decision.Authorized {
+			return nil, apperr.New(apperr.Conflict, "OAuth 授权未确认", nil)
+		}
+		if input.Kind == "mcp_oauth" {
+			return jsonv2.Marshal(decision)
 		}
 		resultJSON, err := h.oauthEnvironmentResult(ctx, code, input, prepare, true)
 		if err == nil && resultJSON == nil {

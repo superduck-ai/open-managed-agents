@@ -83,7 +83,7 @@ export interface SandboxRecovery {
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;
-  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload>;
+  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string, bridge?: ToolExecutionBridge): Promise<Payload>;
 }
 
 declare module "@deepseek-ai/cordis" {

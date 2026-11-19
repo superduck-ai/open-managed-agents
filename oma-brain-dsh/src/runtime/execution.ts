@@ -50,7 +50,7 @@ export class ToolExecution {
     let result: Payload;
     try {
       result = await this.bridge.runTool(exec.callId, async () => decision.externalResult
-        ?? await this.sandbox.call(tool, effective, exec.signal, this.threadId, exec.callId), readOnly);
+        ?? await this.sandbox.call(tool, effective, exec.signal, this.threadId, exec.callId, this.bridge), readOnly);
       if (result.errorCode === "TOOL_OUTCOME_UNKNOWN") throw new UnknownSandboxOutcomeError(toolText(result));
     } catch (error) {
       if (error instanceof UnknownSandboxOutcomeError) throw error;

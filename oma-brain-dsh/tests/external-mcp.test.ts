@@ -9,7 +9,9 @@ import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
 import { mcpServerPrefix } from "../src/external-mcp/server-name.ts";
 import { externalServers } from "../src/external-mcp/config.ts";
-import { ExternalMcpClient } from "../src/external-mcp/client.ts";
+import { recoverMcpOAuth } from "../src/external-mcp/recovery.ts";
+import { SandboxCalls } from "../src/oma-sandbox/client.ts";
+import { ExternalMcpClient, mcpInvocation } from "../src/external-mcp/client.ts";
 import { registerWorkerTask } from "../src/worker-registration.ts";
 import { Backend, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
@@ -1177,4 +1179,37 @@ test("首次授权发现的真实 MCP 工具应保留到下一轮", async () => 
     expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
     expect((await nativeOutcomes(f.session))?.after_oauth?.failed).toBe(false);
   } finally { await f.close(); }
+});
+
+test("MCP 重新授权后仅以获准参数派发一次，未知结果保留", async () => {
+  const p = peer();
+  const backend = new Backend();
+  const server = externalServers(p.config)[0]!;
+  const client = new ExternalMcpClient(server);
+  const signal = new AbortController().signal;
+  try {
+    await backend.ready;
+    const api = new OmaApi(backend.url);
+    api.assignments.set(backend.a.session_id,backend.a);
+    backend.route = async request => {
+      expect(new URL(request.url).searchParams.get("resume")).toBe("1");
+      return Response.json({authorized:true});
+    };
+    const sandbox = new SandboxCalls(api,backend.a.session_id);
+    const [tool] = await client.discover(signal);
+    const args = {url:"https://docs.example/test"};
+    const state = {invocation:mcpInvocation(tool!,args),dispatched:false};
+    const call = {callId:"original",name:tool!.name,arguments:JSON.stringify(args)};
+    const run = () => recoverMcpOAuth(call,state,server,fetch,sandbox,signal,async id => {
+      expect(id).toBe(call.callId);
+      expect(p.requests.filter(r => r.method === "tools/call")).toHaveLength(0);
+      state.dispatched = true;
+    });
+    call.arguments = "{}";
+    expect((await run()).errorCode).toBe("TOOL_NOT_STARTED");
+    call.arguments = JSON.stringify(args);
+    expect((await run()).isError).toBe(false);
+    expect((await run()).errorCode).toBe("TOOL_OUTCOME_UNKNOWN");
+    expect(p.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
+  } finally {await client.close();backend.stop();p.close();}
 });

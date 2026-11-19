@@ -37,9 +37,9 @@ func TestFridayProviderSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var snapshot struct {
-		Provider string `json:"friday_oauth_provider"`
+		Providers map[string]string `json:"cli_oauth_providers"`
 	}
-	if err := json.Unmarshal(raw, &snapshot); err != nil || snapshot.Provider != "custom:example" {
+	if err := json.Unmarshal(raw, &snapshot); err != nil || snapshot.Providers["FRIDAY_4A_TOKEN"] != "custom:example" {
 		t.Fatalf("Friday 客户端引用未保存到会话配置：%v", err)
 	}
 }

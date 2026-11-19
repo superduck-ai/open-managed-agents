@@ -2,6 +2,7 @@ import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
+import { cliTools } from "./sandbox-tools/cli.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 import { portToolDefinition } from "./port-tools/definitions.ts";
 
@@ -62,9 +63,8 @@ export function validateAssignment(a: Assignment): void {
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
   validateModels(a.launch.models);
-  const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
+  const tools = new Set([...sandboxToolDefinitions(), ...cliTools, ...webToolDefinitions(), portToolDefinition()].map((tool) => tool.name));
   tools.add("ask_user_question");
-  tools.add("Friday");
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !tools.has(name)))
     throw new Error("Invalid launch tools");

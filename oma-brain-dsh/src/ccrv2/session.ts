@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
-import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
@@ -248,10 +248,10 @@ export class CcrSession {
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
-    const inputResults = this.replay(this.agent.session.snapshotEvents());
+    const inputResults = await this.replay(this.agent.session.snapshotEvents());
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
-      try { this.replay((await handle.read()).events, thread.id); }
+      try { await this.replay((await handle.read()).events, thread.id); }
       finally { await handle.close(); }
     }
     this.pendingEvents.push(...inputResults, ...recoveryEvents);
@@ -329,7 +329,7 @@ export class CcrSession {
       .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
   }
 
-  private replay(events: readonly SessionEvent[], threadId?: string): Payload[] {
+  private async replay(events: readonly SessionEvent[], threadId?: string): Promise<Payload[]> {
     const completions: Payload[] = [];
     const tools = new CcrToolResults();
     let inputId = "";
@@ -357,7 +357,19 @@ export class CcrSession {
       this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
     }
     for (const inputId of unfinished) {
-      const outcome = turnOutcome(this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
+      let reason: Parameters<typeof turnOutcome>[0] = this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" };
+      const last = events.findLast(event => event.type === "assistant/message" || event.type === "tool/result" || event.type === "user/message");
+      if (reason.kind === "interrupted" && inputId === this.inputId && last?.type === "tool/result" && !last.data.message.isError
+        && events.some(event => event.type === "tool/call" && event.data.name === "Friday" && event.data.callId === last.data.message.toolCallId)) {
+        this.opening = false;
+        await this.checkpoint();
+        this.agent.followup(createUserMessage({ source: { kind: "system-prompt" }, content: [
+          { type: "text", text: "Friday 已完成查询，请根据刚才的工具结果回答原问题。" },
+        ] }));
+        await this.agent.whenIdle();
+        reason = this.rootTurnReason ?? reason;
+      }
+      const outcome = turnOutcome(reason);
       appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
       completions.push(...completionOutput(inputId, outcome));
     }

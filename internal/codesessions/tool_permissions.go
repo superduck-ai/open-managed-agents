@@ -511,7 +511,7 @@ type userCustomToolResultPayload struct {
 	SessionThreadID string                  `json:"session_thread_id"`
 }
 
-func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {
+func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, session db.Session, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {
 	var payload userCustomToolResultPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return false, err
@@ -534,6 +534,11 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 			return nil
 		}); err != nil {
 			return true, err
+		}
+		if usesBrainClaimTransport(codeSession) {
+			if err := s.DispatchWorker(ctx, session, codeSession.ExternalID); err != nil {
+				return true, err
+			}
 		}
 		return true, s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID})
 	}

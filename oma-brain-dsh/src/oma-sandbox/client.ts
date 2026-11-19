@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HttpError, OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { normalizeSandboxResult } from "./output.ts";
@@ -43,7 +44,7 @@ export class SandboxCalls implements SandboxExecutor {
     }
   }
 
-  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload> {
+  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string, resume = false): Promise<Payload> {
     if (!callId) throw new Error("Sandbox call requires a native call ID");
     signal.throwIfAborted();
     if (tool.remoteName === "friday") {
@@ -54,14 +55,16 @@ export class SandboxCalls implements SandboxExecutor {
         throw new ToolNotForwardedError("Friday 查询参数无效");
       let placeholder = "";
       const help = ["--help", "-h"].includes(argv.at(-1)) && argv.slice(0, -1).every(arg => /^[a-z][a-z-]*$/.test(arg));
+      if (resume && help) throw new ToolNotForwardedError("帮助命令没有待恢复的授权");
       if (!help) {
-        const path = this.path(callId, threadId) + "/friday-oauth";
+        const path = this.path(callId, threadId) + "/friday-oauth" + (resume ? "?resume=1" : "");
         let grant: Payload;
         try {
           grant = await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", {},
-            this.api.traceHeaders(this.sessionId), signal, 0);
+            { ...this.api.traceHeaders(this.sessionId), "X-OMA-Friday-Input": createHash("sha256").update(JSON.stringify(argv)).digest("hex") }, signal, 0);
         } catch (error) {
           signal.throwIfAborted();
+          if (resume && (!(error instanceof HttpError) || error.status >= 500)) throw error;
           throw new ToolNotForwardedError("Friday 授权检查失败，CLI 尚未启动。", { cause: error });
         }
         if (grant.authorized !== true || typeof grant.placeholder !== "string" || !grant.placeholder)

@@ -72,7 +72,7 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 	if input.Kind != "env_oauth" {
 		return nil, errors.New("CLI 入口只支持 ENV OAuth")
 	}
-	if input.Reason == "missing" {
+	if input.ResumeEventID == "" && input.Reason == "missing" {
 		if result, err := h.oauthEnvironmentResult(ctx, code, input, prepare, false); errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired) {
 			input.Reason = "reauthorization_required"
 		} else if err != nil || result != nil {
@@ -87,16 +87,19 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 	if err != nil {
 		return nil, err
 	}
-	subscription, err := h.subscribeSession(ctx, session, newStreamConnection(thread.ExternalID, true, nil), StreamOptions{})
+	subscription, err := h.subscribeSession(ctx, session, newStreamConnection(thread.ExternalID, true, nil), StreamOptions{AfterEventID: input.ResumeEventID})
 	if err != nil {
 		return nil, err
 	}
 	defer subscription.Close()
-	requestID, err := h.codeSessions.RequestSandboxOAuth(ctx, code, input)
-	if err != nil {
-		return nil, err
+	requestID := input.ResumeEventID
+	if requestID == "" {
+		requestID, err = h.codeSessions.RequestSandboxOAuth(ctx, code, input)
+		if err != nil {
+			return nil, err
+		}
 	}
-	requestSeen := false
+	requestSeen := input.ResumeEventID != ""
 	for {
 		event, err := subscription.Receive(ctx)
 		if err != nil {

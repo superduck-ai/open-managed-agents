@@ -174,7 +174,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		case "user.tool_confirmation":
 			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
 		case "user.custom_tool_result":
-			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, session, codeSession, event)
 		case "user.tool_result":
 			handled, controlErr = s.queueControlResponseForSelfHostedToolResult(ctx, codeSession, event)
 		}

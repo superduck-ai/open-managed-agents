@@ -14,6 +14,7 @@ import (
 )
 
 type OAuthRequest struct {
+	ResumeEventID string `json:"-"`
 	Kind          string `json:"kind"`
 	Provider      string `json:"provider,omitempty"`
 	TargetHost    string `json:"target_host,omitempty"`

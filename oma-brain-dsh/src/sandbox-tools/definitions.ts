@@ -1,5 +1,12 @@
 import type { RemoteTool } from "../runtime/contracts.ts";
 
+export const fridayTool: RemoteTool = {
+    name: "Friday", remoteName: "friday", permissionName: "bash",
+    description: "查询 Friday 数据平台，使用当前用户的授权。传入 CLI 查询参数，例如 app list。需要授权时会在原对话中提示。",
+    inputSchema: { type: "object", required: ["args"], additionalProperties: false,
+      properties: { args: { type: "array", items: { type: "string" } } } },
+  };
+
 // Built-in contract for the OMA sandbox MCP aliases. No runtime catalog lookup.
 const definitions: RemoteTool[] = [
   {

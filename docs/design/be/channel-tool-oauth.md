@@ -210,3 +210,5 @@ Manager 通过原工具执行上下文传入当前调用 ID 和 UUID。入口经
 在会话环境的环境变量中设置 `OMA_FRIDAY_OAUTH_PROVIDER`，值为原生 ENV OAuth 客户端引用。环境应安装 Friday CLI。带有此配置的新 DSH 主会话启用 Bash 后可使用 Friday 工具，例如传入 `{"args":["app","list"]}`。工具沿用 Bash 执行权限。
 
 OMA 在提交 CLI 前读取会话环境的客户端引用，并检查 `FRIDAY_4A_TOKEN` 和目标主机 `friday-tx.seewo.com`。渠道沿用当前操作者、个人 Vault 和显式共享挂载的凭据范围。需要授权时，原生会话发布 OAuth 请求。授权完成后，工具使用原调用 ID 提交 Bash，沙箱只接收凭据占位符。Manager 按原有协议执行普通 Bash 调用。
+
+等待授权时 Brain 退出，原卡片仍可授权。回调唤醒原会话的 Worker。接手的 Brain 先按调用 ID 查沙箱记录，已提交就取回结果；尚未提交时，从当前会话中与调用参数匹配的 RequestOAuth 事件补读授权结果。查询完成后，模型读取工具结果，在原对话中答复。

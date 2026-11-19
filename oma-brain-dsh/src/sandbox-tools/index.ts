@@ -4,7 +4,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { object } from "../json.ts";
 import { ToolExecution } from "../runtime/execution.ts";
 import type { ToolExecutionBridge, ToolPermissions } from "../runtime/contracts.ts";
-import { sandboxToolDefinitions } from "./definitions.ts";
+import { fridayTool, sandboxToolDefinitions } from "./definitions.ts";
 
 export const name = "sandbox-tools";
 export const inject = ["tools", "sandboxExecutor"];
@@ -40,12 +40,7 @@ function registerTools(ctx: Context, config: Config): void {
   const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions, config.threadId);
   ctx.tools.restrict({ allow: [] });
   const tools = sandboxToolDefinitions();
-  if (!config.threadId && config.tools?.includes("Friday") && config.tools.includes("Bash")) tools.push({
-    name: "Friday", remoteName: "friday", permissionName: "bash",
-    description: "查询 Friday 数据平台，使用当前用户的授权。传入 CLI 查询参数，例如 app list。需要授权时会在原对话中提示。",
-    inputSchema: { type: "object", required: ["args"], additionalProperties: false,
-      properties: { args: { type: "array", items: { type: "string" } } } },
-  });
+  if (!config.threadId && config.tools?.includes("Friday") && config.tools.includes("Bash")) tools.push(fridayTool);
   for (const tool of tools) {
     if (config.tools && !config.tools.includes(tool.name)) continue;
     ctx.tools.register({

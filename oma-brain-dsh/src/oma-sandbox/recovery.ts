@@ -1,3 +1,4 @@
+import { fridayTool } from "../sandbox-tools/definitions.ts";
 import { normalizeSandboxResult } from "./output.ts";
 import { admitEncodedImages } from "@deepseek-ai/dsh-attachment";
 import { withAttachmentSession } from "../attachments/remote.ts";
@@ -7,7 +8,7 @@ import { SessionId, SessionSeq, type SessionEvent } from "@deepseek-ai/dsh-sessi
 import { createToolResultMessage } from "@deepseek-ai/dsh-llm";
 import { HttpError } from "../api.ts";
 import { CANCELLATION_UNCONFIRMED, type SandboxCalls } from "./client.ts";
-import type { SandboxRecovery } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, type SandboxRecovery } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
 import type { Payload } from "../json.ts";
 
@@ -45,6 +46,18 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
         return { event, result, code: result.errorCode as string | undefined };
       } catch (error) {
         if (!(error instanceof HttpError) || error.status !== 404) throw error;
+        if (event.data.name === "Friday") {
+          recovery?.blocking();
+          const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;
+          try {
+            const result = await sandbox.call(fridayTool,
+              JSON.parse(event.data.arguments), waiting, threadId, callId, true);
+            return { event, result, code: result.errorCode as string | undefined };
+          } catch (cause) {
+            signal.throwIfAborted();
+            if (!(cause instanceof ToolNotForwardedError) && !waiting.aborted) throw cause;
+          }
+        }
         const result: Payload = { isError: true, content: [{ type: "text", text: "Tool call was not submitted before the previous owner exited." }] };
         return { event, result, code: "TOOL_NOT_STARTED" as string | undefined };
       }

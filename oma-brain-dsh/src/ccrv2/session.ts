@@ -107,7 +107,7 @@ export class CcrSession {
     const recoverSandboxCalls = config.recoverSandboxCalls;
     this.runtime = new SessionRuntime(ctx, {
       ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); },
-      recoverSandboxCalls: recoverSandboxCalls && ((id, signal, threadId) => recoverSandboxCalls(id, signal, threadId, {
+      recoverSandboxCalls: recoverSandboxCalls && ((id, signal, mcp, threadId) => recoverSandboxCalls(id, signal, mcp, threadId, {
         interrupt: this.recoveryInterrupt(threadId ?? this.id),
         blocking: () => this.recoveryBlocked?.(),
       })),

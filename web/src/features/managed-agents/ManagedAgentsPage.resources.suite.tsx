@@ -2465,6 +2465,26 @@ export function registerManagedAgentsResourceTests() {
     expect(request?.body).toEqual(expected);
   });
 
+  test('renaming a session omits a budget restored to its original amount', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].budget = { type: 'limit', max_list_cost: { amount: '1000', currency: 'USD' } };
+    renderManagedAgentsPage('sessions');
+    const row = (await screen.findByText('Session one')).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    const budget = within(dialog).getByLabelText(/Budget/);
+    fireEvent.change(budget, { target: { value: '8' } });
+    fireEvent.change(budget, { target: { value: '10.00' } });
+    expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'New title' } });
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const request = api.requests.find(({ method, url }) => method === 'POST' && url.startsWith('/v1/sessions/'));
+    expect(request?.body).toEqual({ title: 'New title' });
+  });
+
   test('keeps the title draft and localizes a rejected session edit in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();

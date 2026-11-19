@@ -326,6 +326,7 @@ export function initialFormValues(
   section: ManagedEntitySection,
   entity?: ManagedEntityApiResponse,
 ): ManagedEntityFormValues {
+  const budgetUsd = entityBudgetUsdInput(entity);
   return {
     ...(entity?.type === 'session'
       ? { name: entity.title ?? '', originalSessionTitle: entity.title ?? null }
@@ -338,8 +339,8 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
-    budgetUsd: entityBudgetUsdInput(entity),
-    budgetChanged: false,
+    budgetUsd,
+    originalBudgetUsd: budgetUsd,
     ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }

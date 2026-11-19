@@ -355,6 +355,7 @@ and e.code_session_external_id = :code_session_external_id
 1. 当前幂等实现先查重再批量插入，没有使用 `insert ... on conflict do nothing`。由于事务持有 code session 行锁，同一 code session 的并发 append 已串行化，正确性不依赖数据库 conflict retry。
 2. GET 的 compaction 查询先在 scoped CTE 内计算边界，再做 cursor/limit 分页。它优先保证语义清晰；如果 internal event 历史非常大，可以后续将 compaction boundary 查询拆成更窄的索引查找。
 3. `created_at` 当前由 append 批次统一设置，同一批事件可能拥有相同时间戳；对外顺序以 `sequence_num` 为准。
+4. append 和公开事件发布之后的 subagent 内部事件公开投影只对非 `claim` transport 的会话执行。`worker_transport = claim`（Brain）的会话只写入 `dsh_log`，它不产生公开 payload，子线程公开事件由 Brain 直接经 `/worker/events` 发布，因此跳过线程映射查询和内部事件读取。
 
 
 ## 11. 生命周期与历史保留

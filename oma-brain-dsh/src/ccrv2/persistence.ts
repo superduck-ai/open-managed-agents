@@ -165,6 +165,10 @@ export class CcrReplication extends Service {
     return owner.local?.events ?? [];
   }
 
+  eventCount(value: string): number | undefined {
+    return this.jobs.get(SessionId(value))?.local?.events.length;
+  }
+
   private async readLocal(handle: SessionHandle): Promise<Stored> {
     const events = [...(await handle.read()).events];
     return { header: handle.header, inherited: handle.inheritedEventCount, events };

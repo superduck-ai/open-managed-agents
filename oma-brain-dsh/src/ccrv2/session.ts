@@ -33,6 +33,14 @@ declare module "@deepseek-ai/dsh-session/types" {
   }
 }
 
+const PUBLISHED_EVENTS_METADATA = "oma_published_events";
+
+function publishedEventsOf(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const counts = Object.entries(value).filter((entry): entry is [string, number] => Number.isSafeInteger(entry[1]) && entry[1] >= 0);
+  return Object.fromEntries(counts);
+}
+
 export class CcrSession {
   inputId = "";
   readonly receivedInputIds = new Set<string>();
@@ -67,6 +75,8 @@ export class CcrSession {
   private recoveryRootInterrupted = false;
   private readonly opened = Promise.withResolvers<void>();
   private ready = false;
+  private openedAt = 0;
+  private publishedEvents?: Record<string, number>;
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
@@ -180,7 +190,10 @@ export class CcrSession {
     return this.runtime.busy || this.subagents.busy;
   }
   get lastIdle() {
-    return this.subagents.lastIdle;
+    return Math.max(this.subagents.lastIdle, this.openedAt);
+  }
+  get initializing(): boolean {
+    return !this.ready;
   }
 
   async open(): Promise<void> {
@@ -192,9 +205,11 @@ export class CcrSession {
       const model = metadata?.model;
       if (typeof model === "string" && model.trim()) this.applyModel(model);
       this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
+      this.publishedEvents = publishedEventsOf(metadata?.[PUBLISHED_EVENTS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
       this.ready = true;
+      this.openedAt = Date.now();
       this.opened.resolve();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
         session_id: this.id, duration_ms: Date.now() - startMs,
@@ -238,6 +253,9 @@ export class CcrSession {
     }
     setStage("subagents_load");
     await this.subagents.loadThreads();
+    const acquired = (id: string) => this.ctx.ccrReplication.acquiredEvents(id).length;
+    const published = this.publishedEvents
+      ?? Object.fromEntries([this.id, ...this.subagents.threads.map(thread => thread.id)].map(id => [id, acquired(id)]));
     setStage("runtime_open");
     await this.runtime.open();
     if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
@@ -248,11 +266,15 @@ export class CcrSession {
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
-    const inputResults = this.replay(this.agent.session.snapshotEvents());
+    const inputResults = this.replay(this.agent.session.snapshotEvents(), published[this.id] ?? 0);
+    const replayed = { [this.id]: this.agent.session.snapshotEvents().length };
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
-      try { this.replay((await handle.read()).events, thread.id); }
-      finally { await handle.close(); }
+      try {
+        const { events } = await handle.read();
+        this.replay(events, published[thread.id] ?? 0, thread.id);
+        replayed[thread.id] = events.length;
+      } finally { await handle.close(); }
     }
     this.pendingEvents.push(...inputResults, ...recoveryEvents);
     traceHooks.turnsInterrupted(this.id, this.restoredTraceTurns);
@@ -263,6 +285,8 @@ export class CcrSession {
     await this.backend.reportMetadata(this.id, { task_summary: null, pending_action: null, model: this.config.model });
     setStage("publish");
     await this.publish();
+    this.publishedEvents = replayed;
+    await this.backend.reportMetadata(this.id, { [PUBLISHED_EVENTS_METADATA]: replayed });
     setStage("update_status");
     await this.updateStatus();
   }
@@ -329,19 +353,20 @@ export class CcrSession {
       .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
   }
 
-  private replay(events: readonly SessionEvent[], threadId?: string): Payload[] {
+  private replay(events: readonly SessionEvent[], publishedCount: number, threadId?: string): Payload[] {
     const completions: Payload[] = [];
     const tools = new CcrToolResults();
     let inputId = "";
     let inputSeen = false;
     const nativeRoot = !threadId;
     const unfinished = new Set<string>();
-    for (const event of events) {
+    for (const [index, event] of events.entries()) {
+      const unpublished = index >= publishedCount;
       if (nativeRoot) {
         const completion = inputCompletionOf(event);
         if (completion) {
           unfinished.delete(completion.inputId);
-          completions.push(...completionOutput(completion.inputId, completion.outcome));
+          if (unpublished) completions.push(...completionOutput(completion.inputId, completion.outcome));
           continue;
         }
       }
@@ -354,7 +379,8 @@ export class CcrSession {
         if (nativeRoot) unfinished.add(inputId);
       }
       if (nativeRoot && event.type === "turn/end") continue;
-      this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
+      const toolName = tools.record(event, threadId ?? this.id);
+      if (unpublished) this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, toolName, threadId));
     }
     for (const inputId of unfinished) {
       const outcome = turnOutcome(this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
@@ -682,7 +708,10 @@ export class CcrSession {
           this.receivedInputIds.add(inputId);
           await this.checkpoint();
           await this.previews;
+          const published = this.publishedCounts();
           await this.publish();
+          this.publishedEvents = published;
+          await this.backend.reportMetadata(this.id, { [PUBLISHED_EVENTS_METADATA]: published });
           await this.updateStatus();
           stopProgress();
           await this.checkpoint();
@@ -722,6 +751,14 @@ export class CcrSession {
     });
     this.publications = next.catch(() => {});
     return next;
+  }
+  private publishedCounts(): Record<string, number> {
+    const counts = { ...this.publishedEvents, [this.id]: this.agent.session.snapshotEvents().length };
+    for (const thread of this.subagents.threads) {
+      const count = this.ctx.ccrReplication.eventCount(thread.id);
+      if (count !== undefined) counts[thread.id] = Math.max(counts[thread.id] ?? 0, count);
+    }
+    return counts;
   }
   dispatching(): boolean { return this.activeDispatches.size > 0 || this.outcomeConfirmations.size > 0; }
 

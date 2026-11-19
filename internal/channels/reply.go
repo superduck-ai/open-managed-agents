@@ -20,6 +20,7 @@ type replyRunner struct {
 	stream       channelReplyStream
 	seen         map[string]struct{}
 	closed       bool
+	oauthCards   map[string]string
 	previewDirty bool
 	lastUpdate   time.Time
 }
@@ -163,6 +164,13 @@ func (r *replyRunner) open(ctx context.Context) error {
 		return err
 	}
 	r.stream = opened
+	if r.task.delivery != nil && r.task.delivery.ArtifactDelivery != "" {
+		var receipts channelArtifactDelivery
+		if err := json.Unmarshal([]byte(r.task.delivery.ArtifactDelivery), &receipts); err != nil {
+			return err
+		}
+		r.oauthCards = receipts.OAuthCards
+	}
 	if r.task.delivery != nil {
 		r.presentation.IncludeThinking = r.task.delivery.IncludeThinking
 		r.presentation.IncludeToolCalls = r.task.delivery.IncludeToolCalls
@@ -231,6 +239,9 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 	case "agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use":
 		r.task.usedTools = true
 	}
+	if err := r.settleOAuthCards(ctx, event); err != nil {
+		return err
+	}
 	_, changed := r.reply.consume(r.presentation, event)
 	if !changed {
 		return nil
@@ -243,7 +254,11 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 
 func (r *replyRunner) update(ctx context.Context) error {
 	for attempt := range channelAskAttempts {
-		err := r.stream.Update(ctx, r.reply.view())
+		view := r.reply.view()
+		if err := r.detachFridayCard(ctx, &view); err != nil {
+			return err
+		}
+		err := r.stream.Update(ctx, view)
 		if err == nil {
 			r.lastUpdate = time.Now()
 			r.previewDirty = false

@@ -102,6 +102,8 @@ type Interaction struct {
 	Questions []Question
 }
 type Reply struct {
+	Title                        string
+	DeliveryKey                  string
 	OAuthOrigin                  string
 	Interrupted, Thinking, Ended bool
 	Status, Text                 string

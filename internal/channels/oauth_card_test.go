@@ -2,6 +2,8 @@ package channels
 
 import (
 	"encoding/json/v2"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -95,5 +97,56 @@ func TestCancelOAuthUsesCanonicalEventThread(t *testing.T) {
 	}
 	if len(body.Events) != 1 || body.Events[0].ThreadID != request.SessionThreadID || !body.Events[0].IsError {
 		t.Fatal("实时事件缺少主线程字段时，应使用历史事件的规范线程提交取消")
+	}
+}
+
+func TestFridayConnectionCardColor(t *testing.T) {
+	for status, color := range map[string]string{"等待授权": "blue", "已连接": "green", "已取消授权": "grey", "连接失效": "red"} {
+		var card struct {
+			Header struct {
+				Template string `json:"template"`
+				Title    struct {
+					Content string `json:"content"`
+				} `json:"title"`
+			} `json:"header"`
+		}
+		if err := json.Unmarshal([]byte(feishu.Render(contracts.Reply{Title: "连接 Friday", Status: status})), &card); err != nil {
+			t.Fatal(err)
+		}
+		if card.Header.Template != color || card.Header.Title.Content != "连接 Friday" {
+			t.Errorf("%s：表头为 %+v", status, card.Header)
+		}
+	}
+}
+
+func TestSeparateOAuthCardRequiresMatchingReceipt(t *testing.T) {
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused.test")
+	seedCardActionReceipt(worker, "input")
+	store := worker.supervisor.store.(*fakeRuntimeStore)
+	row := store.deliveries["chnl_1:input"]
+	row.ArtifactDelivery = `{"oauth_cards":{"oauth_1":"om_auth"}}`
+	store.deliveries["chnl_1:input"] = row
+	value := channelActionValue{Kind: "cancel_oauth", SessionID: "sesn_1", ScopeKey: "chat:oc_1", SourceID: "om_card", ToolUseID: "oauth_1"}
+	for _, id := range []string{"om_auth", "om_card", "om_forwarded"} {
+		_, err := worker.cardActionReceipt(t.Context(), value, id, "oc_1", "ou_1")
+		if (err == nil) != (id == "om_auth") {
+			t.Errorf("授权卡 %s 校验结果 %v", id, err)
+		}
+	}
+}
+
+func TestFridayContinuationKeepsOriginalDeliveryAcrossReplay(t *testing.T) {
+	worker, _, _, _, task, msg := artifactDeliveryFixture(t)
+	adapter := &independentAdapter{}
+	worker.adapter = adapter
+	runner := newReplyRunner(worker, task, msg)
+	runner.stream = &durableReplyStream{worker: worker, task: task, stream: adapter}
+	for range 2 {
+		if err := runner.continueAfterOAuth(t.Context(), "oauth_1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adapter.opens != 1 || task.delivery.ReplyMessageID != "card" || runner.reply.stopValue.SourceID != "card" || len(adapter.resumed) != 2 || adapter.resumed[0] != adapter.resumed[1] {
+		t.Fatal("重放应复用同一张续跑卡并保留原交付")
 	}
 }

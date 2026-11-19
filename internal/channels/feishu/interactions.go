@@ -3,9 +3,6 @@ package feishu
 import "github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 
 func InteractionElements(reply contracts.Reply) []map[string]any {
-	if reply.StopValue == nil {
-		return nil
-	}
 	elements := []map[string]any{}
 	for _, interaction := range reply.Interactions {
 		value := interaction.Value

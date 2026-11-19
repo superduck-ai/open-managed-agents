@@ -12,9 +12,11 @@ import (
 )
 
 type channelArtifactDelivery struct {
-	Baseline artifactBaseline      `json:"baseline"`
-	Planned  bool                  `json:"planned,omitzero"`
-	Files    []channelArtifactFile `json:"files"`
+	OAuthCards    map[string]string     `json:"oauth_cards,omitempty"`
+	Continuations map[string]string     `json:"continuations,omitempty"`
+	Baseline      artifactBaseline      `json:"baseline"`
+	Planned       bool                  `json:"planned,omitzero"`
+	Files         []channelArtifactFile `json:"files"`
 }
 
 type channelArtifactFile struct {

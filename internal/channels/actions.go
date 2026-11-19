@@ -12,6 +12,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+const cancelledOAuthMessage = "用户取消了目标服务授权。"
+
 type channelActionValue = contracts.ActionValue
 
 func (w *channelWorker) cardValue(task *channelReplyTask, toolUseID, kind, openID, threadID string) channelActionValue {
@@ -186,12 +188,29 @@ func (w *channelWorker) cardActionReceipt(ctx context.Context, value channelActi
 	if messageID == "" || chatID == "" || actorID == "" {
 		return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
 	}
-	row, err := w.supervisor.store.GetChannelReplyDeliveryByReceipt(ctx, w.deliveryScope(), messageID)
+	source := messageID
+	if value.SourceID != "" {
+		source = value.SourceID
+	}
+	row, err := w.supervisor.store.GetChannelReplyDeliveryByReceipt(ctx, w.deliveryScope(), source)
 	if errors.Is(err, db.ErrNotFound) {
 		return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
 	}
 	if err != nil {
 		return db.ChannelReplyDelivery{}, err
+	}
+	if value.SourceID != "" {
+		var receipts channelArtifactDelivery
+		if json.Unmarshal([]byte(row.ArtifactDelivery), &receipts) != nil {
+			return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
+		}
+		valid := value.Kind == "cancel_oauth" && receipts.OAuthCards[value.ToolUseID] == messageID
+		for _, id := range receipts.Continuations {
+			valid = valid || id == messageID
+		}
+		if !valid {
+			return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
+		}
 	}
 	if row.State != "sent" || row.ChannelType != w.record.ChannelType || row.AccountID != w.record.AppID || row.SessionExternalID != value.SessionID || row.ScopeKey != value.ScopeKey || row.ChatID != chatID || row.ActorID != actorID {
 		return db.ChannelReplyDelivery{}, invalidChannelCardReceipt()
@@ -249,7 +268,7 @@ func (w *channelWorker) cancelOAuthCardAction(ctx context.Context, apiKey string
 		result := map[string]any{
 			"type": "user.custom_tool_result", "custom_tool_use_id": value.ToolUseID,
 			"is_error": true,
-			"content":  []map[string]string{{"type": "text", "text": "用户取消了目标服务授权。"}},
+			"content":  []map[string]string{{"type": "text", "text": cancelledOAuthMessage}},
 		}
 		if request.SessionThreadID != "" {
 			result["session_thread_id"] = request.SessionThreadID

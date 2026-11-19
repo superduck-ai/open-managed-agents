@@ -443,72 +443,23 @@
                       "POST /v1/agents/{agent_id}/channels",
                       "POST /v1/agents/{agent_id}/channels/{channel_id}",
                       "GET /v1/agents/{agent_id}/channels/{channel_id}/check",
-                      "DELETE /v1/agents/{agent_id}/channels/{channel_id}",
-                      "GET /v1/agents/{agent_id}/channels/settings",
-                      "POST /v1/agents/{agent_id}/channels/settings",
-                      {
-                        "group": "应用授权",
-                        "pages": [
-                          "POST /v1/channels/authorizations",
-                          "GET /v1/channels/authorizations/{authorization_id}",
-                          "POST /v1/channels/{channel_id}/qr_sessions",
-                          "POST /v1/channels/credentials/check"
-                        ]
-                      },
-                      {
-                        "group": "范围配对",
-                        "pages": [
-                          "GET /v1/channel_pairings",
-                          "GET /v1/channel_pairings/{pairing_id}",
-                          "POST /v1/channel_pairings",
-                          "PATCH /v1/channel_pairings/{pairing_id}",
-                          "DELETE /v1/channel_pairings/{pairing_id}"
-                        ]
-                      },
-                      {
-                        "group": "准入审批",
-                        "pages": [
-                          "GET /v1/agents/{agent_id}/channels/{channel_id}/pairings",
-                          "POST /v1/agents/{agent_id}/channels/{channel_id}/pairings/{pairing_id}"
-                        ]
-                      }
+                      "POST /v1/channels/authorizations",
+                      "GET /v1/channels/authorizations/{authorization_id}",
+                      "POST /v1/channels/credentials/check",
+                      "GET /v1/channel_pairings",
+                      "GET /v1/channel_pairings/{pairing_id}",
+                      "DELETE /v1/channel_pairings/{pairing_id}"
                     ]
                   },
                   {
                     "group": "身份",
                     "pages": [
                       "GET /v1/identities",
-                      "POST /v1/identities",
                       "GET /v1/identities/{identity_id}",
-                      "PATCH /v1/identities/{identity_id}",
-                      "DELETE /v1/identities/{identity_id}",
+                      "GET /v1/identities/stats",
+                      "GET /v1/identities/{identity_id}/agents",
                       "POST /v1/identities/{identity_id}/enable",
-                      "POST /v1/identities/{identity_id}/disable",
-                      {
-                        "group": "使用记录",
-                        "pages": [
-                          "GET /v1/identities/stats",
-                          "GET /v1/identities/{identity_id}/agents",
-                          "GET /v1/identities/{identity_id}/sessions",
-                          "GET /v1/agents/{agent_id}/identity_bindings"
-                        ]
-                      },
-                      {
-                        "group": "身份配置",
-                        "pages": [
-                          "GET /v1/identities/{identity_id}/configs",
-                          "GET /v1/identities/{identity_id}/agents/{agent_id}/config",
-                          "PUT /v1/identities/{identity_id}/agents/{agent_id}/config",
-                          "GET /v1/identities/{identity_id}/agents/{agent_id}/effective"
-                        ]
-                      },
-                      {
-                        "group": "清理",
-                        "pages": [
-                          "POST /v1/identities/{identity_id}/clear",
-                          "GET /v1/identity_cleanups/{cleanup_id}"
-                        ]
-                      }
+                      "POST /v1/identities/{identity_id}/disable"
                     ]
                   },
                   {

@@ -182,56 +182,32 @@ Identity Config 中的资源挂载属于明确的执行配置授权，不能通�
 
 ## API 合同
 
-以下路径相对于现有工作区管理 API 的资源前缀，统一使用当前 Principal、IAM、分页和错误结构。此处为拟定合同，不声明现有路由已支持；不另建令牌体系。
+公开接口挂载在 `/v1` 下，沿用 OMA 的工作区 API Key、租户范围和错误结构。
 
-| 资源 | 接口 | 核心合同 |
+| 资源 | 接口 | 用途 |
 | --- | --- | --- |
-| Identity | POST /identities | 创建，接受业务主体编号、命名空间、展示名、开关和记忆选项 |
-| Identity | GET /identities、GET /identities/{id} | 按状态、业务编号和搜索筛选；游标分页；不可见按原生错误规则处理 |
-| Identity | PATCH /identities/{id} | 修改可编辑信息；业务编号变更不改变资源 ID 或平台关联 |
-| Identity | POST /identities/{id}/enable、/disable | 启停；更新 enabled 使用相同入口规则 |
-| Identity | DELETE /identities/{id} | 逻辑删除；重复操作按既有资源合同处理 |
-| Identity | POST /identities/{id}/clear | 明确清理范围，存在运行项时返回冲突，否则返回原生作业引用或完成结果 |
-| Identity | GET /identities/stats、GET /identities/{id}/agents | 从原生 Session/Usage 聚合数量与最近使用，不复制账本；明确时间窗口 |
-| Identity Config | GET /identities/{id}/configs | 按 Agent、状态筛选；游标是配置资源 ID |
-| Identity Config | GET、PUT /identities/{id}/agents/{agent_id}/config | 读取覆盖或按合同更新覆盖；每组一条生效配置，带修订控制 |
-| Effective Config | GET /identities/{id}/agents/{agent_id}/effective | 返回编译结果与来源，不返回密钥；可选明确 Agent 版本 |
-| Channel | POST、GET /channels | 创建及分页列表；支持类型、开关、绑定状态与执行目标筛选 |
-| Channel | GET、PATCH、DELETE /channels/{id} | 查询、更新、删除；平台类型与解析模式不可改，凭据只写 |
-| QR Session | POST /channels/{id}/qr_sessions | 按适配器能力创建连接授权，不创建工具 OAuth |
-| QR Session | GET /channels/{id}/qr_sessions/{qr_id} | 权限绑定 Channel；返回状态和截止时间，不返回秘密 |
-| Pairing | GET /channel_pairings、GET /channel_pairings/{id} | 列表与详情只显示可访问范围、状态及已绑定目标，不回显码 |
-| Pairing | POST /channel_pairings | code 与 pairing_id 恰好传一个，同时提供 Identity 和 Agent |
-| Pairing | PATCH /channel_pairings/{id} | 更新生效目标，至少一个字段，修订冲突返回 409 |
-| Pairing | DELETE /channel_pairings/{id} | 幂等解绑，拒绝跨工作区操作 |
+| 身份 | GET /identities、GET /identities/{identity_id} | 列出及获取身份 |
+| 身份 | GET /identities/stats、GET /identities/{identity_id}/agents | 查询身份使用统计和关联智能体 |
+| 身份 | POST /identities/{identity_id}/enable、/disable | 启用或停用身份 |
+| 渠道 | GET /channels、GET /agents/{agent_id}/channels | 按工作区或智能体列出渠道 |
+| 渠道 | POST /agents/{agent_id}/channels、POST /agents/{agent_id}/channels/{channel_id} | 创建和更新渠道 |
+| 渠道 | GET /agents/{agent_id}/channels/{channel_id}/check | 检查应用连接、执行环境和挂载资源 |
+| 应用接入 | POST /channels/authorizations、GET /channels/authorizations/{authorization_id} | 发起扫码并查询结果。授权完成后，将 ID 传给渠道创建或更新接口 |
+| 应用接入 | POST /channels/credentials/check | 校验手工接入使用的飞书应用凭据 |
+| 渠道配对 | GET /channel_pairings、GET /channel_pairings/{pairing_id}、DELETE /channel_pairings/{pairing_id} | 查询和解除配对，解绑时使用当前修订号 |
 
-写入接口按原生请求幂等合同处理。创建重复业务主体返回冲突；配对 ID 重试相同目标返回已有结果，过期码不能被重试重新激活。列表统一沿用 OMA 的游标与上限，不为不同渠道定义不同分页结构。
+私聊自助配对由获准的首条飞书消息触发。已绑定的配对可通过 API 解除，仍获准的用户重新接入时复用原来的个人身份。身份创建、编辑、清理、删除和配置覆盖，以及渠道删除、旧准入审批和手工改绑，暂不作为公开 API 合同。
 
-固定 Channel 示例：
-
-```json
-{
-  "name": "客服入口",
-  "channel_type": "feishu",
-  "identity_resolution": { "mode": "fixed" },
-  "identity_id": "idn_service",
-  "agent_id": "agent_support",
-  "agent_version": 2,
-  "enabled": true,
-  "channel_config": {
-    "response_options": { "include_tool_calls": true, "include_thinking": false }
-  }
-}
-```
-
-范围配对 Channel 示例：
+私聊自助配对渠道的创建请求，例如：
 
 ```json
 {
   "name": "团队机器人",
-  "channel_type": "feishu",
+  "mode": "open",
   "identity_resolution": { "mode": "pairing" },
-  "enabled": true
+  "enabled": true,
+  "environment_id": "env_example",
+  "authorization_id": "chra_example"
 }
 ```
 

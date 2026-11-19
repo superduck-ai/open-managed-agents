@@ -32,13 +32,13 @@ func (h *localHandler) agentRouter() http.Handler {
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.list))
 	router.Post("/", wrap(h.create))
-	router.Get("/settings", wrap(h.settings))
-	router.Post("/settings", wrap(h.saveSettings))
+	router.With(channelConsoleOnly).Get("/settings", wrap(h.settings))
+	router.With(channelConsoleOnly).Post("/settings", wrap(h.saveSettings))
 	router.Post("/{channel_id}", wrap(h.update))
 	router.Get("/{channel_id}/check", wrap(h.check))
-	router.Delete("/{channel_id}", wrap(h.remove))
-	router.Get("/{channel_id}/pairings", wrap(h.pairings))
-	router.Post("/{channel_id}/pairings/{pairing_id}", wrap(h.decidePairing))
+	router.With(channelConsoleOnly).Delete("/{channel_id}", wrap(h.remove))
+	router.With(channelConsoleOnly).Get("/{channel_id}/pairings", wrap(h.pairings))
+	router.With(channelConsoleOnly).Post("/{channel_id}/pairings/{pairing_id}", wrap(h.decidePairing))
 	return router
 }
 
@@ -46,14 +46,25 @@ func (h *localHandler) workspaceRouter() http.Handler {
 	router := chi.NewRouter()
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.listWorkspace))
-	router.Get("/{channel_id}/qr", wrap(h.qr))
-	router.Post("/{channel_id}/qr", wrap(h.qr))
-	router.Post("/{channel_id}/qr_sessions", wrap(h.qr))
-	router.Get("/{channel_id}/qr_sessions/{qr_id}", wrap(h.qrSession))
+	router.With(channelConsoleOnly).Get("/{channel_id}/qr", wrap(h.qr))
+	router.With(channelConsoleOnly).Post("/{channel_id}/qr", wrap(h.qr))
+	router.With(channelConsoleOnly).Post("/{channel_id}/qr_sessions", wrap(h.qr))
+	router.With(channelConsoleOnly).Get("/{channel_id}/qr_sessions/{qr_id}", wrap(h.qrSession))
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
 	router.Post("/authorizations", wrap(h.beginAuthorization))
 	router.Get("/authorizations/{authorization_id}", wrap(h.authorizationStatus))
 	return router
+}
+
+func channelConsoleOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		if principal.CredentialType != auth.CredentialTypePlatformSession {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (h *localHandler) principal(r *http.Request, mutating bool) (auth.Principal, error) {

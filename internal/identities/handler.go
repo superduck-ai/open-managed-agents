@@ -25,35 +25,34 @@ func NewHandler(service *Service, logger *slog.Logger) *Handler {
 func (h *Handler) RegisterConsole(router chi.Router) {
 	base := "/workspaces/{workspaceId}"
 	h.mount(router, base)
-	router.Get(base+"/agents/{agent_id}/identity_bindings", h.adapter.Wrap(h.agentBindings))
-}
-
-func (h *Handler) RegisterV1(router chi.Router) {
-	h.mount(router, "")
-	router.Get("/agents/{agent_id}/identity_bindings", h.adapter.Wrap(h.agentBindings))
-}
-
-func (h *Handler) mount(router chi.Router, base string) {
 	router.Post(base+"/identities", h.adapter.Wrap(h.create))
-	router.Get(base+"/identities", h.adapter.Wrap(h.list))
-	router.Get(base+"/identities/stats", h.adapter.Wrap(h.stats))
-	router.Get(base+"/identities/{identity_id}", h.adapter.Wrap(h.get))
 	router.Patch(base+"/identities/{identity_id}", h.adapter.Wrap(h.update))
 	router.Delete(base+"/identities/{identity_id}", h.adapter.Wrap(h.remove))
-	router.Post(base+"/identities/{identity_id}/enable", h.adapter.Wrap(h.enable))
-	router.Post(base+"/identities/{identity_id}/disable", h.adapter.Wrap(h.disable))
 	router.Post(base+"/identities/{identity_id}/clear", h.adapter.Wrap(h.clear))
-	router.Get(base+"/identities/{identity_id}/agents", h.adapter.Wrap(h.agents))
 	router.Get(base+"/identities/{identity_id}/sessions", h.adapter.Wrap(h.sessions))
 	router.Get(base+"/identities/{identity_id}/configs", h.adapter.Wrap(h.configs))
 	router.Get(base+"/identities/{identity_id}/agents/{agent_id}/config", h.adapter.Wrap(h.getConfig))
 	router.Put(base+"/identities/{identity_id}/agents/{agent_id}/config", h.adapter.Wrap(h.putConfig))
 	router.Get(base+"/identities/{identity_id}/agents/{agent_id}/effective", h.adapter.Wrap(h.effective))
 	router.Get(base+"/identity_cleanups/{cleanup_id}", h.adapter.Wrap(h.cleanup))
-	router.Get(base+"/channel_pairings", h.adapter.Wrap(h.pairings))
+	router.Get(base+"/agents/{agent_id}/identity_bindings", h.adapter.Wrap(h.agentBindings))
 	router.Post(base+"/channel_pairings", h.adapter.Wrap(h.completePairing))
-	router.Get(base+"/channel_pairings/{pairing_id}", h.adapter.Wrap(h.pairing))
 	router.Patch(base+"/channel_pairings/{pairing_id}", h.adapter.Wrap(h.updatePairing))
+}
+
+func (h *Handler) RegisterV1(router chi.Router) {
+	h.mount(router, "")
+}
+
+func (h *Handler) mount(router chi.Router, base string) {
+	router.Get(base+"/identities", h.adapter.Wrap(h.list))
+	router.Get(base+"/identities/stats", h.adapter.Wrap(h.stats))
+	router.Get(base+"/identities/{identity_id}", h.adapter.Wrap(h.get))
+	router.Post(base+"/identities/{identity_id}/enable", h.adapter.Wrap(h.enable))
+	router.Post(base+"/identities/{identity_id}/disable", h.adapter.Wrap(h.disable))
+	router.Get(base+"/identities/{identity_id}/agents", h.adapter.Wrap(h.agents))
+	router.Get(base+"/channel_pairings", h.adapter.Wrap(h.pairings))
+	router.Get(base+"/channel_pairings/{pairing_id}", h.adapter.Wrap(h.pairing))
 	router.Delete(base+"/channel_pairings/{pairing_id}", h.adapter.Wrap(h.unbindPairing))
 }
 

@@ -527,24 +527,8 @@ test("children use independent external discovery with their own approval and re
     f.session.config.subagents = f.a.launch.subagents;
     await f.session.open();
     f.session.inputId = "parent_input";
-    const runtime = f.session.runtime.config;
-    const load = runtime.threadMcpContext!;
-    const recover = runtime.recoverSandboxCalls!;
-    let loads = 0;
-    let childContext: Awaited<ReturnType<typeof load>> | undefined;
-    runtime.threadMcpContext = async thread => {
-      loads++;
-      return childContext = await load(thread);
-    };
-    runtime.recoverSandboxCalls = (id, signal, mcp, thread, pending) => {
-      expect(thread).toBe(id);
-      expect(mcp?.config).toBe(childContext!.config);
-      expect(mcp?.fetcher).toBe(childContext!.fetcher);
-      return recover(id, signal, mcp, thread, pending);
-    };
     f.b.modelScript = [mcpEvents("child_mcp"), textEvents("child fetched")];
     const report = await runSubagent(f.session, "subagent", { description: "reader", prompt: "Read docs. Fetch docs" });
-    expect(loads).toBe(1);
     expect(report.report).toBe("child fetched");
     expect(
       f.p.requests.filter((request) => request.method === "initialize"),
@@ -569,6 +553,31 @@ test("children use independent external discovery with their own approval and re
           ),
       ),
     ).toBe(true);
+
+    // 模拟进程退出时子线程仍在运行，走与重启相同的恢复入口。
+    const runtime = f.session.runtime.config;
+    const load = runtime.threadMcpContext!;
+    const recover = runtime.recoverSandboxCalls!;
+    let loads = 0;
+    let recoveries = 0;
+    let childContext: Awaited<ReturnType<typeof load>> | undefined;
+    runtime.threadMcpContext = async thread => {
+      loads++;
+      return childContext = await load(thread);
+    };
+    runtime.recoverSandboxCalls = (id, signal, mcp, thread, pending) => {
+      recoveries++;
+      expect(id).toBe(report.subagentId);
+      expect(thread).toBe(id);
+      expect(mcp?.config).toBe(childContext!.config);
+      expect(mcp?.fetcher).toBe(childContext!.fetcher);
+      return recover(id, signal, mcp, thread, pending);
+    };
+    const thread = f.session.subagents.threads.find(child => child.id === report.subagentId)!;
+    thread.status = "running";
+    await f.session.subagents.restore();
+    expect(loads).toBe(1);
+    expect(recoveries).toBe(1);
   } finally {
     await f.close();
   }

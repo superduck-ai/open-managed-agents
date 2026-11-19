@@ -927,7 +927,6 @@ function GenericManagedEntityDialog({
   const canSubmit = managedEntityDialogCanSubmit(section, values, {
     submitting,
     loadingOptions: loadingOptions || Boolean(referenceError),
-    needsReferences,
     editing: Boolean(entity),
   });
 

@@ -588,6 +588,7 @@ export type MemoryAttachFormValue = {
 };
 
 export type ManagedEntityFormValues = {
+  originalSessionTitle?: string | null;
   name: string;
   description: string;
   agentId: string;

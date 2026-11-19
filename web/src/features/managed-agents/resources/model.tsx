@@ -327,7 +327,9 @@ export function initialFormValues(
   entity?: ManagedEntityApiResponse,
 ): ManagedEntityFormValues {
   return {
-    name: entity ? entityDisplayName(section, entity) : '',
+    ...(entity?.type === 'session'
+      ? { name: entity.title ?? '', originalSessionTitle: entity.title ?? null }
+      : { name: entity ? entityDisplayName(section, entity) : '' }),
     description: entityDescription(entity),
     agentId: entity ? entityAgentId(entity) : '',
     environmentId: entity && 'environment_id' in entity ? entity.environment_id : '',

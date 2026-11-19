@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/yourbatis"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper SessionUsageMapper -sql ./session_usage_mapper.xml -out ./session_usage_mapper.sqlmap.gen.go -dialect postgres
@@ -50,19 +53,19 @@ func usageTotalsParams(workspaceUUID, sessionExternalID, threadExternalID string
 }
 
 func (d *DB) SumSessionUsageTotals(ctx context.Context, workspaceUUID, sessionExternalID string) (SessionUsageTotals, error) {
-	return d.sumUsageTotals(ctx, usageTotalsParams(workspaceUUID, sessionExternalID, ""))
+	return sumUsageTotals(ctx, NewSessionUsageMapper(d.mapperDB), usageTotalsParams(workspaceUUID, sessionExternalID, ""))
 }
 
 func (d *DB) SumSessionThreadUsageTotals(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (SessionUsageTotals, error) {
-	return d.sumUsageTotals(ctx, usageTotalsParams(workspaceUUID, sessionExternalID, threadExternalID))
+	return sumUsageTotals(ctx, NewSessionUsageMapper(d.mapperDB), usageTotalsParams(workspaceUUID, sessionExternalID, threadExternalID))
 }
 
-func (d *DB) sumUsageTotals(ctx context.Context, params sessionUsageTotalsParams) (SessionUsageTotals, error) {
-	row, _, err := NewSessionUsageMapper(d.mapperDB).SumUsageTotals(ctx, params)
+func sumUsageTotals(ctx context.Context, mapper SessionUsageMapper, params sessionUsageTotalsParams) (SessionUsageTotals, error) {
+	row, _, err := mapper.SumUsageTotals(ctx, params)
 	if err != nil {
 		return SessionUsageTotals{}, err
 	}
-	activeSeconds, err := NewSessionUsageMapper(d.mapperDB).SumActiveSeconds(ctx, params)
+	activeSeconds, err := mapper.SumActiveSeconds(ctx, params)
 	if err != nil {
 		return SessionUsageTotals{}, err
 	}
@@ -77,4 +80,22 @@ func (d *DB) sumUsageTotals(ctx context.Context, params sessionUsageTotalsParams
 		WebSearchRequests:        row.WebSearchRequests,
 		ActiveSeconds:            activeSeconds,
 	}, nil
+}
+
+func (d *DB) CheckSessionBudget(ctx context.Context, session Session, limit int64) error {
+	return checkSessionBudget(ctx, d.mapperDB, session, limit)
+}
+
+func checkSessionBudget(ctx context.Context, executor yourbatis.Executor, session Session, limit int64) error {
+	if limit == 0 {
+		return nil
+	}
+	totals, err := sumUsageTotals(ctx, NewSessionUsageMapper(executor), usageTotalsParams(session.WorkspaceUUID, session.ExternalID, ""))
+	if err != nil {
+		return err
+	}
+	if limit <= billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds) {
+		return ErrSessionBudgetNotRaised
+	}
+	return nil
 }

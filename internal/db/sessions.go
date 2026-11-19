@@ -341,31 +341,35 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 	return row.session(), true, nil
 }
 
-func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session, setTitle bool) (Session, bool, error) {
-	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
-		WorkspaceUUID:   workspaceUUID,
-		ExternalID:      externalID,
-		AgentSnapshot:   agentJSONArg(next.AgentSnapshot),
-		Title:           next.Title,
-		SetTitle:        setTitle,
-		Metadata:        agentJSONArg(next.Metadata),
-		Budget:          agentJSONArg(next.Budget),
-		BudgetReachedAt: next.BudgetReachedAt,
-		BudgetRemovedAt: next.BudgetRemovedAt,
-		UpdatedAt:       next.UpdatedAt,
+func (d *DB) UpdateSession(ctx context.Context, next Session, event SessionEvent, replacementLimit int64) (Session, SessionEvent, error) {
+	var updated Session
+	var stored SessionEvent
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, err := NewSessionMapper(executor).UpdateByExternalID(ctx, sessionUpdateParams{
+			WorkspaceUUID: next.WorkspaceUUID, ExternalID: next.ExternalID,
+			AgentSnapshot: agentJSONArg(next.AgentSnapshot), Title: next.Title, Metadata: agentJSONArg(next.Metadata),
+			Budget: agentJSONArg(next.Budget), BudgetReachedAt: next.BudgetReachedAt, BudgetRemovedAt: next.BudgetRemovedAt,
+			PreviousUpdatedAt: next.UpdatedAt, PreviousStatus: next.Status,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionUpdateConflict
+		}
+		if err != nil {
+			return err
+		}
+		updated = row.session()
+		if err := checkSessionBudget(ctx, executor, updated, replacementLimit); err != nil {
+			return err
+		}
+		primary, err := NewSessionThreadMapper(executor).FindPrimary(ctx, updated.WorkspaceUUID, updated.ExternalID)
+		if err != nil {
+			return err
+		}
+		write, err := insertSessionEventTx(ctx, executor, &updated, primary.thread(), event)
+		stored = write.Event
+		return err
 	})
-	if !errors.Is(err, sql.ErrNoRows) {
-		return row.session(), err == nil, err
-	}
-	current, found, loadErr := d.GetSession(ctx, workspaceUUID, externalID)
-	if loadErr != nil {
-		return Session{}, false, loadErr
-	}
-	if !found || current.ArchivedAt != nil || current.Status != "idle" {
-		return Session{}, false, ErrNotFound
-	}
-	return current, false, nil
+	return updated, stored, err
 }
 
 func (d *DB) SetSessionUsage(ctx context.Context, workspaceUUID, externalID string, usage json.RawMessage) error {

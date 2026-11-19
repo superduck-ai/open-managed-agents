@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,8 +23,13 @@ func (w *channelWorker) inputSession(ctx context.Context, msg *channelMessage, s
 	if msg.Input == nil || msg.Input.SessionExternalID == "" {
 		return w.sessionFor(ctx, msg, scopeKey)
 	}
-	if w.currentSession(ctx, scopeKey) != msg.Input.SessionExternalID {
-		return "", errChannelSessionUnconfirmed
+	current, err := w.supervisor.store.GetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return "", errors.Join(errChannelSessionUnconfirmed, err)
+	}
+	if current != msg.Input.SessionExternalID {
+		// 解绑或切换会话后，旧输入按已中断处理。
+		return "", errChannelExecutionHeld
 	}
 	return msg.Input.SessionExternalID, nil
 }

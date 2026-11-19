@@ -58,7 +58,7 @@ func TestInputRecoveryDistinguishesUserCancellationFromShutdown(t *testing.T) {
 }
 
 func TestChannelInputRecoveryAtHandoffBoundaries(t *testing.T) {
-	for _, phase := range []string{"received", "buffering", "prepared", "content", "accepted"} {
+	for _, phase := range []string{"received", "buffering", "prepared", "content", "accepted", "switched", "unbound"} {
 		t.Run(phase, func(t *testing.T) {
 			server, creates, requests := omaTestServer(t, 0)
 			store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}
@@ -82,7 +82,7 @@ func TestChannelInputRecoveryAtHandoffBoundaries(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if phase == "content" || phase == "accepted" {
+			if phase == "content" || phase == "accepted" || phase == "switched" || phase == "unbound" {
 				change := db.ChannelInputAdvance{State: "prepared", SessionExternalID: "sesn_1", PreparedContent: `{"content":[{"type":"text","text":"已准备的原始内容"}],"skipped":[],"mounted":{}}`}
 				if phase == "accepted" {
 					change.State, change.InputEventID, change.PreparedContent = "accepted", "evt_user_1", ""
@@ -92,6 +92,12 @@ func TestChannelInputRecoveryAtHandoffBoundaries(t *testing.T) {
 				}
 			}
 			store.mu.Lock()
+			switch phase {
+			case "switched":
+				store.bindings["chat:oc_1"] = "sesn_new"
+			case "unbound":
+				delete(store.bindings, "chat:oc_1")
+			}
 			pending := store.inputs[row.UUID]
 			pending.LeaseUntil = time.Now().Add(-time.Second)
 			store.inputs[row.UUID] = pending
@@ -100,7 +106,7 @@ func TestChannelInputRecoveryAtHandoffBoundaries(t *testing.T) {
 			worker.adapter.(*feishuChannel).Incoming.FlushAll(t.Context())
 			waitForScope(t, worker, "chat:oc_1")
 			want := 1
-			if phase == "accepted" {
+			if phase == "accepted" || phase == "switched" || phase == "unbound" {
 				want = 0
 			}
 			if len(requests.snapshot()) != want || creates.Load() != 0 {

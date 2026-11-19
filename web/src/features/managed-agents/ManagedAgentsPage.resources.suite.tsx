@@ -2485,17 +2485,17 @@ export function registerManagedAgentsResourceTests() {
     expect(request?.body).toEqual({ title: 'New title' });
   });
 
-  test('keeps the title draft and localizes a rejected session edit in Chinese', async () => {
+  test.each([
+    ['agent update must be an object', '会话创建后，只能修改 Agent 的工具和 MCP 服务器配置。'],
+    ['session must be idle to update the agent', '请在会话空闲时修改 Agent 配置。'],
+  ])('keeps the title draft and localizes a rejected session edit in Chinese: %s', async (detail, translated) => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
     const baseFetch = globalThis.fetch;
     globalThis.fetch = (input, init) => {
       if (requestUrl(input).includes('/v1/sessions/sesn_one123456?') && requestMethod(input, init) === 'POST') {
         return Promise.resolve(
-          Response.json(
-            { error: { type: 'invalid_request_error', message: 'agent update must be an object' } },
-            { status: 400 },
-          ),
+          Response.json({ error: { type: 'invalid_request_error', message: detail } }, { status: 400 }),
         );
       }
       return baseFetch(input, init);
@@ -2508,8 +2508,8 @@ export function registerManagedAgentsResourceTests() {
     const title = within(dialog).getByLabelText(/标题/);
     fireEvent.change(title, { target: { value: '新标题' } });
     await act(async () => fireEvent.submit(dialog.querySelector('form')!));
-    expect(await within(dialog).findByText('会话创建后，只能修改 Agent 的工具和 MCP 服务器配置。')).toBeTruthy();
-    expect(within(dialog).queryByText('agent update must be an object')).toBeNull();
+    expect(await within(dialog).findByText(translated)).toBeTruthy();
+    expect(within(dialog).queryByText(detail)).toBeNull();
     expect(within(dialog).getByDisplayValue('新标题')).toBeTruthy();
   });
 

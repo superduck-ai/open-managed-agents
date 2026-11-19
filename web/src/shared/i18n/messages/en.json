@@ -7,6 +7,7 @@
   "llmModels.chatBrainOnly": "Chat Completions is supported in brain mode only.",
   "llmModels.apiBackend": "API backend",
   "managedAgents.sessions.editDescription": "Update the settings for this session.",
+  "managedAgents.sessions.errors.agentRequiresIdle": "Wait until the session is idle to edit the agent.",
   "managedAgents.sessions.errors.idleRequired": "Only idle, unarchived sessions can be updated.",
   "managedAgents.sessions.errors.agentUpdate": "Only tools and MCP servers can be updated on the session agent.",
   "managedAgents.sessions.errors.forbidden": "You do not have permission to edit this session.",

@@ -26,6 +26,9 @@ export function sessionEditErrorMessage(error: unknown, msg: I18nMsg) {
       'Use up to 500 characters for the title, or leave it blank.',
     );
   }
+  if (detail === 'session must be idle to update the agent') {
+    return msg('managedAgents.sessions.errors.agentRequiresIdle', 'Wait until the session is idle to edit the agent.');
+  }
   if (detail === 'session must be idle and unarchived to update') {
     return msg('managedAgents.sessions.errors.idleRequired', 'Only idle, unarchived sessions can be updated.');
   }

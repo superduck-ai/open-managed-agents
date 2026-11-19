@@ -115,7 +115,11 @@ func TestCatalogConnectionCardColor(t *testing.T) {
 		if err := json.Unmarshal([]byte(feishu.Render(contracts.Reply{Title: "连接 Catalog", Status: status})), &card); err != nil {
 			t.Fatal(err)
 		}
-		if card.Header.Template != color || card.Header.Title.Content != "连接 Catalog" {
+		wantTitle := "连接 Catalog"
+		if status == "已连接" {
+			wantTitle = status
+		}
+		if card.Header.Template != color || card.Header.Title.Content != wantTitle {
 			t.Errorf("%s：表头为 %+v", status, card.Header)
 		}
 	}

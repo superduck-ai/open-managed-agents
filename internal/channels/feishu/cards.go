@@ -64,16 +64,18 @@ func Render(r contracts.Reply) string {
 			status = "思考中"
 		}
 	}
+	title := cmp.Or(r.Title, status)
 	color := "blue"
 	switch r.Status {
 	case "已连接":
+		title = r.Status
 		color = "green"
 	case "已取消授权", "已结束授权":
 		color = "grey"
 	case "连接失效", "授权已过期":
 		color = "red"
 	}
-	card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true, "summary": map[string]string{"content": status}}, "header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": cmp.Or(r.Title, status)}, "template": color}, "body": map[string]any{"elements": elements}}
+	card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true, "summary": map[string]string{"content": status}}, "header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": title}, "template": color}, "body": map[string]any{"elements": elements}}
 	encoded, _ := json.Marshal(card)
 	return string(encoded)
 }

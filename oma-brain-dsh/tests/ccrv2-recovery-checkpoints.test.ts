@@ -6,14 +6,14 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
-import { Backend, textEvents } from "./backend.ts";
+import { Backend, textEvents, toolEvents } from "./backend.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function mount(backend: Backend) {
+async function mount(backend: Backend, beforeOpen?: (session: ReturnType<typeof createOmaSession>) => void) {
   await backend.ready;
   const ctx = new Context();
   const api = new OmaApi(backend.url);
@@ -27,6 +27,7 @@ async function mount(backend: Backend) {
     finally { await ctx.fiber.dispose(); }
   };
   cleanups.push(close);
+  beforeOpen?.(session);
   await session.open();
   return { session, close };
 }
@@ -39,7 +40,7 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
     const name = friday ? "Friday" : "Bash";
     const args = friday ? '{"args":["app","list"]}' : '{"command":"write"}';
     if (friday) {
-      backend.modelScript = [textEvents("恢复查询完成")];
+      backend.modelScript = [toolEvents("echo check", "followup-call"), textEvents("恢复查询完成")];
       const route = backend.route.bind(backend);
       backend.route = request => request.url.endsWith("/interrupted-call/friday-oauth?resume=1")
         ? Promise.resolve(Response.json({ authorized: true, placeholder: "oma_ph_test" })) : route(request);
@@ -49,9 +50,20 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
     await seedInterruptedTool(first.session, "interrupted-input", callId, { name, arguments: args }, phase !== "requested");
     await first.session.checkpoint();
     await first.close();
-    const recovered = await mount(backend);
+    let decisions = 0;
+    const recovered = await mount(backend, session => {
+      if (!friday) return;
+      backend.onApproval = async payload => {
+        decisions++;
+        expect(session.initializing).toBe(true);
+        await session.receive("followup-decision", { type: "control_response", response: {
+          subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+        } });
+      };
+    });
+    expect(decisions).toBe(friday ? 1 : 0);
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
-    expect(results).toHaveLength(1);
+    expect(results).toHaveLength(friday ? 2 : 1);
     expect(results[0]?.data.error?.code).toBe(friday ? undefined : "TOOL_NOT_STARTED");
     expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
@@ -61,11 +73,11 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
     const persisted = () => [...backend.privateLog.values()].filter(payload => payload.data?.type !== "session/end-seed");
     const stored = structuredClone(persisted());
     const reopened = await mount(backend);
-    expect(reopened.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result")).toHaveLength(1);
+    expect(reopened.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result")).toHaveLength(friday ? 2 : 1);
     await reopened.close();
     expect(persisted()).toEqual(stored);
-    expect(backend.requests).toHaveLength(friday ? 1 : 0);
-    expect(backend.executions).toHaveLength(friday ? 1 : 0);
+    expect(backend.requests).toHaveLength(friday ? 2 : 0);
+    expect(backend.executions).toHaveLength(friday ? 2 : 0);
   });
 }
 

@@ -73,6 +73,7 @@ export class CcrSession {
   private readonly recoveryInterrupts = new Map<string, AbortController>();
   private recoveryInterruptedAll = false;
   private recoveryRootInterrupted = false;
+  private readonly recoveryControlsReady = Promise.withResolvers<void>();
   private readonly opened = Promise.withResolvers<void>();
   private ready = false;
   private openedAt = 0;
@@ -389,6 +390,8 @@ export class CcrSession {
         && events.some(event => event.type === "tool/call" && event.data.name === "Friday" && event.data.callId === last.data.message.toolCallId)) {
         this.opening = false;
         await this.checkpoint();
+        this.recoveryControlsReady.resolve();
+        this.recoveryBlocked?.();
         this.agent.followup(createUserMessage({ source: { kind: "system-prompt" }, content: [
           { type: "text", text: "Friday 已完成查询，请根据刚才的工具结果回答原问题。" },
         ] }));
@@ -651,10 +654,11 @@ export class CcrSession {
 
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
-    const interruptConsumed = !this.ready && isInterruptInput(payload);
+    const interruptConsumed = this.opening && !this.ready && isInterruptInput(payload);
     if (!this.ready) {
       if (interruptConsumed) this.interruptRecovery(payload.session_thread_id);
-      await this.opened.promise;
+      if (isControlInput(payload.type)) await Promise.race([this.opened.promise, this.recoveryControlsReady.promise]);
+      else await this.opened.promise;
     }
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
     if (!repeatedControl && payload.type === "control_response") {

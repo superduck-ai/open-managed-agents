@@ -113,6 +113,28 @@ func TestResumeUsesEffectiveTargetAndReadsVaultOnce(t *testing.T) {
 	}
 }
 
+func TestNewIdentitySessionBindingKeepsPairingGuard(t *testing.T) {
+	decision := identities.Decision{Mode: "execute", AgentExternalID: "agent_paired", IdentityExternalID: "idn_a",
+		IdentityUUID: "identity-uuid", BindingRevision: 3, PairingExternalID: "chsp_new"}
+	store := &fakeRuntimeStore{credential: "key"}
+	worker := &channelWorker{record: db.ChannelRecord{ExternalID: "chn_1", ChannelType: "feishu", AppID: "app"},
+		supervisor: &runtimeSupervisor{store: store, createIdentitySession: func(context.Context, string, []byte, db.InsertSessionIdentityParams) (string, error) {
+			return "sesn_new", nil
+		}}}
+	msg := &channelMessage{ChatType: "p2p", ChatID: "user", UserID: "user", Content: "你好"}
+	sessionID, err := worker.sessionForDecision(t.Context(), msg, "chat:user", decision)
+	if err != nil || sessionID != "sesn_new" || store.boundPairing != "chsp_new" || store.boundRevision != 3 || store.binding("chat:user") != "sesn_new" {
+		t.Fatalf("新建绑定未带上当前配对：id=%s err=%v pairing=%s revision=%d bound=%s", sessionID, err, store.boundPairing, store.boundRevision, store.binding("chat:user"))
+	}
+	store.bindErr = db.ErrVersionConflict
+	adapter := &independentAdapter{}
+	worker.adapter = adapter
+	sessionID, err = worker.sessionForDecision(t.Context(), msg, "chat:other", decision)
+	if sessionID != "" || !errors.Is(err, errChannelExecutionHeld) || store.binding("chat:other") != "" || len(adapter.texts) != 1 {
+		t.Fatalf("配对变化后仍绑定了新会话：id=%s err=%v bound=%s replies=%v", sessionID, err, store.binding("chat:other"), adapter.texts)
+	}
+}
+
 func TestExecutionModeMapsFixedContextWithoutInventingIdentity(t *testing.T) {
 	mode, present, err := executionMode(channelMutation{})
 	if err != nil || present || mode != "" {

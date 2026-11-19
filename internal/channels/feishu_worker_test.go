@@ -25,6 +25,9 @@ import (
 type fakeRuntimeStore struct {
 	identityBinding   db.SessionIdentityRecord
 	identityLookupErr error
+	boundPairing      string
+	boundRevision     int64
+	bindErr           error
 	mu                sync.Mutex
 	record            db.ChannelRecord
 	bindings          map[string]string
@@ -70,9 +73,17 @@ func (f *fakeRuntimeStore) binding(scopeKey string) string {
 	return f.bindings[scopeKey]
 }
 
-func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID, _ string, _ int64) error {
+func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID, pairingID string, revision int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.boundPairing = pairingID
+	f.boundRevision = revision
+	if f.bindErr != nil {
+		return f.bindErr
+	}
+	if f.bindings == nil {
+		f.bindings = map[string]string{}
+	}
 	f.bindings[scopeKey] = sessionID
 	return nil
 }

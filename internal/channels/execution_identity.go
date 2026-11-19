@@ -169,7 +169,12 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	if err != nil {
 		return "", err
 	}
-	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created, "", 0); err != nil {
+	err = w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created, decision.PairingExternalID, decision.BindingRevision)
+	if errors.Is(err, db.ErrVersionConflict) {
+		_ = w.replyText(ctx, msg, "当前配对已变化，请重新发送。")
+		return "", errChannelExecutionHeld
+	}
+	if err != nil {
 		return "", err
 	}
 	return created, nil

@@ -2396,9 +2396,8 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
     expect(screen.queryByRole('dialog', { name: 'Session one' })).toBeNull();
-    await waitFor(() =>
-      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
-    );
+    expect(within(dialog).queryByRole('combobox')).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Add resource' })).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   });
 
@@ -2430,8 +2429,79 @@ export function registerManagedAgentsResourceTests() {
     const updateRequest = api.requests.find(
       (request) => request.method === 'POST' && request.url.startsWith('/v1/sessions/sesn_one123456'),
     );
-    expect(updateRequest?.body).not.toHaveProperty('vault_ids');
-    expect(updateRequest?.body?.title).toBe('Renamed session');
+    expect(updateRequest?.body).toEqual({ title: 'Renamed session' });
+  });
+
+  test.each([
+    { title: 'Session one', field: /Title/, value: '', expected: { title: null } },
+    { title: 'Before emoji', field: /Title/, value: '🐥'.repeat(300), expected: { title: '🐥'.repeat(300) } },
+    { title: '  Existing title  ', field: /Budget/, value: '', expected: { budget: null } },
+    {
+      title: '',
+      field: /Budget/,
+      value: '5',
+      expected: { budget: { type: 'limit', max_list_cost: { amount: '500', currency: 'USD' } } },
+    },
+  ])('submits only the edited field on a session with title "$title"', async ({ title, field, value, expected }) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    Object.assign(api.resources.sessions[0], {
+      title,
+      budget: { type: 'limit', max_list_cost: { amount: '1000', currency: 'USD' } },
+      resources: [{ type: 'github_repository', url: 'https://github.com/org/repo' }],
+    });
+    renderManagedAgentsPage('sessions');
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    expect((within(dialog).getByLabelText(/Title/) as HTMLInputElement).value).toBe(title);
+    expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(field), { target: { value } });
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const request = api.requests.find(
+      ({ method, url }) => method === 'POST' && url.startsWith('/v1/sessions/sesn_one123456'),
+    );
+    expect(request?.body).toEqual(expected);
+  });
+
+  test('keeps the title draft and localizes a rejected session edit in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      if (requestUrl(input).includes('/v1/sessions/sesn_one123456?') && requestMethod(input, init) === 'POST') {
+        return Promise.resolve(
+          Response.json(
+            { error: { type: 'invalid_request_error', message: 'agent update must be an object' } },
+            { status: 400 },
+          ),
+        );
+      }
+      return baseFetch(input, init);
+    };
+    renderManagedAgentsPage('sessions', 'zh-CN');
+    const row = (await screen.findByText('Session one')).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: '更多操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '编辑会话' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑会话' });
+    const title = within(dialog).getByLabelText(/标题/);
+    fireEvent.change(title, { target: { value: '新标题' } });
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    expect(await within(dialog).findByText('会话创建后，只能修改 Agent 的工具和 MCP 服务器配置。')).toBeTruthy();
+    expect(within(dialog).queryByText('agent update must be an object')).toBeNull();
+    expect(within(dialog).getByDisplayValue('新标题')).toBeTruthy();
+  });
+
+  test('disables editing on a terminated session before archival', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'terminated';
+    renderManagedAgentsPage('sessions');
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Status Active' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Terminated' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Edit session' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   test('synchronizes exact session ID results after editing, archiving, and deleting', async () => {
@@ -2506,7 +2576,12 @@ export function registerManagedAgentsResourceTests() {
         false,
       ),
     );
-    expect(within(dialog).getByLabelText(/Title/).getAttribute('maxlength')).toBe('500');
+    const titleInput = within(dialog).getByLabelText(/Title/);
+    expect(titleInput.getAttribute('maxlength')).toBeNull();
+    fireEvent.change(titleInput, { target: { value: '🐥'.repeat(501) } });
+    expect(titleInput.getAttribute('aria-invalid')).toBe('true');
+    expect((within(dialog).getByRole('button', { name: 'Create session' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(titleInput, { target: { value: '🐥'.repeat(300) } });
     expect(
       within(dialog)
         .getByRole('link', { name: /Manage environments/ })

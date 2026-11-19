@@ -6,5 +6,6 @@ import "context"
 
 type ChannelUserVaultMapper interface {
 	Find(ctx context.Context, identity ChannelUserVaultIdentity) (string, bool, error)
-	Insert(ctx context.Context, identity ChannelUserVaultIdentity, vaultUUID string) error
+	Adopt(ctx context.Context, identity ChannelUserVaultIdentity) error
+	Insert(ctx context.Context, identity ChannelUserVaultIdentity, vaultUUID string) (int64, error)
 }

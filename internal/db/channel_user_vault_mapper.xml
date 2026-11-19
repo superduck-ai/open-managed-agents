@@ -6,11 +6,19 @@
         JOIN vaults v ON v.uuid = p.vault_uuid AND v.organization_uuid = p.organization_uuid AND v.workspace_uuid = p.workspace_uuid
         WHERE p.organization_uuid = #{identity.OrganizationUUID} AND p.workspace_uuid = #{identity.WorkspaceUUID}
         AND p.channel_type = #{identity.ChannelType} AND p.app_id = #{identity.AppID} AND p.actor_id = #{identity.ActorID}
+        AND (p.identity_uuid IS NULL OR p.identity_uuid = NULLIF(#{identity.IdentityUUID}, '')::uuid)
     </select>
-    <insert id="Insert" result="exec">
-        INSERT INTO channel_user_vaults (organization_uuid, workspace_uuid, channel_type, app_id, actor_id, vault_uuid)
-        VALUES (#{identity.OrganizationUUID}, #{identity.WorkspaceUUID}, #{identity.ChannelType}, #{identity.AppID}, #{identity.ActorID}, #{vaultUUID})
+    <update id="Adopt" result="exec">
+        UPDATE channel_user_vaults SET identity_uuid = #{identity.IdentityUUID}::uuid
+        WHERE organization_uuid = #{identity.OrganizationUUID} AND workspace_uuid = #{identity.WorkspaceUUID}
+        AND channel_type = #{identity.ChannelType} AND app_id = #{identity.AppID} AND actor_id = #{identity.ActorID}
+        AND identity_uuid IS NULL
+    </update>
+    <insert id="Insert" result="rows">
+        INSERT INTO channel_user_vaults (organization_uuid, workspace_uuid, channel_type, app_id, actor_id, vault_uuid, identity_uuid)
+        VALUES (#{identity.OrganizationUUID}, #{identity.WorkspaceUUID}, #{identity.ChannelType}, #{identity.AppID}, #{identity.ActorID}, #{vaultUUID}, NULLIF(#{identity.IdentityUUID}, '')::uuid)
         ON CONFLICT (organization_uuid, workspace_uuid, channel_type, app_id, actor_id)
-        DO UPDATE SET vault_uuid = EXCLUDED.vault_uuid
+        DO UPDATE SET vault_uuid = EXCLUDED.vault_uuid, identity_uuid = EXCLUDED.identity_uuid
+        WHERE channel_user_vaults.identity_uuid IS NULL OR channel_user_vaults.identity_uuid = EXCLUDED.identity_uuid
     </insert>
 </mapper>

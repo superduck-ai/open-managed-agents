@@ -37,6 +37,7 @@ type EnvOAuthProviderSnapshot struct {
 	TokenEndpointEncoding   string
 	DefaultSecretName       string
 	DefaultAllowedHosts     []string
+	NetworkingType          string
 }
 
 type EnvOAuthProviderResolver interface {

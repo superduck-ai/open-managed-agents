@@ -45,7 +45,12 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		logger:     logger,
 	}
 	supervisor.personalVault = result.ensurePersonalVault
+	supervisor.personalVaultLookup = result.lookupPersonalVault
 	return result
+}
+
+func (s *Service) WithIdentitySessionCreator(create func(context.Context, string, []byte, db.InsertSessionIdentityParams) (string, error)) {
+	s.supervisor.createIdentitySession = create
 }
 
 func (s *Service) AgentHandler() http.Handler {

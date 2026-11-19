@@ -64,26 +64,29 @@ type localService struct {
 	checkCredentials func(context.Context, *http.Client, string, string, string) (bool, error)
 	runMu            sync.Mutex
 	runs             map[string]*registrationRun
+	ingress          identityIngress
 }
 
 type channelMutation struct {
-	AgentVersion     json.RawMessage `json:"agent_version"`
-	EnvironmentID    *string         `json:"environment_id"`
-	Name             *string         `json:"name"`
-	Mode             *string         `json:"mode"`
-	AppID            *string         `json:"app_id"`
-	AppSecret        *string         `json:"app_secret"`
-	Enabled          *bool           `json:"enabled"`
-	IncludeThinking  *bool           `json:"include_thinking"`
-	IncludeToolCalls *bool           `json:"include_tool_calls"`
-	ReplyInThread    *bool           `json:"reply_in_thread"`
-	Status           *string         `json:"status"`
-	AuthorizationID  *string         `json:"authorization_id"`
-	MemoryStoreID    json.RawMessage `json:"memory_store_id"`
-	VaultID          json.RawMessage `json:"vault_id"`
-	VaultIDs         json.RawMessage `json:"vault_ids"`
-	GitRepository    json.RawMessage `json:"git_repository"`
-	Resources        json.RawMessage `json:"resources"`
+	AgentVersion       json.RawMessage `json:"agent_version"`
+	EnvironmentID      *string         `json:"environment_id"`
+	Name               *string         `json:"name"`
+	Mode               *string         `json:"mode"`
+	AppID              *string         `json:"app_id"`
+	AppSecret          *string         `json:"app_secret"`
+	Enabled            *bool           `json:"enabled"`
+	IncludeThinking    *bool           `json:"include_thinking"`
+	IncludeToolCalls   *bool           `json:"include_tool_calls"`
+	ReplyInThread      *bool           `json:"reply_in_thread"`
+	Status             *string         `json:"status"`
+	AuthorizationID    *string         `json:"authorization_id"`
+	MemoryStoreID      json.RawMessage `json:"memory_store_id"`
+	VaultID            json.RawMessage `json:"vault_id"`
+	VaultIDs           json.RawMessage `json:"vault_ids"`
+	GitRepository      json.RawMessage `json:"git_repository"`
+	Resources          json.RawMessage `json:"resources"`
+	IdentityID         *string         `json:"identity_id"`
+	IdentityResolution json.RawMessage `json:"identity_resolution"`
 }
 
 type localHandler struct {
@@ -166,6 +169,9 @@ func (s *localService) view(ctx context.Context, record db.ChannelRecord) (map[s
 	for key, value := range channelMountView(record) {
 		view[key] = value
 	}
+	if err := s.attachExecution(ctx, view, record); err != nil {
+		return nil, err
+	}
 	return view, nil
 }
 
@@ -217,6 +223,9 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		Enabled:          enabled,
 		BindingStatus:    "unbound",
 	}
+	if err := s.prepareExecution(ctx, principal, &record, input); err != nil {
+		return nil, err
+	}
 	applyChannelFlags(&record, input)
 	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
 		return nil, err
@@ -250,6 +259,8 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		ExecutionMode:     record.ExecutionMode,
+		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
 		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})
@@ -288,6 +299,9 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		}
 		record.Name = name
 	}
+	if err := s.prepareExecution(ctx, principal, &record, input); err != nil {
+		return nil, err
+	}
 	applyChannelFlags(&record, input)
 	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
 		return nil, err
@@ -317,6 +331,8 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		ExecutionMode:     record.ExecutionMode,
+		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
 		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})

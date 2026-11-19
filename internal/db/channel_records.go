@@ -28,6 +28,8 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			ExecutionMode:     params.ExecutionMode,
+			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
 			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
@@ -80,6 +82,8 @@ func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			ExecutionMode:     params.ExecutionMode,
+			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
 			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
@@ -126,8 +130,12 @@ func (d *DB) GetChannelSessionBinding(ctx context.Context, channelExternalID, sc
 	return sessionExternalID, mapNoRows(err)
 }
 
-func (d *DB) SetChannelSessionBinding(ctx context.Context, channelExternalID, scopeKey, sessionExternalID string) error {
-	return NewChannelRecordMapper(d.mapperDB).UpsertChannelSession(ctx, channelExternalID, scopeKey, sessionExternalID)
+func (d *DB) SetChannelSessionBinding(ctx context.Context, channelExternalID, scopeKey, sessionExternalID, pairingExternalID string, pairingRevision int64) error {
+	rows, err := NewChannelRecordMapper(d.mapperDB).UpsertChannelSession(ctx, channelExternalID, scopeKey, sessionExternalID, pairingExternalID, pairingRevision)
+	if err == nil && rows == 0 {
+		return ErrVersionConflict
+	}
+	return err
 }
 
 func (d *DB) DeleteChannelSessionBinding(ctx context.Context, channelExternalID, scopeKey string) error {
@@ -148,6 +156,8 @@ func (d *DB) SetChannelAgentEnvironment(ctx context.Context, organizationUUID, w
 }
 
 type ChannelRecordInput struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	EnvironmentID     *string
 	ExternalID        string
 	OrganizationUUID  string
@@ -168,6 +178,8 @@ type ChannelRecordInput struct {
 }
 
 type ChannelRecordUpdate struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	EnvironmentID     *string
 	ExternalID        string
 	WorkspaceUUID     string

@@ -135,6 +135,19 @@ func mapSessionLoadError(err error, sessionID string) error {
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
 
+func mapSessionCreateError(err error) (error, bool) {
+	if mapped, ok := mapFileResourcePersistenceError(err); ok {
+		return mapped, true
+	}
+	if errors.Is(err, db.ErrConsoleIdentityNotFound) {
+		return apperr.New(apperr.NotFound, "执行身份不存在", err), true
+	}
+	if errors.Is(err, db.ErrConsoleIdentityDisabled) {
+		return apperr.New(apperr.Conflict, "Identity 已停用，不能创建新的执行", err), true
+	}
+	return nil, false
+}
+
 func mapFileResourcePersistenceError(err error) (error, bool) {
 	var limitErr *db.SessionFileResourceLimitError
 	if errors.As(err, &limitErr) {

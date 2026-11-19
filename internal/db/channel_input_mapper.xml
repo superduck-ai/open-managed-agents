@@ -31,6 +31,21 @@
       AND i.state IN ('received','buffering','prepared','accepted') AND i.lease_until&lt;=now()
     ORDER BY i.created_at,i.uuid LIMIT 100
   </select>
+  <sql id="pairingWait">
+    <include refid="scope"/> AND i.state='pairing_wait' AND i.message_id=#{input.MessageID}
+    AND i.scope_key=#{input.ScopeKey} AND i.payload->>'user_id'=#{input.ActorID}
+    AND i.payload->>'pairing_id'=#{input.PairingID}
+  </sql>
+  <select id="HasPairingWait" result="scalar">
+    SELECT EXISTS (SELECT 1 FROM channel_inputs i WHERE <include refid="pairingWait"/>)
+  </select>
+  <select id="ResumeAfterPairing" result="optional">
+    WITH resumed AS (
+      UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
+      WHERE <include refid="pairingWait"/>
+      RETURNING i.uuid::text AS uuid
+    ) SELECT uuid FROM resumed
+  </select>
   <select id="LockSources">
     SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/>
       AND i.scope_key=#{batch.ScopeKey} AND i.state='buffering' AND i.lease_owner=#{owner} AND i.lease_until&gt;now()

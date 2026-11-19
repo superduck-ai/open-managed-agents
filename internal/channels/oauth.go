@@ -28,7 +28,7 @@ func (s *Service) WithOAuthProviders(providers vaults.EnvOAuthProviderResolver, 
 	return s
 }
 
-func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.SessionEvent, continuation *db.OAuthContinuation) (OAuthTarget, error) {
+func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.SessionEvent, continuation *db.OAuthContinuation, allowDisabled bool) (OAuthTarget, error) {
 	var payload struct {
 		Name  string                    `json:"name"`
 		Input codesessions.OAuthRequest `json:"input"`
@@ -56,7 +56,14 @@ func (s *Service) oauthTarget(ctx context.Context, scope OAuthContext, event db.
 			return OAuthTarget{}, errors.New("目标 MCP 未挂载到原会话")
 		}
 	}
-	id, err := s.store.GetChannelUserVaultID(ctx, personalVaultIdentity(scope.Channel, scope.ActorID))
+	identity, err := s.personalVaultIdentity(ctx, scope.Channel, scope.ActorID, true)
+	if errors.Is(err, errChannelPersonalIdentityDisabled) && allowDisabled {
+		err = nil
+	}
+	if err != nil {
+		return OAuthTarget{}, err
+	}
+	id, err := s.store.GetChannelUserVaultID(ctx, identity)
 	if err != nil {
 		return OAuthTarget{}, err
 	}
@@ -83,7 +90,7 @@ func (s *Service) BeginOAuth(ctx context.Context, channelID, sessionID, eventID,
 		return "", err
 	}
 	continuation := &db.OAuthContinuation{SessionUUID: scope.Session.UUID, EventUUID: event.UUID, ChannelUUID: scope.Channel.UUID, BrowserHash: browserHash, Identity: true}
-	target, err := s.oauthTarget(ctx, scope, event, continuation)
+	target, err := s.oauthTarget(ctx, scope, event, continuation, false)
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +135,7 @@ func (s *Service) OAuthContinuationTarget(ctx context.Context, workspaceUUID str
 	if err != nil {
 		return OAuthTarget{}, err
 	}
-	return s.oauthTarget(ctx, scope, event, continuation)
+	return s.oauthTarget(ctx, scope, event, continuation, true)
 }
 
 func (s *Service) OAuthIdentityProvider(ctx context.Context, flow db.EnvOAuthFlow) (vaults.EnvOAuthProviderSnapshot, error) {
@@ -160,36 +167,77 @@ func (s *Service) CompleteOAuthIdentity(ctx context.Context, flow db.EnvOAuthFlo
 		}
 		return s.startMCPOAuth(ctx, target)
 	}
-	provider, err := s.oauthProviders.ResolveEnvOAuthProvider(ctx, target.Request.Provider)
-	if err != nil {
-		return "", err
-	}
-	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != target.Request.SecretName || len(provider.DefaultAllowedHosts) == 0 {
-		return "", errors.New("目标服务的个人 OAuth 配置不可用")
-	}
-	credentials, _, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{WorkspaceUUID: flow.WorkspaceUUID, VaultExternalID: target.Vault.ExternalID, Limit: 50})
+	selected, err := s.matchingEnvCredential(ctx, flow.WorkspaceUUID, target.Vault.ExternalID, target.Request.SecretName, target.Request.Provider)
 	if err != nil {
 		return "", err
 	}
 	credentialID := ""
-	for _, credential := range credentials {
-		if credential.AuthType != "env_oauth" || credential.CredentialKey != target.Request.SecretName {
-			continue
-		}
-		key, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
-		if err != nil || key != target.Request.Provider {
-			return "", errors.New("目标变量已有其他服务的连接")
-		}
-		credentialID = credential.ExternalID
+	if selected != nil {
+		credentialID = selected.ExternalID
+	}
+	var provider vaults.EnvOAuthProviderSnapshot
+	if selected != nil {
+		provider, err = vaults.ResolveEnvOAuthCredentialProvider(ctx, s.supervisor.cipher, *selected, s.oauthProviders)
+	} else {
+		provider, err = s.oauthProviders.ResolveEnvOAuthProvider(ctx, target.Request.Provider)
+	}
+	if err != nil {
+		return "", err
+	}
+	if !envOAuthProviderReady(provider, target.Request.SecretName) {
+		return "", errors.New("目标服务的个人 OAuth 配置不可用")
 	}
 	_, link, err := oauthflows.CreateEnv(ctx, s.store, s.supervisor.cipher, provider, db.EnvOAuthFlow{
 		OrganizationUUID: flow.OrganizationUUID, WorkspaceUUID: flow.WorkspaceUUID,
 		VaultUUID: target.Vault.UUID, VaultExternalID: target.Vault.ExternalID, CredentialExternalID: credentialID,
 		SecretName: target.Request.SecretName, RedirectURL: s.supervisor.oauthOrigin + "/oauth/vault/env-success",
-		NetworkingType: "limited", AllowedHosts: provider.DefaultAllowedHosts, Continuation: target.Continuation,
+		NetworkingType: envOAuthNetworking(provider), AllowedHosts: provider.DefaultAllowedHosts, Continuation: target.Continuation,
 		CreatedByAPIKeyUUID: target.Scope.Session.CreatedByAPIKeyUUID,
 	})
 	return link, err
+}
+
+func envOAuthProviderReady(provider vaults.EnvOAuthProviderSnapshot, secretName string) bool {
+	if !provider.Enabled || !provider.Configured || provider.DefaultSecretName != secretName {
+		return false
+	}
+	return provider.NetworkingType == "unrestricted" || len(provider.DefaultAllowedHosts) > 0
+}
+
+func envOAuthNetworking(provider vaults.EnvOAuthProviderSnapshot) string {
+	if provider.NetworkingType == "unrestricted" {
+		return "unrestricted"
+	}
+	return "limited"
+}
+
+func (s *Service) matchingEnvCredential(ctx context.Context, workspaceUUID, vaultID, secretName, providerKey string) (*db.VaultCredential, error) {
+	var cursor *db.VaultCredentialPageCursor
+	for page := 0; page < 20; page++ {
+		credentials, hasMore, err := s.store.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
+			WorkspaceUUID: workspaceUUID, VaultExternalID: vaultID, Limit: 50, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for i := range credentials {
+			credential := credentials[i]
+			if credential.AuthType != "env_oauth" || credential.CredentialKey != secretName {
+				continue
+			}
+			key, err := vaults.EnvOAuthCredentialProvider(credential.Auth)
+			if err != nil || key != providerKey {
+				return nil, errors.New("目标变量已有其他服务的连接")
+			}
+			return &credentials[i], nil
+		}
+		if !hasMore || len(credentials) == 0 {
+			return nil, nil
+		}
+		last := credentials[len(credentials)-1]
+		cursor = &db.VaultCredentialPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}
+	}
+	return nil, errors.New("个人 OAuth 凭据过多，无法定位目标变量")
 }
 
 func (s *Service) OAuthCompletion(ctx context.Context, workspaceUUID string, continuation *db.OAuthContinuation, credentialID string) (OAuthTarget, json.RawMessage, error) {

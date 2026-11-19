@@ -71,7 +71,7 @@ func TestChannelUserVaultsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewChannelUserVaultMapper(store.mapperDB).Insert(ctx, identity, owned.UUID); err == nil {
+	if _, err := NewChannelUserVaultMapper(store.mapperDB).Insert(ctx, identity, owned.UUID); err == nil {
 		t.Fatal("同一 Vault 被关联给不同用户")
 	}
 	identity.ActorID = "user-b"
@@ -109,5 +109,19 @@ func TestChannelUserVaultsPostgres(t *testing.T) {
 	}
 	if current, err := store.GetChannelUserVaultID(ctx, identity); err != nil || current != rebuilt {
 		t.Fatalf("重建未替换旧关联：%s %v", current, err)
+	}
+	identity.IdentityUUID = uuid.NewV4().String()
+	if err := store.AdoptChannelUserVault(ctx, identity); err != nil {
+		t.Fatal(err)
+	}
+	if adopted, err := store.GetChannelUserVaultID(ctx, identity); err != nil || adopted != rebuilt {
+		t.Fatalf("关联个人身份应保留原 Vault：%s %v", adopted, err)
+	}
+	identity.IdentityUUID = uuid.NewV4().String()
+	if err := store.AdoptChannelUserVault(ctx, identity); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetChannelUserVaultID(ctx, identity); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("旧 Vault 归属可被另一身份覆盖：%v", err)
 	}
 }

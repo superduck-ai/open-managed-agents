@@ -49,6 +49,7 @@ test('settings use the confirmed four groups and organization-level model and te
     '/files',
     '/skills',
     '/channels',
+    '/identities',
     '/memory-stores',
     '/credential-vaults',
     '/mcp-servers',

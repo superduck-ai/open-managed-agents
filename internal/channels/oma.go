@@ -80,6 +80,18 @@ func newOMAClient(baseURL string) *omaClient {
 }
 
 func (c *omaClient) createSession(ctx context.Context, apiKey, agentID string, agentVersion int, environmentID, title string, metadata map[string]string, resources []map[string]any, vaultIDs []string) (string, error) {
+	body := sessionCreationBody(agentID, agentVersion, environmentID, title, metadata, resources, vaultIDs)
+	var session omaSession
+	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions", body, &session); err != nil {
+		return "", err
+	}
+	if session.ID == "" {
+		return "", errors.New("OMA 会话响应缺少 id")
+	}
+	return session.ID, nil
+}
+
+func sessionCreationBody(agentID string, agentVersion int, environmentID, title string, metadata map[string]string, resources []map[string]any, vaultIDs []string) map[string]any {
 	body := map[string]any{
 		"agent":          agentID,
 		"environment_id": environmentID,
@@ -95,14 +107,7 @@ func (c *omaClient) createSession(ctx context.Context, apiKey, agentID string, a
 	if len(vaultIDs) > 0 {
 		body["vault_ids"] = vaultIDs
 	}
-	var session omaSession
-	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions", body, &session); err != nil {
-		return "", err
-	}
-	if session.ID == "" {
-		return "", errors.New("OMA 会话响应缺少 id")
-	}
-	return session.ID, nil
+	return body
 }
 
 func (c *omaClient) getSession(ctx context.Context, apiKey, sessionID string) (omaSession, error) {

@@ -14,6 +14,7 @@ const workspacePathByHref: Record<string, string> = {
   '/deployments': 'deployments',
   '/environments': 'environments',
   '/channels': 'channels',
+  '/identities': 'identities',
   '/credential-vaults': 'vaults',
   '/memory-stores': 'memory-stores',
   '/dreams': 'dreams',
@@ -171,11 +172,12 @@ function isManagedAgentsPath(currentPath: string) {
       '/deployments',
       '/environments',
       '/channels',
+      '/identities',
       '/credential-vaults',
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
-    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|evaluations|observability|deployments|environments|channels|vaults|memory-stores|dreams)(\/|$)/.test(
+    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|evaluations|observability|deployments|environments|channels|identities|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )
   );

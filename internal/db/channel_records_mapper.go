@@ -16,6 +16,9 @@ type ChannelRecord struct {
 	Name              string     `db:"name"`
 	ChannelType       string     `db:"channel_type"`
 	Mode              string     `db:"mode"`
+	ExecutionMode     *string    `db:"identity_resolution_mode"`
+	IdentityUUID      *string    `db:"identity_uuid"`
+	EntryClosed       bool       `db:"entry_closed"`
 	Enabled           bool       `db:"enabled"`
 	BindingStatus     string     `db:"binding_status"`
 	AppID             string     `db:"app_id"`
@@ -41,6 +44,8 @@ type ChannelPairingRecord struct {
 }
 
 type insertChannelRecordParams struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	ExternalID        string
 	OrganizationUUID  string
 	WorkspaceUUID     string
@@ -60,6 +65,8 @@ type insertChannelRecordParams struct {
 }
 
 type updateChannelRecordParams struct {
+	ExecutionMode     *string
+	IdentityUUID      *string
 	ExternalID        string
 	WorkspaceUUID     string
 	Name              string
@@ -109,7 +116,7 @@ type ChannelRecordMapper interface {
 	InsertPairing(ctx context.Context, params insertChannelPairingParams) error
 	UpdatePairingStatus(ctx context.Context, channelExternalID, pairingExternalID, status string) error
 	FindChannelSession(ctx context.Context, channelExternalID, scopeKey string) (string, error)
-	UpsertChannelSession(ctx context.Context, channelExternalID, scopeKey, sessionExternalID string) error
+	UpsertChannelSession(ctx context.Context, channelExternalID, scopeKey, sessionExternalID, pairingExternalID string, pairingRevision int64) (int64, error)
 	FindChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID string) (string, error)
 	UpsertChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, environmentExternalID string) error
 	ArchiveChannelSessions(ctx context.Context, channelExternalID string) error

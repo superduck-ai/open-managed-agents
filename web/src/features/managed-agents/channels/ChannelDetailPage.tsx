@@ -51,6 +51,24 @@ export function ChannelDetailPage() {
   );
 }
 
+function ChannelExecutionSummary({ channel }: { channel: Channel }) {
+  const { msg } = useI18n();
+  const mode = channel.identity_resolution?.mode;
+  const connection = channel.connection_status || (channel.connected ? 'healthy' : 'unknown');
+  return (
+    <>
+      <DetailRow label={msg('managedAgents.channels.executionIdentity', '执行身份')}>
+        {channel.identity_id || '—'}
+        {mode ? ` · ${mode}` : ''}
+      </DetailRow>
+      <DetailRow label={msg('managedAgents.channels.connectionStatus', '连接状态')}>
+        {connection}
+        {channel.entry_closed ? ` · ${msg('managedAgents.channels.entryClosed', '入口已关闭')}` : ''}
+      </DetailRow>
+    </>
+  );
+}
+
 function channelDetailTab(search: string): 'basic' | 'sessions' {
   const raw = search.startsWith('?') ? search.slice(1) : search;
   return new URLSearchParams(raw).get('tab') === 'sessions' ? 'sessions' : 'basic';
@@ -239,6 +257,7 @@ export function ChannelDetailContent({
                     ? msg('managedAgents.channels.threadReplyDetail', '话题回复（在原始消息下延续讨论）')
                     : msg('managedAgents.channels.mainReply', '主会话回复')}
                 </DetailRow>
+                <ChannelExecutionSummary channel={channel} />
                 <DetailRow label={msg('managedAgents.channels.mode', '渠道模式')}>
                   {channel.mode === 'open'
                     ? msg('managedAgents.channels.open', '开放模式')

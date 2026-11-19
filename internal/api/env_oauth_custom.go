@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 
@@ -45,5 +46,5 @@ func (s *Server) resolveEnvOAuthStartProvider(ctx context.Context, req *envOAuth
 	if custom.ClientID == "" || custom.ClientSecret == "" {
 		return vaultsapi.EnvOAuthProviderSnapshot{}, errors.New("custom OAuth authorization requires client ID and secret")
 	}
-	return vaultsapi.EnvOAuthProviderSnapshot{Enabled: true, Version: version, ProviderKey: vaultsapi.EnvOAuthProviderInline, Name: custom.Name, AuthorizeEndpoint: custom.AuthorizeEndpoint, TokenEndpoint: custom.TokenEndpoint, Scope: custom.Scope, ClientID: custom.ClientID, ClientSecret: custom.ClientSecret, TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "form"}, nil
+	return vaultsapi.EnvOAuthProviderSnapshot{Enabled: true, Version: version, ProviderKey: vaultsapi.EnvOAuthProviderInline, Name: custom.Name, AuthorizeEndpoint: custom.AuthorizeEndpoint, TokenEndpoint: custom.TokenEndpoint, Scope: custom.Scope, ClientID: custom.ClientID, ClientSecret: custom.ClientSecret, TokenEndpointAuthMethod: cmp.Or(custom.TokenEndpointAuthMethod, "client_secret_post"), TokenEndpointEncoding: "form"}, nil
 }

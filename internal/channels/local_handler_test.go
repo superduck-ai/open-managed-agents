@@ -42,6 +42,56 @@ func TestAgentRouterNoLongerServesChannelQr(t *testing.T) {
 	}
 }
 
+func TestConsoleOnlyChannelRoutesRejectAPIKey(t *testing.T) {
+	handler := newLocalHandler(testLocalService(&fakeLocalStore{}, nil, nil, nil), nil)
+	agent := chi.NewRouter()
+	agent.Mount("/agents/{agent_id}/channels", handler.agentRouter())
+	workspace := chi.NewRouter()
+	workspace.Mount("/channels", handler.workspaceRouter())
+	routes := []struct {
+		method string
+		path   string
+		router http.Handler
+	}{
+		{http.MethodGet, "/agents/agt/channels/settings", agent},
+		{http.MethodPost, "/agents/agt/channels/settings", agent},
+		{http.MethodDelete, "/agents/agt/channels/chn", agent},
+		{http.MethodGet, "/agents/agt/channels/chn/pairings", agent},
+		{http.MethodPost, "/agents/agt/channels/chn/pairings/pair", agent},
+		{http.MethodGet, "/channels/chn/qr", workspace},
+		{http.MethodPost, "/channels/chn/qr", workspace},
+		{http.MethodPost, "/channels/chn/qr_sessions", workspace},
+		{http.MethodGet, "/channels/chn/qr_sessions/qr", workspace},
+	}
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			request := httptest.NewRequest(route.method, route.path, nil)
+			request = request.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{
+				OrganizationUUID: "org",
+				WorkspaceUUID:    "ws",
+				CredentialType:   auth.CredentialTypeAPIKey,
+			}))
+			response := httptest.NewRecorder()
+			route.router.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"type":"not_found_error"`) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/agents/agt/channels/settings", nil)
+	request = request.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{
+		OrganizationUUID: "org",
+		WorkspaceUUID:    "ws",
+		CredentialType:   auth.CredentialTypePlatformSession,
+	}))
+	response := httptest.NewRecorder()
+	agent.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("平台会话应继续进入执行环境读取，status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestNativeChannelMutationRejectsMissingScopeAndCSRF(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

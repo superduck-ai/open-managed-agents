@@ -54,6 +54,41 @@ func (f *fakeRuntimeStore) ClaimChannelInput(_ context.Context, scope db.Channel
 	return row, true, nil
 }
 
+func (f *fakeRuntimeStore) HasWaitingChannelPairingInput(_ context.Context, scope db.ChannelInputScope, input db.ChannelPairingResume) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, found, err := f.waitingPairingInput(scope, input)
+	return found, err
+}
+
+func (f *fakeRuntimeStore) ResumeChannelInputAfterPairing(_ context.Context, scope db.ChannelInputScope, input db.ChannelPairingResume) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, found, err := f.waitingPairingInput(scope, input)
+	if err != nil || !found {
+		return "", false, err
+	}
+	row.State, row.LeaseUntil = "received", time.Now()
+	f.inputs[row.UUID] = row
+	return row.UUID, true, nil
+}
+
+func (f *fakeRuntimeStore) waitingPairingInput(scope db.ChannelInputScope, input db.ChannelPairingResume) (db.ChannelInput, bool, error) {
+	id := f.inputKeys[inputStoreKey(scope, input.MessageID)]
+	row := f.inputs[id]
+	if row.State != "pairing_wait" || row.ScopeKey != input.ScopeKey {
+		return db.ChannelInput{}, false, nil
+	}
+	var payload struct {
+		UserID    string `json:"user_id"`
+		PairingID string `json:"pairing_id"`
+	}
+	if err := json.Unmarshal([]byte(row.Payload), &payload); err != nil {
+		return db.ChannelInput{}, false, err
+	}
+	return row, payload.UserID == input.ActorID && payload.PairingID == input.PairingID, nil
+}
+
 func (f *fakeRuntimeStore) ListRecoverableChannelInputs(_ context.Context, scope db.ChannelInputScope) ([]db.ChannelInput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

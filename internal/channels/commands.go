@@ -2,12 +2,16 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/identities"
 )
 
 func (w *channelWorker) runCommand(ctx context.Context, scopeKey string, msg *channelMessage, command string) bool {
@@ -101,21 +105,17 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		_ = w.replyText(ctx, msg, "读取历史会话失败，请稍后重试。")
 		return
 	}
-	environmentID, err := w.supervisor.store.GetChannelAgentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, w.record.AgentExternalID)
+	target, err := w.resolveRecoveryTarget(ctx, msg, scopeKey)
 	if err != nil {
-		_ = w.replyText(ctx, msg, "当前渠道尚未配置执行环境。")
+		_ = w.replyText(ctx, msg, "读取当前执行配置失败，请稍后重试。")
 		return
 	}
-	personalID := ""
-	if msg.ChatType == "p2p" && w.supervisor.personalVault != nil {
-		personalID, err = w.supervisor.personalVault(ctx, w.record, msg.UserID)
-		if err != nil {
-			_ = w.replyText(ctx, msg, "读取个人连接失败，请稍后重试。")
-			return
-		}
+	if target.decision.Mode == "hold" {
+		_ = w.replyText(ctx, msg, target.decision.Notice)
+		return
 	}
 	if len(args) == 0 {
-		w.listHistory(ctx, scopeKey, msg, apiKey, environmentID, personalID)
+		w.listHistory(ctx, scopeKey, msg, apiKey, target)
 		return
 	}
 	w.mu.Lock()
@@ -133,11 +133,21 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 		}
 	}
 	session, err := w.supervisor.oma.getSession(ctx, apiKey, args[0])
-	if err != nil || !w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
+	compatible, boundErr := w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target)
+	if boundErr != nil {
+		_ = w.replyText(ctx, msg, "读取会话身份失败，请稍后重试。")
+		return
+	}
+	if err != nil || !compatible {
 		_ = w.replyText(ctx, msg, "该会话不属于当前渠道/话题，或配置不兼容、当前不可恢复。")
 		return
 	}
-	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, session.ID); err != nil {
+	err = w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, session.ID, target.decision.PairingExternalID, target.decision.BindingRevision)
+	if errors.Is(err, db.ErrVersionConflict) {
+		_ = w.replyText(ctx, msg, "当前配对已变化，请重新选择要恢复的会话。")
+		return
+	}
+	if err != nil {
 		_ = w.replyText(ctx, msg, "恢复会话失败，请稍后重试。")
 		return
 	}
@@ -145,16 +155,48 @@ func (w *channelWorker) resumeCommand(ctx context.Context, scopeKey string, msg 
 }
 
 func (w *channelWorker) compatibleSession(session omaSession, scopeKey, legacyScope, environmentID, personalID string) bool {
+	return w.compatibleSessionConfiguration(session, environmentID, personalID) && w.sessionMatchesChannel(session, scopeKey, legacyScope)
+}
+
+func (w *channelWorker) sessionMatchesChannel(session omaSession, scopeKey, legacyScope string) bool {
 	chatID, isChat := strings.CutPrefix(scopeKey, "chat:")
 	legacyDirect := isChat && session.Metadata["chat_type"] == "p2p" && strings.HasPrefix(session.Metadata["scope_id"], "thread:"+chatID+":")
-	return w.compatibleSessionConfiguration(session, environmentID, personalID) && session.ID != "" && session.Status == "idle" && session.ArchivedAt == nil &&
+	return session.ID != "" && session.Status == "idle" && session.ArchivedAt == nil &&
 		session.Metadata["source"] == w.record.ChannelType && session.Metadata["channel_id"] == w.record.ExternalID &&
 		session.Metadata["app_id"] == w.record.AppID &&
 		(session.Metadata["scope_id"] == scopeKey || legacyDirect || legacyScope != "" && session.Metadata["scope_id"] == legacyScope)
 }
 
-func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *channelMessage, apiKey, environmentID, personalID string) {
-	path := "/v1/sessions?agent_id=" + url.QueryEscape(w.record.AgentExternalID) + "&limit=100&order=desc"
+type recoveryTarget struct {
+	decision      identities.Decision
+	environmentID string
+}
+
+func (w *channelWorker) resolveRecoveryTarget(ctx context.Context, msg *channelMessage, scopeKey string) (recoveryTarget, error) {
+	decision, err := w.executionDecision(ctx, msg, scopeKey, false)
+	if err != nil || decision.Mode == "hold" {
+		return recoveryTarget{decision: decision}, err
+	}
+	if decision.Mode == "legacy" {
+		decision.AgentExternalID = w.record.AgentExternalID
+	}
+	environmentID, err := w.supervisor.agentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, decision.AgentExternalID)
+	return recoveryTarget{decision: decision, environmentID: environmentID}, err
+}
+
+func (w *channelWorker) recoverableSession(ctx context.Context, session omaSession, scopeKey, legacyScope string, target recoveryTarget) (bool, error) {
+	if target.decision.Mode == "legacy" {
+		return session.Metadata["identity_id"] == "" && w.compatibleSession(session, scopeKey, legacyScope, target.environmentID, target.decision.PersonalVaultID), nil
+	}
+	if target.decision.Mode != "execute" || !w.sessionMatchesChannel(session, scopeKey, legacyScope) ||
+		!w.decisionCompatible(session, target.decision, target.environmentID, scopeKey) {
+		return false, nil
+	}
+	return w.sessionIdentityBound(ctx, session.ID, target.decision, scopeKey)
+}
+
+func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *channelMessage, apiKey string, target recoveryTarget) {
+	path := "/v1/sessions?agent_id=" + url.QueryEscape(target.decision.AgentExternalID) + "&limit=100&order=desc"
 	lines := make([]string, 0, 20)
 	pages := make(map[string]struct{})
 	for {
@@ -167,7 +209,12 @@ func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *c
 			return
 		}
 		for _, session := range page.Data {
-			if w.compatibleSession(session, scopeKey, w.legacyGroupScope(msg), environmentID, personalID) {
+			compatible, boundErr := w.recoverableSession(ctx, session, scopeKey, w.legacyGroupScope(msg), target)
+			if boundErr != nil {
+				_ = w.replyText(ctx, msg, "读取会话身份失败，请稍后重试。")
+				return
+			}
+			if compatible {
 				lines = append(lines, fmt.Sprintf("/resume %s（版本 %d）", session.ID, session.Agent.Version))
 				if len(lines) == 20 {
 					break
@@ -182,7 +229,7 @@ func (w *channelWorker) listHistory(ctx context.Context, scopeKey string, msg *c
 			return
 		}
 		pages[page.NextPage] = struct{}{}
-		path = "/v1/sessions?agent_id=" + url.QueryEscape(w.record.AgentExternalID) + "&limit=100&order=desc&page=" + url.QueryEscape(page.NextPage)
+		path = "/v1/sessions?agent_id=" + url.QueryEscape(target.decision.AgentExternalID) + "&limit=100&order=desc&page=" + url.QueryEscape(page.NextPage)
 	}
 	if len(lines) == 0 {
 		_ = w.replyText(ctx, msg, "没有兼容的 OMA 历史会话。")

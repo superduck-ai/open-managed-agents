@@ -77,6 +77,36 @@ func TestPlatformCSRFMiddlewareProtectsUnsafeRequests(t *testing.T) {
 	}
 }
 
+func TestPlatformSessionCSRFOnIdentityRoutes(t *testing.T) {
+	t.Parallel()
+	const sessionKey = "identity-session"
+	handler := platformSessionCSRF(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		name, method, credential, token string
+		status                          int
+	}{
+		{"Cookie 写请求缺少令牌", http.MethodPost, auth.CredentialTypePlatformSession, "", http.StatusForbidden},
+		{"Cookie 解绑令牌不匹配", http.MethodDelete, auth.CredentialTypePlatformSession, auth.PlatformCSRFToken("other"), http.StatusForbidden},
+		{"Cookie 合法写请求", http.MethodPost, auth.CredentialTypePlatformSession, auth.PlatformCSRFToken(sessionKey), http.StatusNoContent},
+		{"Cookie 读取", http.MethodGet, auth.CredentialTypePlatformSession, "", http.StatusNoContent},
+		{"API Key 写请求", http.MethodPost, auth.CredentialTypeAPIKey, "", http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(tc.method, "/v1/identities/idn_test/enable", nil)
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+			request.Header.Set("X-CSRF-Token", tc.token)
+			request = request.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{CredentialType: tc.credential}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("状态=%d，预期=%d", response.Code, tc.status)
+			}
+		})
+	}
+}
+
 func TestReadinessReportsMissingDependencies(t *testing.T) {
 	t.Parallel()
 	server := &Server{}

@@ -25,6 +25,8 @@ const (
 type runtimeStore interface {
 	ReceiveChannelInput(context.Context, db.ChannelInputScope, db.ChannelInput) (db.ChannelInput, bool, error)
 	ClaimChannelInput(context.Context, db.ChannelInputScope, string, string) (db.ChannelInput, bool, error)
+	HasWaitingChannelPairingInput(context.Context, db.ChannelInputScope, db.ChannelPairingResume) (bool, error)
+	ResumeChannelInputAfterPairing(context.Context, db.ChannelInputScope, db.ChannelPairingResume) (string, bool, error)
 	ListRecoverableChannelInputs(context.Context, db.ChannelInputScope) ([]db.ChannelInput, error)
 	PrepareChannelInputBatch(context.Context, db.ChannelInputScope, string, db.ChannelInputBatch) (db.ChannelInput, error)
 	AdvanceChannelInput(context.Context, db.ChannelInputScope, string, string, db.ChannelInputAdvance) (db.ChannelInput, error)
@@ -44,7 +46,8 @@ type runtimeStore interface {
 	ListChannelReplyDeliveries(context.Context, db.ChannelDeliveryScope) ([]db.ChannelReplyDelivery, error)
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
 	GetChannelSessionBinding(context.Context, string, string) (string, error)
-	SetChannelSessionBinding(context.Context, string, string, string) error
+	FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error)
+	SetChannelSessionBinding(context.Context, string, string, string, string, int64) error
 	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
 	ListChannelPairingRecords(context.Context, string) ([]db.ChannelPairingRecord, error)
@@ -54,23 +57,27 @@ type runtimeStore interface {
 }
 
 type runtimeSupervisor struct {
-	personalVault   func(context.Context, db.ChannelRecord, string) (string, error)
-	oauthOrigin     string
-	fileMaxBytes    int64
-	putAttachment   SessionAttachmentWriter
-	subscribeEvents SessionEventSubscriber
-	adapters        map[string]channelAdapterFactory
-	store           runtimeStore
-	cipher          *secrets.Service
-	oma             *omaClient
-	logger          *slog.Logger
-	mu              sync.Mutex
-	workers         map[string]*channelWorker
-	shutdown        chan struct{}
+	createIdentitySession func(context.Context, string, []byte, db.InsertSessionIdentityParams) (string, error)
+	personalVault         func(context.Context, db.ChannelRecord, string) (string, error)
+	personalVaultLookup   func(context.Context, db.ChannelRecord, string) (string, bool, error)
+	agentEnvironment      func(context.Context, string, string, string) (string, error)
+	oauthOrigin           string
+	fileMaxBytes          int64
+	putAttachment         SessionAttachmentWriter
+	subscribeEvents       SessionEventSubscriber
+	adapters              map[string]channelAdapterFactory
+	store                 runtimeStore
+	cipher                *secrets.Service
+	oma                   *omaClient
+	logger                *slog.Logger
+	mu                    sync.Mutex
+	workers               map[string]*channelWorker
+	shutdown              chan struct{}
+	ingress               identityIngress
 }
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {
-	return &runtimeSupervisor{
+	supervisor := &runtimeSupervisor{
 		adapters: make(map[string]channelAdapterFactory),
 		store:    store,
 		cipher:   cipher,
@@ -78,7 +85,11 @@ func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaC
 		logger:   logging.LoggerOrDefault(logger),
 		workers:  make(map[string]*channelWorker),
 		shutdown: make(chan struct{}),
+		agentEnvironment: func(ctx context.Context, organizationUUID, workspaceUUID, agentID string) (string, error) {
+			return store.GetChannelAgentEnvironment(ctx, organizationUUID, workspaceUUID, agentID)
+		},
 	}
+	return supervisor
 }
 
 func (s *runtimeSupervisor) restore(ctx context.Context) {

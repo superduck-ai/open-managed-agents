@@ -21,6 +21,8 @@ func TestChannelInputMapperScopesAndPayloadBindings(t *testing.T) {
 		buildChannelInputMapperComplete(yourbatis.DialectPostgres, scope, "input", "owner"),
 		buildChannelInputMapperRelease(yourbatis.DialectPostgres, scope, "input", "owner"),
 		buildChannelInputMapperRenew(yourbatis.DialectPostgres, scope, "owner"),
+		buildChannelInputMapperHasPairingWait(yourbatis.DialectPostgres, scope, ChannelPairingResume{MessageID: "msg", ActorID: "actor", PairingID: "pair", ScopeKey: "key"}),
+		buildChannelInputMapperResumeAfterPairing(yourbatis.DialectPostgres, scope, ChannelPairingResume{MessageID: "msg", ActorID: "actor", PairingID: "pair", ScopeKey: "key"}),
 	}
 	for _, query := range queries {
 		for _, name := range []string{"scope.OrganizationUUID", "scope.WorkspaceUUID", "scope.ChannelUUID", "scope.ChannelType", "scope.AccountID"} {
@@ -44,6 +46,11 @@ func TestChannelInputMapperScopesAndPayloadBindings(t *testing.T) {
 	assertMapperSQLContains(t, queries[0], "ON CONFLICT(channel_uuid,channel_type,account_id,message_id) DO NOTHING")
 	assertMapperSQLContains(t, queries[3], "ORDER BY i.created_at,i.uuid FOR UPDATE")
 	assertMapperSQLContains(t, queries[7], "payload=payload-'content'-'resources'")
+	for _, query := range queries[10:] {
+		for _, part := range []string{"i.state='pairing_wait'", "i.message_id=$6", "i.scope_key=$7", "i.payload->>'user_id'=$8", "i.payload->>'pairing_id'=$9"} {
+			assertMapperSQLContains(t, query, part)
+		}
+	}
 	if strings.Contains(queries[2].SQL, "command_sending") {
 		t.Fatal("命令交接未知时不能自动再次执行")
 	}

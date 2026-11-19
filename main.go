@@ -28,6 +28,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/identities"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -230,6 +231,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		WithRubricModel(evaluations.NewRubricModel(database, vaultSecrets))
 	evaluationJobs := evaluations.NewJobs(evaluationRunner)
 	evaluationJobs.Register(workers)
+	identities.RegisterWorkers(workers, database, logger.With("component", "identities"))
 
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
 	if err != nil {
@@ -334,6 +336,7 @@ func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logge
 		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
 		transcriptretention.Queue:          {MaxWorkers: 2},
 		evaluations.JobQueue:               {MaxWorkers: 4},
+		identities.CleanupQueue:            {MaxWorkers: 2},
 		sessions.TitleQueue:                {MaxWorkers: 2},
 	}
 	if invitationsEnabled {

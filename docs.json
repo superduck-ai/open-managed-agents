@@ -22,6 +22,16 @@
   },
   "redirects": [
     {
+      "source": "/docs/zh/api/channels",
+      "destination": "/docs/zh/api/channels/list-channels",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/api/identities",
+      "destination": "/docs/zh/api/identities/list-identities",
+      "permanent": true
+    },
+    {
       "source": "/zh/docs/:slug*",
       "destination": "/docs/zh/:slug*",
       "permanent": true
@@ -213,6 +223,13 @@
                   "docs/zh/events-and-streaming",
                   "docs/zh/webhooks",
                   "docs/zh/vaults"
+                ]
+              },
+              {
+                "group": "集成智能体",
+                "pages": [
+                  "docs/zh/message-channels",
+                  "docs/zh/identities"
                 ]
               },
               {
@@ -416,6 +433,33 @@
                     "pages": [
                       "GET /v1/deployment_runs",
                       "GET /v1/deployment_runs/{deployment_run_id}"
+                    ]
+                  },
+                  {
+                    "group": "渠道",
+                    "pages": [
+                      "GET /v1/channels",
+                      "GET /v1/agents/{agent_id}/channels",
+                      "POST /v1/agents/{agent_id}/channels",
+                      "POST /v1/agents/{agent_id}/channels/{channel_id}",
+                      "GET /v1/agents/{agent_id}/channels/{channel_id}/check",
+                      "POST /v1/channels/authorizations",
+                      "GET /v1/channels/authorizations/{authorization_id}",
+                      "POST /v1/channels/credentials/check",
+                      "GET /v1/channel_pairings",
+                      "GET /v1/channel_pairings/{pairing_id}",
+                      "DELETE /v1/channel_pairings/{pairing_id}"
+                    ]
+                  },
+                  {
+                    "group": "身份",
+                    "pages": [
+                      "GET /v1/identities",
+                      "GET /v1/identities/{identity_id}",
+                      "GET /v1/identities/stats",
+                      "GET /v1/identities/{identity_id}/agents",
+                      "POST /v1/identities/{identity_id}/enable",
+                      "POST /v1/identities/{identity_id}/disable"
                     ]
                   },
                   {

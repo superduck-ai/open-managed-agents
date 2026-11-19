@@ -1,0 +1,292 @@
+package identities
+
+import (
+	"context"
+	"errors"
+
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+)
+
+type Ingress struct {
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	ChannelUUID        string
+	ChannelExternalID  string
+	ChannelType        string
+	ChannelMode        string
+	ConfirmedPairingID string
+	AppID              string
+	AgentExternalID    string
+	AgentVersion       *int
+	ChatType           string
+	RemoteID           string
+	ActorID            string
+	ScopeKey           string
+	ScopeKind          string
+	DisplayName        string
+	PersonalVaultID    string
+	PersonalActive     bool
+	SharedVaultIDs     []string
+}
+
+type Decision struct {
+	Mode               string
+	Notice             string
+	AgentExternalID    string
+	AgentVersion       int
+	IdentityUUID       string
+	IdentityExternalID string
+	BindingRevision    int64
+	ConfigRevision     int64
+	PairingExternalID  string
+	VaultIDs           []string
+	PersonalVaultID    string
+	ScopeKind          string
+	ScopeKey           string
+}
+
+func (s *Service) Resolve(ctx context.Context, ingress Ingress) (Decision, error) {
+	return s.resolve(ctx, ingress, true)
+}
+
+func (s *Service) Preview(ctx context.Context, ingress Ingress) (Decision, error) {
+	return s.resolve(ctx, ingress, false)
+}
+
+func (s *Service) resolve(ctx context.Context, ingress Ingress, create bool) (Decision, error) {
+	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
+	if errors.Is(err, db.ErrNotFound) {
+		if create && ingress.ConfirmedPairingID != "" && ingress.ChannelMode == "pairing" && ingress.ChannelType == "feishu" && ingress.ChatType == "p2p" {
+			return s.resolvePaired(ctx, ingress, false)
+		}
+		return Decision{Mode: "legacy"}, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	if execution.EntryClosed {
+		return Decision{Mode: "hold", Notice: "该渠道的执行入口已关闭，本条消息未执行。"}, nil
+	}
+	if execution.Mode == "fixed" {
+		return s.resolveFixed(ctx, ingress, execution)
+	}
+	ingress.AgentVersion = execution.AgentVersion
+	return s.resolvePaired(ctx, ingress, create)
+}
+
+func (s *Service) resolveFixed(ctx context.Context, ingress Ingress, execution db.ExecutionContextRecord) (Decision, error) {
+	if execution.IdentityUUID == nil {
+		return Decision{Mode: "hold", Notice: "固定执行身份尚未配置，本条消息未执行。"}, nil
+	}
+	identity, err := s.store.FindBusinessIdentityByUUID(ctx, ingress.WorkspaceUUID, *execution.IdentityUUID)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && !identity.Enabled) {
+		return Decision{Mode: "hold", Notice: "业务身份已停用，新的执行已停止。进行中的任务会继续收尾。"}, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	agentID := ingress.AgentExternalID
+	version := 0
+	if execution.AgentVersion != nil {
+		version = *execution.AgentVersion
+		if _, versionErr := s.store.GetAgentVersion(ctx, ingress.WorkspaceUUID, agentID, version); versionErr != nil {
+			return Decision{Mode: "hold", Notice: "固定的智能体版本不可用，未回退到最新版本，本条消息未执行。"}, nil
+		}
+	}
+	ingress.ScopeKind = ScopeKind(ingress.ChatType)
+	return s.finishDecision(ctx, ingress, identity, agentID, version, execution.Revision, "", ingress.ScopeKind)
+}
+
+func (s *Service) resolvePaired(ctx context.Context, ingress Ingress, create bool) (Decision, error) {
+	ingress.ScopeKind = ScopeKind(ingress.ChatType)
+	if ingress.ChatType == "p2p" {
+		ingress.RemoteID = ingress.ActorID
+	}
+	pairing, code, created, err := s.openPairing(ctx, ingress, create && ingress.ConfirmedPairingID == "")
+	if err != nil {
+		return Decision{}, err
+	}
+	if ingress.ConfirmedPairingID != "" && (pairing.ExternalID != ingress.ConfirmedPairingID || pairing.Status != "active") {
+		return Decision{Mode: "hold", Notice: "旧配对已失效，本条消息未执行。"}, nil
+	}
+	if create && ingress.ChannelType == "feishu" && ingress.ChatType == "p2p" && pairing.Status == "pending" {
+		if err := s.activatePersonalPairing(ctx, ingress, pairing, ingress.AgentVersion); err != nil {
+			if public, ok := errors.AsType[*apperr.Error](err); ok && public.Kind != apperr.Unavailable {
+				return Decision{Mode: "hold", Notice: public.PublicMessage}, nil
+			}
+			return Decision{}, err
+		}
+		pairing, err = s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, pairing.ExternalID)
+		if err != nil {
+			return Decision{}, err
+		}
+	}
+	if pairing.Status != "active" || pairing.IdentityUUID == nil {
+		notice := "该范围尚未绑定执行身份。请先发送一条普通消息生成配对，再由管理员绑定。本条消息不会执行。"
+		if pairing.ExternalID != "" {
+			notice = "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "。请管理员绑定后重新发送，本条消息不会执行。"
+		}
+		if created {
+			notice = "该范围尚未绑定执行身份。配对编号 " + pairing.ExternalID + "，配对码 " + code + "，10 分钟内有效。请管理员绑定后重新发送，本条消息不会执行。"
+		}
+		return Decision{Mode: "hold", Notice: notice}, nil
+	}
+	identity, err := s.store.FindBusinessIdentityByUUID(ctx, ingress.WorkspaceUUID, *pairing.IdentityUUID)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && !identity.Enabled) {
+		return Decision{Mode: "hold", Notice: "业务身份已停用，新的执行已停止。进行中的任务会继续收尾。"}, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	version := 0
+	if pairing.AgentVersion != nil {
+		version = *pairing.AgentVersion
+		if _, versionErr := s.store.GetAgentVersion(ctx, ingress.WorkspaceUUID, pairing.AgentExternalID, version); versionErr != nil {
+			return Decision{Mode: "hold", Notice: "配对的智能体版本不可用，未回退到最新版本，本条消息未执行。"}, nil
+		}
+	}
+	decision, err := s.finishDecision(ctx, ingress, identity, pairing.AgentExternalID, version, pairing.Revision, pairing.ExternalID, ingress.ScopeKind)
+	return decision, err
+}
+
+func (s *Service) finishDecision(ctx context.Context, ingress Ingress, identity db.IdentityRecord, agentID string, version int, bindingRevision int64, pairingID, scopeKind string) (Decision, error) {
+	state := ConfigState{}
+	revision := int64(0)
+	cfg, err := s.store.FindActiveIdentityConfig(ctx, ingress.WorkspaceUUID, identity.UUID, agentID)
+	if err == nil {
+		state = configState(cfg)
+		revision = cfg.Revision
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return Decision{}, err
+	}
+	mounts := EnabledMounts(append(append([]string{}, ingress.SharedVaultIDs...), state.Vaults...), state.Disabled)
+	availability := map[string]VaultState{}
+	for _, id := range mounts {
+		state, err := s.vaultState(ctx, ingress.WorkspaceUUID, id)
+		if err != nil {
+			return Decision{}, err
+		}
+		availability[id] = state
+	}
+	credentials, err := PlanCredentials(CredentialInput{
+		ChatType: ingress.ChatType, SharedMounts: mounts, Availability: availability,
+		PersonalVault: ingress.PersonalVaultID, PersonalActive: ingress.PersonalActive,
+	})
+	if errors.Is(err, errPersonalVaultUnavailable) {
+		return Decision{Mode: "hold", Notice: "个人凭据不可用，本条消息未执行。"}, nil
+	}
+	if err != nil {
+		return Decision{Mode: "hold", Notice: "共享凭据不可用，未改用个人凭据，本条消息未执行。"}, nil
+	}
+	return Decision{
+		Mode: "execute", AgentExternalID: agentID, AgentVersion: version, IdentityUUID: identity.UUID,
+		IdentityExternalID: identity.ExternalID, BindingRevision: bindingRevision, ConfigRevision: revision, PairingExternalID: pairingID,
+		VaultIDs: credentials.VaultIDs, PersonalVaultID: credentials.PersonalVaultID,
+		ScopeKind: scopeKind, ScopeKey: ingress.ScopeKey,
+	}, nil
+}
+
+func (s *Service) vaultState(ctx context.Context, workspaceUUID, vaultID string) (VaultState, error) {
+	vault, err := s.store.GetVault(ctx, workspaceUUID, vaultID)
+	if errors.Is(err, db.ErrNotFound) {
+		return VaultMissing, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if vault.DeletedAt != nil {
+		return VaultMissing, nil
+	}
+	if vault.ArchivedAt != nil {
+		return VaultArchived, nil
+	}
+	return VaultActive, nil
+}
+
+func (s *Service) ResolveChannelIdentity(ctx context.Context, principal auth.Principal, identityID string) (string, error) {
+	identity, err := s.GetIdentity(ctx, principal, identityID)
+	if err != nil {
+		return "", err
+	}
+	if err := s.requireSharedIdentity(ctx, principal.WorkspaceUUID, identity.UUID); err != nil {
+		return "", err
+	}
+	return identity.UUID, nil
+}
+
+func (s *Service) ObserveConnection(ctx context.Context, workspaceUUID, channelExternalID, status string) error {
+	if status != "healthy" && status != "disconnected" && status != "unknown" {
+		return nil
+	}
+	err := s.store.SetChannelConnectionStatus(ctx, workspaceUUID, channelExternalID, status)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) ExecutionView(ctx context.Context, workspaceUUID, channelExternalID string) (map[string]any, error) {
+	row, err := s.store.FindExecutionContext(ctx, workspaceUUID, channelExternalID)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	view := map[string]any{"mode": row.Mode, "connection_status": row.ConnectionStatus, "entry_closed": row.EntryClosed, "revision": row.Revision}
+	if row.AgentVersion != nil {
+		view["agent_version"] = *row.AgentVersion
+	}
+	if row.IdentityUUID != nil {
+		if identity, identityErr := s.store.FindBusinessIdentityByUUID(ctx, workspaceUUID, *row.IdentityUUID); identityErr == nil {
+			view["identity_id"] = identity.ExternalID
+			view["identity_enabled"] = identity.Enabled
+		}
+	}
+	return view, nil
+}
+
+func (s *Service) ListAgentBindings(ctx context.Context, principal auth.Principal, agentID string) ([]db.AgentBindingRecord, error) {
+	if _, err := s.visibleAgent(ctx, principal.WorkspaceUUID, agentID, 0); err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ListAgentIdentityBindings(ctx, principal.WorkspaceUUID, agentID)
+	return rows, mapStore(err, "Agent 不存在")
+}
+
+func (s *Service) ListRecoverableSessions(ctx context.Context, principal auth.Principal, identityID, scopeKey, personalVaultID string) ([]db.SessionIdentityRecord, error) {
+	identity, err := s.GetIdentity(ctx, principal, identityID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ListIdentitySessions(ctx, principal.WorkspaceUUID, identity.UUID, pageMax)
+	if err != nil {
+		return nil, unavailable(err)
+	}
+	if !identity.Enabled {
+		return []db.SessionIdentityRecord{}, nil
+	}
+	kept := make([]db.SessionIdentityRecord, 0, len(rows))
+	for _, row := range rows {
+		binding := SessionBinding{
+			IdentityID: identity.ExternalID, AgentID: row.AgentExternalID, BindingRevision: row.BindingRevision,
+			ConfigRevision: row.ConfigRevision, PersonalVaultID: row.PersonalVaultID, ScopeKey: row.ScopeKey,
+		}
+		entry := EntryState{
+			IdentityID: identity.ExternalID, AgentID: row.AgentExternalID, BindingRevision: row.BindingRevision,
+			ConfigRevision: row.ConfigRevision, PersonalVaultID: personalVaultID, ScopeKey: scopeKey, IdentityEnabled: true,
+		}
+		if personalVaultID == "" {
+			entry.PersonalVaultID = row.PersonalVaultID
+		}
+		if scopeKey == "" {
+			entry.ScopeKey = row.ScopeKey
+		}
+		if SessionCurrent(binding, entry) {
+			kept = append(kept, row)
+		}
+	}
+	return kept, nil
+}

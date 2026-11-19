@@ -34,18 +34,18 @@ func TestRecoveryUsesCurrentPersonalVault(t *testing.T) {
 				defer server.Close()
 				worker, channel := testWorker(t, &fakeRuntimeStore{}, server.URL)
 				lookups := 0
-				worker.supervisor.personalVault = func(_ context.Context, _ db.ChannelRecord, actorID string) (string, error) {
+				worker.supervisor.personalVaultLookup = func(_ context.Context, _ db.ChannelRecord, actorID string) (string, bool, error) {
 					lookups++
 					if actorID != "user-a" {
 						t.Errorf("未使用当前消息操作者：%s", actorID)
 					}
 					if state == "读取失败" {
-						return "", context.DeadlineExceeded
+						return "", false, context.DeadlineExceeded
 					}
 					if state == "已重建" {
-						return "vlt_rebuilt", nil
+						return "vlt_rebuilt", true, nil
 					}
-					return "vlt_old", nil
+					return "vlt_old", true, nil
 				}
 				var args []string
 				if command == "恢复" {

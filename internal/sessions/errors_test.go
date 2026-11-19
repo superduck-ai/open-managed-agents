@@ -69,3 +69,25 @@ func TestMapMemoryAttachError(t *testing.T) {
 		})
 	}
 }
+
+func TestMapSessionCreateErrorKeepsIdentityRaceOutOfInternal(t *testing.T) {
+	disabled, ok := mapSessionCreateError(db.ErrConsoleIdentityDisabled)
+	if !ok {
+		t.Fatal("disabled identity was not mapped")
+	}
+	appErr, ok := errors.AsType[*apperr.Error](disabled)
+	if !ok || appErr.Kind != apperr.Conflict {
+		t.Fatalf("disabled identity error = %v", disabled)
+	}
+	missing, ok := mapSessionCreateError(db.ErrConsoleIdentityNotFound)
+	if !ok {
+		t.Fatal("missing identity was not mapped")
+	}
+	appErr, ok = errors.AsType[*apperr.Error](missing)
+	if !ok || appErr.Kind != apperr.NotFound {
+		t.Fatalf("missing identity error = %v", missing)
+	}
+	if _, ok := mapSessionCreateError(db.ErrPreconditionFailed); ok {
+		t.Fatal("unrelated precondition was mapped as an identity error")
+	}
+}

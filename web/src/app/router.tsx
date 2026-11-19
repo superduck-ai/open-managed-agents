@@ -22,6 +22,7 @@ import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { TaskDetailPage } from '../features/evaluations/TaskDetailPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
+import { IdentitiesPage } from '../features/managed-agents/identities/IdentitiesPage';
 import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
 import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
 import { channelSessionsReturnTo } from '../features/managed-agents/sessions/sessionReturn';
@@ -421,6 +422,18 @@ const workspaceChannelEditRoute = createRoute({
   component: () => <ChannelWizardPage mode="edit" />,
 });
 
+const identitiesRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'identities',
+  component: IdentitiesPage,
+});
+
+const workspaceIdentitiesRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/identities',
+  component: IdentitiesPage,
+});
+
 const credentialVaultsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'credential-vaults',
@@ -776,6 +789,8 @@ const routeTree = rootRoute.addChildren([
       workspaceChannelCreateRoute,
       workspaceChannelDetailRoute,
       workspaceChannelEditRoute,
+      identitiesRoute,
+      workspaceIdentitiesRoute,
       credentialVaultsRoute,
       workspaceCredentialVaultsRoute,
       workspaceCredentialVaultDetailRoute,

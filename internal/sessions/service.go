@@ -50,7 +50,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// CreateChannelSession 使用原生持久化路径，仅接受服务内已解析的渠道身份绑定。
+func (h *Handler) CreateChannelSession(ctx context.Context, principal auth.Principal, payload []byte, binding db.InsertSessionIdentityParams) (string, error) {
+	var body sessionCreateRequest
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return "", invalidSessionCreateBody(err)
+	}
+	request, err := http.NewRequestWithContext(auth.WithPrincipal(ctx, principal), http.MethodPost, "/v1/sessions", nil)
+	if err != nil {
+		return "", err
+	}
+	body.identityBinding = &binding
+	created, err := h.createFromBody(request, principal, body)
+	return created.ExternalID, err
+}
+
 func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body sessionCreateRequest) (db.Session, error) {
+	identityUUID, err := h.requestedSessionIdentity(r.Context(), principal, body.IdentityID)
+	if err != nil {
+		return db.Session{}, err
+	}
+	if identityUUID != "" && body.identityBinding == nil {
+		body.identityBinding = &db.InsertSessionIdentityParams{IdentityUUID: identityUUID, ScopeKind: "console", ScopeKey: "console"}
+	}
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
 		return db.Session{}, invalidRequest(err)
@@ -128,6 +150,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 		return db.Session{}, mapResourceBuildError(err)
 	}
 	input := db.CreateSessionInput{
+		IdentityBinding: body.identityBinding,
 		Session: db.Session{
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            sessionID,
@@ -191,7 +214,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 	}
 	created, _, _, _, persisted, err := h.db.CreateSessionWithEvents(r.Context(), input, prepared, h.enqueueTitle)
 	if err != nil {
-		if mapped, ok := mapFileResourcePersistenceError(err); ok {
+		if mapped, ok := mapSessionCreateError(err); ok {
 			return db.Session{}, mapped
 		}
 		return db.Session{}, internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
@@ -679,6 +702,11 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		if found {
 			return h.deliverSessionInputChanges(w, r, session, changes, request)
+		}
+	}
+	if h.admitExecution != nil && eventBatchStartsRound(inputs) {
+		if err := h.admitExecution(r.Context(), session.OrganizationUUID, session.WorkspaceUUID, session.ExternalID, true); err != nil {
+			return err
 		}
 	}
 	if session.BudgetReachedAt != nil {

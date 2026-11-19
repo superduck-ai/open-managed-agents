@@ -30,6 +30,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/identities"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -93,6 +94,7 @@ type Server struct {
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
 	workspaceChannels    http.Handler
+	identities           *identities.Handler
 	channelService       *channels.Service
 	tunnels              *tunnelsapi.Handler
 	tunnelIngress        *tunnelsapi.IngressHandler
@@ -190,6 +192,12 @@ func NewServer(deps ServerDeps) *Server {
 		ValidAppID:       feishu.ValidAppID,
 		CheckCredentials: feishu.MatchCredentials,
 	})
+	identityService := identities.NewService(deps.DB, componentLogger("identities"))
+	if deps.InvitationJobs != nil {
+		identityService.UseCleanupQueue(identities.NewRiverCleanup(deps.InvitationJobs))
+	}
+	channelService.UseIdentities(identityService)
+	identityHandler := identities.NewHandler(identityService, componentLogger("identities"))
 	agentChannels := channelService.AgentHandler()
 	workspaceChannels := channelService.WorkspaceHandler()
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
@@ -230,13 +238,21 @@ func NewServer(deps ServerDeps) *Server {
 		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
 		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
 		models:            modelsapi.NewHandler(deps.DB),
-		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService),
+		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity),
+		identities:        identityHandler,
 		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,
 	}
 	channelService.WithSessionEvents(s.subscribeChannelEvents).WithSessionAttachments(s.putChannelAttachment)
+	channelService.WithIdentitySessionCreator(func(ctx context.Context, apiKey string, payload []byte, binding db.InsertSessionIdentityParams) (string, error) {
+		principal, err := s.channelPrincipal(ctx, apiKey)
+		if err != nil {
+			return "", err
+		}
+		return s.sessions.CreateChannelSession(ctx, principal, payload, binding)
+	})
 	s.codeSessions.WithOAuthCredentials(s.sessions.WaitForOAuthCredential)
 	channelService.WithOAuthProviders(envOAuthProviders, s.startChannelMCPOAuth)
 	if deps.SandboxLifecycle != nil {
@@ -414,6 +430,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 			mcpServerHandler.RegisterRoutes(r)
 			s.files.RegisterConsoleRoutes(r)
 			evaluationHandler.RegisterRoutes(r)
+			if s.identities != nil {
+				s.identities.RegisterConsole(r)
+			}
 			r.With(s.skillConsoleScope).Mount("/workspaces/{workspaceId}/skills", s.skills.ConsoleRoutes())
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
@@ -423,6 +442,18 @@ func (s *Server) registerPlatformConsoleRoutes(
 			s.files.RegisterPlatformRoutes(r)
 		})
 		r.Get("/web-api/sessions/{sessionId}/stream", s.handlePlatformWebSessionStream)
+	})
+}
+
+func platformSessionCSRF(next http.Handler) http.Handler {
+	protected := platformCSRFMiddleware(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		if principal.CredentialType == auth.CredentialTypePlatformSession {
+			protected.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -447,6 +478,9 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/agents", s.agents)
 	if s.workspaceChannels != nil {
 		r.Mount("/channels", s.workspaceChannels)
+	}
+	if s.identities != nil {
+		s.identities.RegisterV1(r.With(platformSessionCSRF))
 	}
 	r.Mount("/deployment_runs", s.deploymentRuns)
 	r.Mount("/deployments", s.deployments)

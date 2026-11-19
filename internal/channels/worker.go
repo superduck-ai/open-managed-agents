@@ -129,6 +129,19 @@ func (w *channelWorker) active(ctx context.Context) bool {
 }
 
 func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, scopeKey string) (string, error) {
+	decision, err := w.executionDecision(ctx, msg, scopeKey, true)
+	if err != nil {
+		return "", err
+	}
+	if decision.Mode == "hold" {
+		if err := w.replyText(ctx, msg, decision.Notice); err != nil {
+			return "", err
+		}
+		return "", errChannelExecutionHeld
+	}
+	if decision.Mode == "execute" {
+		return w.sessionForDecision(ctx, msg, scopeKey, decision)
+	}
 	environmentID, err := w.supervisor.store.GetChannelAgentEnvironment(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, w.record.AgentExternalID)
 	if err != nil {
 		return "", err
@@ -153,7 +166,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 		if sessionErr != nil {
 			return "", errors.Join(errChannelSessionUnconfirmed, sessionErr)
 		}
-		if session.ArchivedAt == nil && w.compatibleSessionConfiguration(session, environmentID, personalID) {
+		if session.ArchivedAt == nil && session.Metadata["identity_id"] == "" && w.compatibleSessionConfiguration(session, environmentID, personalID) {
 			return sessionID, nil
 		}
 	}
@@ -175,7 +188,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 	if err != nil {
 		return "", err
 	}
-	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created); err != nil {
+	if err := w.supervisor.store.SetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey, created, "", 0); err != nil {
 		return "", err
 	}
 	return created, nil
@@ -243,12 +256,24 @@ func (w *channelWorker) pairingFor(ctx context.Context, kind, target string) (pa
 	return pairingMissing, nil
 }
 
-func (w *channelWorker) authorize(ctx context.Context, msg *channelMessage) (bool, error) {
+func (w *channelWorker) admission(ctx context.Context, msg *channelMessage) (pairingDecision, error) {
 	if w.record.Mode != "pairing" {
-		return true, nil
+		return pairingApproved, nil
 	}
 	kind, target := channelPairTarget(msg.ChatType, msg.ChatID, msg.UserID)
 	decision, err := w.pairingFor(ctx, kind, target)
+	if err != nil || msg.ChatType != "p2p" || decision == pairingRejected || w.supervisor.ingress == nil {
+		return decision, err
+	}
+	selfService, err := w.supervisor.ingress.AllowsSelfPairing(ctx, channelIngress(w.record, msg, ""))
+	if selfService {
+		return pairingApproved, err
+	}
+	return decision, err
+}
+
+func (w *channelWorker) authorize(ctx context.Context, msg *channelMessage) (bool, error) {
+	decision, err := w.admission(ctx, msg)
 	if err != nil {
 		return false, err
 	}
@@ -260,6 +285,7 @@ func (w *channelWorker) authorize(ctx context.Context, msg *channelMessage) (boo
 	case pairingRejected:
 		return false, w.replyText(ctx, msg, "当前聊天未获授权，请联系管理员重新批准配对。")
 	}
+	kind, target := channelPairTarget(msg.ChatType, msg.ChatID, msg.UserID)
 	if err := w.recordPairing(ctx, kind, target, msg.UserID); err != nil {
 		return false, err
 	}
@@ -267,15 +293,8 @@ func (w *channelWorker) authorize(ctx context.Context, msg *channelMessage) (boo
 }
 
 func (w *channelWorker) cardAuthorized(ctx context.Context, value channelActionValue, operator, chatID string) (bool, error) {
-	if w.record.Mode != "pairing" {
-		return true, nil
-	}
-	kind, target := channelPairTarget(value.ChatType, chatID, operator)
-	decision, err := w.pairingFor(ctx, kind, target)
-	if err != nil {
-		return false, err
-	}
-	return decision == pairingApproved, nil
+	decision, err := w.admission(ctx, &channelMessage{ChatType: value.ChatType, ChatID: chatID, UserID: operator})
+	return decision == pairingApproved, err
 }
 
 func (w *channelWorker) recordPairing(ctx context.Context, kind, target, displayName string) error {

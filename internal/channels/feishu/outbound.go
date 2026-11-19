@@ -34,8 +34,11 @@ func (w *Adapter) ResumeReply(receipt string) contracts.ReplyStream {
 }
 
 func (s *ReplyStream) Close(context.Context) error { return nil }
-func (w *Adapter) OpenReply(ctx context.Context, msg *contracts.Message) (contracts.ReplyStream, error) {
+func (w *Adapter) OpenReply(ctx context.Context, msg *contracts.Message, initial ...contracts.Reply) (contracts.ReplyStream, error) {
 	card := Card("", w.Config.IncludeThinking)
+	if len(initial) > 0 {
+		card = Render(initial[0])
+	}
 	var messageID string
 	if msg.ChatType == "group" && w.Config.ReplyInThread && msg.MessageID != "" {
 		id, err := w.replyMessage(ctx, msg.MessageID, "interactive", card)

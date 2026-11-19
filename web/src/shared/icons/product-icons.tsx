@@ -1,5 +1,6 @@
 import {
   Activity,
+  IdCard,
   Infinity,
   BookOpen,
   BookOpenCheck,
@@ -65,6 +66,7 @@ export const productIcons = {
   sessions: productIcon(MessagesSquare),
   evaluations: productIcon(ListChecks),
   channels: productIcon(Infinity),
+  identities: productIcon(IdCard),
   deployments: productIcon(Package),
   environments: productIcon(Server),
   resources: productIcon(Boxes),

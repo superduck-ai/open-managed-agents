@@ -23,19 +23,34 @@ import (
 )
 
 type fakeRuntimeStore struct {
-	mu              sync.Mutex
-	record          db.ChannelRecord
-	bindings        map[string]string
-	deleted         []string
-	pairings        []db.ChannelPairingRecord
-	deliveries      map[string]db.ChannelReplyDelivery
-	inputs          map[string]db.ChannelInput
-	inputKeys       map[string]string
-	receiveInputErr error
-	inputOrder      []string
-	credential      string
-	credentialErr   error
-	env             string
+	identityBinding   db.SessionIdentityRecord
+	identityLookupErr error
+	boundPairing      string
+	boundRevision     int64
+	bindErr           error
+	mu                sync.Mutex
+	record            db.ChannelRecord
+	bindings          map[string]string
+	deleted           []string
+	pairings          []db.ChannelPairingRecord
+	deliveries        map[string]db.ChannelReplyDelivery
+	inputs            map[string]db.ChannelInput
+	inputKeys         map[string]string
+	receiveInputErr   error
+	inputOrder        []string
+	credential        string
+	credentialErr     error
+	env               string
+}
+
+func (f *fakeRuntimeStore) FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error) {
+	if f.identityLookupErr != nil {
+		return db.SessionIdentityRecord{}, f.identityLookupErr
+	}
+	if f.identityBinding.IdentityUUID == "" {
+		return db.SessionIdentityRecord{}, db.ErrNotFound
+	}
+	return f.identityBinding, nil
 }
 
 func (f *fakeRuntimeStore) GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error) {
@@ -58,9 +73,17 @@ func (f *fakeRuntimeStore) binding(scopeKey string) string {
 	return f.bindings[scopeKey]
 }
 
-func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID string) error {
+func (f *fakeRuntimeStore) SetChannelSessionBinding(_ context.Context, _ string, scopeKey, sessionID, pairingID string, revision int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.boundPairing = pairingID
+	f.boundRevision = revision
+	if f.bindErr != nil {
+		return f.bindErr
+	}
+	if f.bindings == nil {
+		f.bindings = map[string]string{}
+	}
 	f.bindings[scopeKey] = sessionID
 	return nil
 }

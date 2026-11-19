@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -45,7 +46,21 @@ func CreateEnv(ctx context.Context, store *db.DB, cipher *secrets.Service, provi
 		return db.EnvOAuthFlow{}, "", err
 	}
 	if !provider.Builtin {
-		flow.ClientIDEnvelope, err = platformoauth.SealClientField(ctx, cipher, platformoauth.FlowClientIDBinding(flow), provider.ClientID)
+		client := provider.ClientID
+		if provider.ProviderKey == vaults.EnvOAuthProviderInline {
+			encoded, marshalErr := jsonv2.Marshal(vaults.EnvOAuthCustomProvider{
+				EnvOAuthProviderDefinition: vaults.EnvOAuthProviderDefinition{
+					Name: provider.Name, AuthorizeEndpoint: provider.AuthorizeEndpoint,
+					TokenEndpoint: provider.TokenEndpoint, Scope: provider.Scope, ClientID: provider.ClientID,
+					TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
+				}, ClientSecret: provider.ClientSecret,
+			})
+			if marshalErr != nil {
+				return db.EnvOAuthFlow{}, "", marshalErr
+			}
+			client = string(encoded)
+		}
+		flow.ClientIDEnvelope, err = platformoauth.SealClientField(ctx, cipher, platformoauth.FlowClientIDBinding(flow), client)
 		if err != nil {
 			return db.EnvOAuthFlow{}, "", err
 		}

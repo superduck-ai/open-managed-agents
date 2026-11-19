@@ -52,22 +52,27 @@ export class SandboxCalls implements SandboxExecutor {
         || !["app", "mart", "event", "schema", "meta", "chart", "property", "dashboard", "analysis", "sql", "log"].includes(argv[0])
         || argv.some(arg => typeof arg !== "string" || arg.includes("\0") || /^--(api-key|base-url|proxy-auth|skip-ssl-verify)(=|$)/.test(arg)))
         throw new ToolNotForwardedError("Friday 查询参数无效");
-      const path = this.path(callId, threadId) + "/friday-oauth";
-      let grant: Payload;
-      try {
-        grant = await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", {},
-          this.api.traceHeaders(this.sessionId), signal, 0);
-      } catch (error) {
-        signal.throwIfAborted();
-        throw new ToolNotForwardedError("Friday 授权检查失败，CLI 尚未启动。", { cause: error });
+      let placeholder = "";
+      const help = ["--help", "-h"].includes(argv.at(-1)) && argv.slice(0, -1).every(arg => /^[a-z][a-z-]*$/.test(arg));
+      if (!help) {
+        const path = this.path(callId, threadId) + "/friday-oauth";
+        let grant: Payload;
+        try {
+          grant = await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", {},
+            this.api.traceHeaders(this.sessionId), signal, 0);
+        } catch (error) {
+          signal.throwIfAborted();
+          throw new ToolNotForwardedError("Friday 授权检查失败，CLI 尚未启动。", { cause: error });
+        }
+        if (grant.authorized !== true || typeof grant.placeholder !== "string" || !grant.placeholder)
+          throw new ToolNotForwardedError("Friday 授权未就绪");
+        placeholder = grant.placeholder;
       }
-      if (grant.authorized !== true || typeof grant.placeholder !== "string" || !grant.placeholder)
-        throw new ToolNotForwardedError("Friday 授权未就绪");
       const quoted = argv.map(arg => "'" + arg.replaceAll("'", "'\\''") + "'").join(" ");
       tool = { ...tool, remoteName: "bash" };
       args = {
         command: 'set -e; FRIDAY_CLI_CONFIG_DIR="$(mktemp -d)"; export FRIDAY_CLI_CONFIG_DIR; trap \'rm -rf "$FRIDAY_CLI_CONFIG_DIR"\' EXIT; unset FRIDAY_API_KEY OMA_FRIDAY_OAUTH_PROVIDER OMA_TOOL_CALL_ID; "${OMA_FRIDAY_EXECUTABLE:-friday}" ' + quoted,
-        env: { FRIDAY_BASE_URL: "https://friday-tx.seewo.com", FRIDAY_PROXY_AUTH: "0", FRIDAY_SKIP_SSL_VERIFY: "false", FRIDAY_4A_TOKEN: grant.placeholder },
+        env: { FRIDAY_BASE_URL: "https://friday-tx.seewo.com", FRIDAY_PROXY_AUTH: "0", FRIDAY_SKIP_SSL_VERIFY: "false", FRIDAY_4A_TOKEN: placeholder },
       };
     }
     try {

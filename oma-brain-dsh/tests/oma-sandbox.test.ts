@@ -268,6 +268,8 @@ test("Friday 只在授权成功后用原调用 ID 提交 CLI", async () => {
   const run = () => executor.call(tool, { args: ["app", "list"] }, new AbortController().signal, undefined, "original");
   await expect(run()).rejects.toThrow("CLI 尚未启动");
   expect(submissions).toHaveLength(0);
+  await executor.call(tool, { args: ["app", "list", "--help"] }, new AbortController().signal, undefined, "help");
+  expect(submissions.pop()?.input.env.FRIDAY_4A_TOKEN).toBe("");
   authorized = true;
   await run();
   expect(submissions).toHaveLength(1);

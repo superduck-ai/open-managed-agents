@@ -1,6 +1,5 @@
-import { Archive, PanelRight, Play } from 'lucide-react';
+import { Archive, Play } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
-import { Button } from '@/shared/ui/button';
 import { MoreActionsButton } from '@/shared/ui/data-table-interactions';
 import {
   DropdownMenu,
@@ -9,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
+import { QuickViewButton } from '../components/QuickViewButton';
 import type { AgentApiResponse } from '../types';
 
 export function AgentRowActions({
@@ -27,17 +27,11 @@ export function AgentRowActions({
   const { msg } = useI18n();
   return (
     <div className="flex items-center justify-end gap-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
+      <QuickViewButton
+        name={agent.name || agent.id}
         className="transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/agent-row:opacity-100 [@media(hover:hover)]:group-focus-within/agent-row:opacity-100"
         onClick={onQuickView}
-        aria-label={msg('managedAgents.agents.quickViewAgent', 'Quick view {name}', { name: agent.name || agent.id })}
-      >
-        <span className="hidden sm:inline">{msg('managedAgents.agents.quickView', 'Quick view')}</span>
-        <PanelRight aria-hidden />
-      </Button>
+      />
       <DropdownMenu>
         <DropdownMenuTrigger
           render={

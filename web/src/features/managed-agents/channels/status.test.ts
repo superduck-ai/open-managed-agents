@@ -25,3 +25,15 @@ test('maps bridge fields to volcano connection statuses', () => {
   expect(channelConnectionStatus(channel({ binding_status: 'unbound' }))).toBe('pending_test');
   expect(channelConnectionStatus(channel({ connected: false }))).toBe('abnormal');
 });
+
+test('waits for a newly bound channel to connect before showing an error', () => {
+  const createdAt = '2026-11-18T07:00:00Z';
+  const now = Date.parse(createdAt);
+  const starting = channel({ connected: false, created_at: createdAt, connection_status: 'unknown' });
+
+  expect(channelConnectionStatus(starting, now + 5_000)).toBe('connecting');
+  expect(channelConnectionStatus({ ...starting, connection_status: undefined }, now + 5_000)).toBe('connecting');
+  expect(channelConnectionStatus({ ...starting, connected: true }, now + 5_000)).toBe('connected');
+  expect(channelConnectionStatus({ ...starting, connection_status: 'disconnected' }, now + 5_000)).toBe('abnormal');
+  expect(channelConnectionStatus(starting, now + 30_000)).toBe('abnormal');
+});

@@ -51,7 +51,7 @@ import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
 const channelListPageSize = 10;
-const statusFilters = ['connected', 'pending_test', 'abnormal', 'disabled'] as const;
+const statusFilters = ['connected', 'connecting', 'pending_test', 'abnormal', 'disabled'] as const;
 
 export function ChannelsPage() {
   const location = useLocation();
@@ -94,8 +94,8 @@ export function ChannelsPageContent({
     queryFn: () => listChannelEnvironments(workspaceId),
   });
   const rows = useMemo(
-    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }),
-    [query.data, statusFilter, search],
+    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }, query.dataUpdatedAt),
+    [query.data, query.dataUpdatedAt, statusFilter, search],
   );
   const pageCount = Math.max(1, Math.ceil(rows.length / channelListPageSize));
   const page = Math.min(pageIndex, pageCount);
@@ -168,6 +168,7 @@ export function ChannelsPageContent({
           rows={[]}
           loading
           workspaceId={workspaceId}
+          observedAt={query.dataUpdatedAt}
           environmentLabel={environmentLabel}
           onNavigate={onNavigate}
         />
@@ -176,6 +177,7 @@ export function ChannelsPageContent({
           <ChannelListTable
             rows={visibleRows}
             workspaceId={workspaceId}
+            observedAt={query.dataUpdatedAt}
             environmentLabel={environmentLabel}
             onNavigate={onNavigate}
           />
@@ -197,10 +199,12 @@ export function ChannelsPageContent({
 function filterChannelRows(
   channels: WorkspaceChannel[],
   filters: { statusFilter: ChannelConnectionStatus | 'all'; search: string },
+  observedAt: number,
 ) {
   const needle = filters.search.trim().toLowerCase();
   return channels.filter((row) => {
-    if (filters.statusFilter !== 'all' && channelConnectionStatus(row) !== filters.statusFilter) return false;
+    if (filters.statusFilter !== 'all' && channelConnectionStatus(row, observedAt) !== filters.statusFilter)
+      return false;
     if (!needle) return true;
     return row.name.toLowerCase().includes(needle) || (row.app_id ?? '').toLowerCase().includes(needle);
   });
@@ -229,12 +233,14 @@ function ChannelListTable({
   rows,
   loading = false,
   workspaceId,
+  observedAt,
   environmentLabel,
   onNavigate,
 }: {
   rows: WorkspaceChannel[];
   loading?: boolean;
   workspaceId: string;
+  observedAt: number;
   environmentLabel: (environmentId: string | null) => string;
   onNavigate: (href: string) => void;
 }) {
@@ -268,6 +274,7 @@ function ChannelListTable({
             key={`${row.agentId}:${row.id}`}
             row={row}
             workspaceId={workspaceId}
+            observedAt={observedAt}
             environmentLabel={environmentLabel(row.environmentId)}
             onNavigate={onNavigate}
           />
@@ -280,11 +287,13 @@ function ChannelListTable({
 function ChannelListRow({
   row,
   workspaceId,
+  observedAt,
   environmentLabel,
   onNavigate,
 }: {
   row: WorkspaceChannel;
   workspaceId: string;
+  observedAt: number;
   environmentLabel: string;
   onNavigate: (href: string) => void;
 }) {
@@ -318,7 +327,7 @@ function ChannelListRow({
         </div>
       </DataTableCell>
       <DataTableCell className={dataTableMetaColumnClassName}>
-        <ChannelStatusBadge channel={row} />
+        <ChannelStatusBadge channel={row} observedAt={observedAt} />
       </DataTableCell>
       <DataTableCell className={dataTableMetaColumnClassName}>
         <div className="min-w-0 max-w-[240px]">

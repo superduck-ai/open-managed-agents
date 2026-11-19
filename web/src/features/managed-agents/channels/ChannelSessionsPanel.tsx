@@ -80,7 +80,7 @@ export function ChannelSessionsPanel({
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="overflow-hidden rounded-xl border border-border">
         {query.error ? null : (
           <div className="border-b border-border px-4 py-3 text-sm text-muted-foreground">
             {msg('managedAgents.channels.sessionSyncing', '会话数据同步中')}
@@ -257,7 +257,7 @@ function StatCard({
   compact?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className="rounded-xl border border-border p-4">
       <p className="text-sm text-muted-foreground">{title}</p>
       <p className={compact ? 'mt-2 text-base font-semibold tabular-nums' : 'mt-2 text-3xl font-semibold tabular-nums'}>
         {value}

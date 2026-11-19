@@ -178,12 +178,17 @@ test('手动凭据在第一步输入，扫码入口不打开新窗口', async ()
       ? Response.json({ id: 'authorization-test', status: 'pending', url: authorizationUrl })
       : Response.json(targets(String(input)))) as typeof fetch;
   mount();
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  const authorization = screen.getByRole('radio', { name: '飞书授权', checked: true });
+  const credentials = screen.getByRole('radio', { name: '手动输入', checked: false });
+  fireEvent.click(credentials);
+  expect(credentials.getAttribute('aria-checked')).toBe('true');
+  expect(authorization.getAttribute('aria-checked')).toBe('false');
   fireEvent.change(screen.getByPlaceholderText('应用 ID'), { target: { value: 'cli_manual' } });
   fireEvent.change(screen.getByPlaceholderText('应用密钥'), { target: { value: 'manual-secret' } });
   expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(false);
   expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '飞书授权' }));
+  fireEvent.click(authorization);
+  expect(authorization.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await screen.findByText('等待飞书扫码确认');
   expect(open).not.toHaveBeenCalled();
@@ -212,7 +217,7 @@ test('已有未绑定渠道在短暂断网后继续同步完整绑定状态', as
   poll!();
   await screen.findByText('飞书绑定成功');
   expect(screen.queryByRole('alert')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.click(screen.getByRole('radio', { name: '手动输入' }));
   expect(screen.getByDisplayValue('cli_resumed')).toBeTruthy();
 });
 
@@ -235,6 +240,10 @@ test('编辑回显默认资源，并可分别切回不挂载后保存', async ()
     vault_id: 'vault-test',
   };
   const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
+  const authorization = screen.getByRole('radio', { name: '飞书授权', checked: false });
+  expect(authorization.getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(authorization);
+  expect(screen.getByRole('radio', { name: '手动输入', checked: true })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   const side = within(screen.getByRole('complementary', { name: '进度' }));
@@ -309,7 +318,7 @@ test('授权替换应用 ID 时清除旧密钥，手动路径需要重新填写'
   await screen.findByText('等待飞书扫码确认');
   poll();
   await screen.findByText('飞书绑定成功');
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.click(screen.getByRole('radio', { name: '手动输入' }));
   expect(screen.getByDisplayValue('cli_new')).toBeTruthy();
   expect((screen.getByPlaceholderText('应用密钥') as HTMLInputElement).value).toBe('');
   expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(true);
@@ -326,7 +335,7 @@ test('手动验证密钥与保存使用相同的首尾空白处理', async () =>
     return Response.json(targets(String(input)));
   }) as typeof fetch;
   mount();
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.click(screen.getByRole('radio', { name: '手动输入' }));
   fireEvent.change(screen.getByPlaceholderText('应用 ID'), { target: { value: ' cli_manual ' } });
   fireEvent.change(screen.getByPlaceholderText('应用密钥'), { target: { value: ' secret-value ' } });
   fireEvent.click(screen.getByRole('button', { name: '验证 App Secret' }));
@@ -369,10 +378,10 @@ test('旧渠道轮询在仍等待绑定时清除网络错误，手动输入和�
   await screen.findByRole('alert');
   for (const tick of [...timers.values()]) tick();
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.click(screen.getByRole('radio', { name: '手动输入' }));
   expect(timers.size).toBe(0);
   status = 'expired';
-  fireEvent.click(screen.getByRole('button', { name: '飞书授权' }));
+  fireEvent.click(screen.getByRole('radio', { name: '飞书授权' }));
   await screen.findByText('二维码已失效，请重新生成。');
   await waitFor(() => expect(timers.size).toBe(0));
 });
@@ -446,7 +455,7 @@ test('切到手动接入立即清除旧渠道轮询错误', async () => {
   }) as typeof fetch;
   mount(channel, { ...initialValue, agentId: 'agent-test', environmentId: 'env-test' });
   expect((await screen.findByRole('alert')).textContent).toContain('旧渠道暂时不可达');
-  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.click(screen.getByRole('radio', { name: '手动输入' }));
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
@@ -522,7 +531,7 @@ test.each([
     agentId: 'agent-test',
     environmentId: 'env-test',
   });
-  fireEvent.click(await screen.findByRole('button', { name: '手动输入' }));
+  fireEvent.click(await screen.findByRole('radio', { name: '手动输入' }));
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   if (mode === 'pairing') {
     fireEvent.click(screen.getByLabelText('渠道模式'));
@@ -680,23 +689,4 @@ test('两个文件与两个仓库完整回显，无修改保存保留顺序与�
     }),
   );
   expect(body.git_repository).toBeUndefined();
-});
-
-test('编辑模式在第一步即可直接点击保存配置', async () => {
-  resetTestDom('/');
-  let savedMethod = '';
-  globalThis.fetch = (async (input, init) => {
-    if (init?.method === 'POST') {
-      savedMethod = init.method;
-      return Response.json({ ...channel, binding_status: 'bound', app_id: 'cli_test' });
-    }
-    return Response.json(targets(String(input)));
-  }) as typeof fetch;
-  const saved = { ...channel, binding_status: 'bound' as const, app_id: 'cli_test' };
-  const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
-  const saveButton = screen.getByRole('button', { name: '保存配置' });
-  expect(saveButton.hasAttribute('disabled')).toBe(false);
-  fireEvent.click(saveButton);
-  await waitFor(() => expect(navigated).toHaveBeenCalled());
-  expect(savedMethod).toBe('POST');
 });

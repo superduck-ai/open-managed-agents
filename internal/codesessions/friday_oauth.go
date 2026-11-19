@@ -2,6 +2,10 @@ package codesessions
 
 import (
 	"encoding/hex"
+	"errors"
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -19,7 +23,11 @@ func (h *Handler) handleFridayOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	code, found, err := h.db.GetScopedCodeSession(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionID)
-	if err != nil || !found {
+	if err != nil {
+		h.errorAdapter.Write(w, r, toolCallOperationError(err))
+		return
+	}
+	if !found {
 		h.errorAdapter.Write(w, r, sandboxToolDenied())
 		return
 	}
@@ -56,7 +64,17 @@ func (h *Handler) handleFridayOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.oauthCredentials(ctx, code, input, h.prepareEnvOAuth)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(409, "invalid_request_error", "Friday 授权未就绪"))
+		if _, ok := errors.AsType[*apperr.Error](err); !ok {
+			switch {
+			case errors.Is(err, vaults.ErrCredentialAuthorizationManaged), errors.Is(err, vaults.ErrEnvOAuthReauthorizationRequired):
+				err = apperr.New(apperr.Conflict, "Friday 授权未就绪", err)
+			case errors.Is(err, db.ErrNotFound):
+				err = toolCallOperationError(err)
+			default:
+				err = apperr.New(apperr.Unavailable, "暂时无法读取 Friday 授权", err)
+			}
+		}
+		h.errorAdapter.Write(w, r, err)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, result)

@@ -527,12 +527,7 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, s
 		return false, nil
 	}
 	if sandboxOAuthRequest(request) {
-		if err := s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(locked db.CodeSession) error {
-			if locked.CurrentWorkerEpoch != codeSession.CurrentWorkerEpoch {
-				return db.ErrWorkerEpochMismatch
-			}
-			return nil
-		}); err != nil {
+		if err := s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID}); err != nil {
 			return true, err
 		}
 		if usesBrainClaimTransport(codeSession) {
@@ -540,7 +535,7 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, s
 				return true, err
 			}
 		}
-		return true, s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID})
+		return true, s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(db.CodeSession) error { return nil })
 	}
 	if payload.IsError && len(payload.Content) == 0 {
 		payload.Content = []selfHostedToolContent{{Type: "text", Text: "User declined to answer."}}

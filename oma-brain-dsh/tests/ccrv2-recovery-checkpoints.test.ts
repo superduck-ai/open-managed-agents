@@ -81,6 +81,38 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
   });
 }
 
+test("Friday 恢复保留临时授权错误和已提交但无法确认的取消结果", async () => {
+  const backend = new Backend();
+  cleanups.push(async () => { backend.stop(); });
+  const first = await mount(backend);
+  await seedInterruptedTool(first.session, "input", "friday-call", { name: "Friday", arguments: '{"args":["app","list"]}' });
+  await first.session.checkpoint();
+  await first.close();
+
+  const route = backend.route.bind(backend);
+  let available = false;
+  let submitted = false;
+  let interrupt: () => void = () => {};
+  backend.route = async request => {
+    const url = new URL(request.url);
+    if (url.pathname.endsWith("/friday-oauth"))
+      return available ? Response.json({ authorized: true, placeholder: "oma_ph_test" }) : new Response(null, { status: 503 });
+    if (url.pathname.endsWith("/tool-calls") && request.method === "POST") submitted = true;
+    if (submitted && url.pathname.endsWith("/friday-call") && request.method === "GET") interrupt();
+    if (url.pathname.endsWith("/friday-call/cancel")) return new Response(null, { status: 409 });
+    return route(request);
+  };
+  await expect(mount(backend)).rejects.toThrow();
+  expect(submitted).toBe(false);
+  available = true;
+  const recovered = await mount(backend, session => {
+    interrupt = () => { void session.receive("stop", { type: "user.interrupt" }); };
+  });
+  const result = recovered.session.agent.session.snapshotEvents().find(event => event.type === "tool/result");
+  expect(result?.data.error?.code).toBe("TOOL_OUTCOME_UNKNOWN");
+  expect(backend.executions).toHaveLength(1);
+});
+
 test("publication leaves events arriving during its checkpoint for the next confirmed batch", async () => {
   const backend = new Backend();
   cleanups.push(async () => { backend.stop(); });

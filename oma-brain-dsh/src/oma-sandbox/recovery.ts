@@ -8,7 +8,7 @@ import { SessionId, SessionSeq, type SessionEvent } from "@deepseek-ai/dsh-sessi
 import { createToolResultMessage } from "@deepseek-ai/dsh-llm";
 import { HttpError } from "../api.ts";
 import { CANCELLATION_UNCONFIRMED, type SandboxCalls } from "./client.ts";
-import { ToolNotForwardedError, type SandboxRecovery } from "../runtime/contracts.ts";
+import { UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxRecovery } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
 import type { Payload } from "../json.ts";
 
@@ -55,7 +55,10 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
             return { event, result, code: result.errorCode as string | undefined };
           } catch (cause) {
             signal.throwIfAborted();
-            if (!(cause instanceof ToolNotForwardedError) && !waiting.aborted) throw cause;
+            if (cause instanceof UnknownSandboxOutcomeError) {
+              return { event, result: { isError: true, content: [{ type: "text", text: CANCELLATION_UNCONFIRMED }] }, code: "TOOL_OUTCOME_UNKNOWN" };
+            }
+            if (!(cause instanceof ToolNotForwardedError)) throw cause;
           }
         }
         const result: Payload = { isError: true, content: [{ type: "text", text: "Tool call was not submitted before the previous owner exited." }] };

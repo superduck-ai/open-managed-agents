@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -80,8 +81,11 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 		}
 	}
 	session, found, err := h.db.GetSession(ctx, code.WorkspaceUUID, code.SessionExternalID)
-	if err != nil || !found {
-		return nil, errors.Join(db.ErrNotFound, err)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
 	}
 	thread, err := h.ensurePrimarySessionThread(ctx, session)
 	if err != nil {
@@ -112,7 +116,7 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 			continue
 		}
 		if event.EventType == "user.interrupt" || event.EventType == "session.status_terminated" {
-			return nil, errors.New("OAuth 等待已取消")
+			return nil, apperr.New(apperr.Conflict, "OAuth 等待已取消", nil)
 		}
 		if event.EventType != "user.custom_tool_result" {
 			continue
@@ -128,11 +132,11 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 			continue
 		}
 		if result.IsError {
-			return nil, errors.New("OAuth 授权未完成")
+			return nil, apperr.New(apperr.Conflict, "OAuth 授权未完成", nil)
 		}
 		resultJSON, err := h.oauthEnvironmentResult(ctx, code, input, prepare, true)
 		if err == nil && resultJSON == nil {
-			err = errors.New("OAuth 凭据未就绪")
+			err = apperr.New(apperr.Conflict, "OAuth 凭据未就绪", nil)
 		}
 		return resultJSON, err
 	}
@@ -153,7 +157,7 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 		}
 		if credential.AuthType == "environment_variable" && input.Provider != "" {
 			if scope.PinBindings {
-				return nil, errors.New("当前变量已绑定普通环境凭据")
+				return nil, apperr.New(apperr.Conflict, "当前变量已绑定普通环境凭据", nil)
 			}
 			continue
 		}
@@ -164,7 +168,7 @@ func (h *Handler) oauthEnvironmentResult(ctx context.Context, code db.CodeSessio
 			}
 			if provider != input.Provider {
 				if scope.PinBindings {
-					return nil, errors.New("当前变量已绑定其他 OAuth 连接")
+					return nil, apperr.New(apperr.Conflict, "当前变量已绑定其他 OAuth 连接", nil)
 				}
 				continue
 			}

@@ -63,6 +63,7 @@ export class SandboxCalls implements SandboxExecutor {
           grant = await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", {},
             { ...this.api.traceHeaders(this.sessionId), "X-OMA-Friday-Input": createHash("sha256").update(JSON.stringify(argv)).digest("hex") }, signal, 0);
         } catch (error) {
+          if (resume && signal.aborted) throw new ToolNotForwardedError("授权检查已取消，CLI 尚未启动。", { cause: error });
           signal.throwIfAborted();
           if (resume && (!(error instanceof HttpError) || error.status >= 500)) throw error;
           throw new ToolNotForwardedError("Friday 授权检查失败，CLI 尚未启动。", { cause: error });

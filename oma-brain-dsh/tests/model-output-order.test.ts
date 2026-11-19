@@ -116,6 +116,7 @@ for (const terminal of ["cancelled", "provider_error", "truncated", "success"] a
         && JSON.stringify(event.data).includes("ordered answer"))).toBe(true);
       await session.close();
       for (const [id, event] of backend.publicLog) if (event.model_request_start_id === "request_ordered") backend.publicLog.delete(id);
+      backend.workerMetadata.oma_published_events = {};
       const restoredContext = new Context();
       await mountOma(restoredContext, api);
       const restored = createOmaSession(restoredContext, api, backend.a);
@@ -164,6 +165,7 @@ test.each([false, true])("a proxied reply beyond 4 MiB survives message-based re
     expect(replies[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
     await session.close();
     for (const reply of replies) backend.publicLog.delete(reply.uuid);
+    backend.workerMetadata.oma_published_events = {};
     const restoredContext = new Context();
     await mountOma(restoredContext, api);
     const restored = createOmaSession(restoredContext, api, backend.a);

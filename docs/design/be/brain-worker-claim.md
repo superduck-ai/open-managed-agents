@@ -201,7 +201,7 @@ RETURNING current_worker_epoch;
 - `admission_failed` 把领取期限设为 `now() + min(5s × 2^(attempts-1), 5min)`；连续失败的退避依次为 5、10、20、40、80 秒，第 6 次领取进入耗尽分支，因此临时性故障约 155 秒（另加各次准入耗时）后才公开 `session.error`。
 - `permanent` 用于重试也不会成功的失败（任务信封、`session_context` 或 assignment 校验失败）：`FailPermanently` 在同一条 UPDATE 中推进 epoch、清空 `worker_claimed_by`、租约与 requested 标记、把 attempts 提到上限并设置 1 分钟保持期，服务随即走与耗尽相同的发布与重置流程，用户几秒内即可看到 `session.error`。
 - `shutdown` 立即可领取，并把 attempts 减一，不计为失败，同时通过 Core NATS 唤醒其他长轮询。DSH 本地容量竞争导致的放弃也使用 `shutdown`。
-- `idle` 用于 DSH 关闭空闲会话（60 秒空闲退役、为新领取腾出容量、正常退出）：只清空租约并让领取期限立即过期，不设置 requested 标记、不改变 attempts。公共会话保持 idle 时不会被领取；之后的新输入让会话回到 running，任一进程即可立即领取，不必等待旧进程最后一次心跳的 20 秒租约与 10 秒宽限。
+- `idle` 用于 DSH 关闭空闲会话（60 秒空闲退役、为新领取腾出容量、正常退出；初始化尚未完成的会话不参与空闲退役和容量淘汰，空闲计时从初始化完成开始）：只清空租约并让领取期限立即过期，不设置 requested 标记、不改变 attempts。公共会话保持 idle 时不会被领取；之后的新输入让会话回到 running，任一进程即可立即领取，不必等待旧进程最后一次心跳的 20 秒租约与 10 秒宽限。
 - 不满足条件返回 `409`，DSH 只记录告警。
 
 #### release 后旧事件流上的投递

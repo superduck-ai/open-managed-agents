@@ -8,10 +8,17 @@ import {
   DataTableCell,
   DataTableRow,
   RowIconButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableNumericColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '@/shared/ui/data-table-interactions';
+import { TableSkeletonRows } from '@/shared/ui/resource-table';
+import { RelativeTimeText } from '@/shared/ui/resource-time-cell';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
@@ -20,13 +27,11 @@ import { consoleResourceListLimit } from '@/shared/console-list';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
+import { CursorPagination, TableErrorRow } from './frame';
 import {
   downloadFile,
   errorMessage,
   formatBytes,
-  formatFileId,
-  formatRelativeTime,
   listFiles,
   uploadFile,
   useDashboardWorkspaceScope,
@@ -209,33 +214,37 @@ function FilesTable({
   onNext: () => void;
   onDownload: (file: ConsoleFile) => void;
 }) {
-  const { msg, locale } = useI18n();
+  const { msg } = useI18n();
   const showRows = !isLoading && !error && files.length > 0;
 
   return (
-    <section aria-label={msg('files.listAria', 'Files list')} className="overflow-x-auto">
-      <Table className={cn(dataTableClassName, showRows ? 'min-w-[920px]' : 'min-w-full [&_td]:whitespace-normal')}>
-        <colgroup>
-          <col className="w-[18%]" />
-          <col className="w-[49%]" />
-          <col className="w-[11%]" />
-          <col className="w-[15%]" />
-          <col className="w-[7%]" />
-        </colgroup>
-        {showRows ? (
+    <section aria-label={msg('files.listAria', 'Files list')} className="min-w-0">
+      <Table className={cn(dataTableClassName, !showRows && '[&_td]:whitespace-normal')}>
+        {showRows || isLoading ? (
           <TableHeader>
             <TableRow className={dataTableHeaderRowClassName}>
-              <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
-              <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
-              <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableIdColumnClassName)}>
+                {msg('common.id', 'ID')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTablePrimaryColumnClassName)}>
+                {msg('common.name', 'Name')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableNumericColumnClassName)}>
+                {msg('common.size', 'Size')}
+              </TableHead>
+              <TableHead className={cn(dataTableHeaderCellClassName, dataTableTimeColumnClassName, 'pl-6')}>
+                {msg('common.created', 'Created')}
+              </TableHead>
+              <TableHead
+                className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}
+                aria-label={msg('common.actions', 'Actions')}
+              />
             </TableRow>
           </TableHeader>
         ) : null}
         <TableBody>
           {isLoading ? (
-            <TableLoadingRow colSpan={5} label={msg('files.loading', 'Loading files...')} />
+            <TableSkeletonRows colCount={5} label={msg('files.loading', 'Loading files...')} />
           ) : error ? (
             <TableErrorRow
               colSpan={5}
@@ -247,19 +256,19 @@ function FilesTable({
           ) : files.length === 0 ? null : (
             files.map((file) => (
               <DataTableRow key={file.id}>
-                <DataTableCell edge="start">
-                  <CopyIdCell
-                    value={file.id}
-                    displayValue={formatFileId(file.id)}
-                    ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
-                  />
+                <DataTableCell edge="start" className={dataTableIdColumnClassName}>
+                  <CopyIdCell value={file.id} ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })} />
                 </DataTableCell>
-                <DataTableCell className="break-words whitespace-normal">{file.filename}</DataTableCell>
-                <DataTableCell className="text-muted-foreground">{formatBytes(file.size_bytes)}</DataTableCell>
-                <DataTableCell className="text-muted-foreground">
-                  {formatRelativeTime(file.created_at, locale, msg('common.justNow', 'just now'))}
+                <DataTableCell className={cn(dataTablePrimaryColumnClassName, 'max-w-[420px] truncate font-medium')}>
+                  <span title={file.filename}>{file.filename}</span>
                 </DataTableCell>
-                <DataTableCell edge="end" className="text-right">
+                <DataTableCell className={cn(dataTableNumericColumnClassName, 'text-muted-foreground')}>
+                  {formatBytes(file.size_bytes)}
+                </DataTableCell>
+                <DataTableCell className={cn(dataTableTimeColumnClassName, 'pl-6')}>
+                  <RelativeTimeText value={file.created_at} />
+                </DataTableCell>
+                <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
                   <RowIconButton
                     label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
                     icon={<Download aria-hidden />}

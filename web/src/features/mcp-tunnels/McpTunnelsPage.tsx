@@ -5,11 +5,10 @@ import { AlertCircle, Archive, Copy, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
 
 import { useAuth } from '../../shared/auth/context';
-import { useFormatters, useI18n } from '../../shared/i18n';
+import { useI18n } from '../../shared/i18n';
 import { copyText } from '../../shared/lib/clipboard';
 import { cn } from '../../shared/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
-import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import {
   CopyIdCell,
@@ -17,9 +16,15 @@ import {
   DataTableResourceLink,
   DataTableRow,
   MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTableNumericColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
@@ -31,8 +36,11 @@ import {
 import { ResourceFilterDropdown, ResourceSearchField } from '../../shared/ui/resource-list-controls';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { ResourceStatusBadge } from '../../shared/ui/resource-status-badge';
+import { TableSkeletonRows } from '../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../shared/ui/resource-time-cell';
 import { toast } from '../../shared/ui/sonner';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath, workspaceMcpTunnelDetailPath } from '../../shared/workspaces/presentation';
 import { archiveMcpTunnel, createMcpTunnel, listMcpTunnels, type McpTunnel } from './api';
@@ -269,77 +277,71 @@ function TunnelTable({
   onArchive: (tunnel: McpTunnel) => void;
 }) {
   const { msg } = useI18n();
-  const formatters = useFormatters();
   return (
     <Table className={dataTableClassName}>
       <TableHeader>
         <TableRow className={dataTableHeaderRowClassName}>
-          <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>{msg('common.id', 'ID')}</TableHead>
-          <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>{msg('common.name', 'Name')}</TableHead>
-          <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTableIdColumnClassName)}>
+            {msg('common.id', 'ID')}
+          </TableHead>
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTablePrimaryColumnClassName)}>
+            {msg('common.name', 'Name')}
+          </TableHead>
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTableMetaColumnClassName)}>
             {msg('mcpTunnels.column.connection', 'Connection')}
           </TableHead>
-          <TableHead className={cn(dataTableHeaderCellClassName, 'w-[90px]')}>
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTableNumericColumnClassName)}>
             {msg('mcpTunnels.column.channels', 'Channels')}
           </TableHead>
-          <TableHead className={cn(dataTableHeaderCellClassName, 'w-[140px]')}>
+          <TableHead className={cn(dataTableHeaderCellClassName, dataTableTimeColumnClassName, 'pl-6')}>
             {msg('common.created', 'Created')}
           </TableHead>
           <TableHead
-            className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+            className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}
             aria-label={msg('common.actions', 'Actions')}
           />
         </TableRow>
       </TableHeader>
       <TableBody>
         {loading ? (
-          <TableRow className="border-0 hover:bg-transparent">
-            <TableCell colSpan={6} className="h-[280px] text-center text-sm text-muted-foreground">
-              {msg('mcpTunnels.loading', 'Loading MCP tunnels...')}
-            </TableCell>
-          </TableRow>
+          <TableSkeletonRows colCount={6} label={msg('mcpTunnels.loading', 'Loading MCP tunnels...')} />
         ) : (
           tunnels.map((tunnel) => {
             const detailHref = workspaceMcpTunnelDetailPath(workspaceId, tunnel.id);
             return (
               <DataTableRow key={tunnel.id} className={cn(tunnel.archived_at && 'opacity-65')}>
-                <DataTableCell edge="start">
+                <DataTableCell edge="start" className={dataTableIdColumnClassName}>
                   <CopyIdCell
                     value={tunnel.id}
                     ariaLabel={msg('mcpTunnels.copyTunnelId', 'Copy tunnel ID {id}', { id: tunnel.id })}
-                    className="gap-1.5"
-                  >
-                    <DataTableResourceLink
-                      href={detailHref}
-                      className="truncate font-mono text-xs font-medium text-foreground"
-                      onClick={(event) => handleTunnelLinkClick(event, tunnel, onOpen)}
-                    >
-                      {tunnel.id}
-                    </DataTableResourceLink>
-                  </CopyIdCell>
+                    stopPropagation
+                  />
                 </DataTableCell>
-                <DataTableCell className="truncate text-foreground">
-                  <span className="inline-flex max-w-full items-center gap-2">
+                <DataTableCell className={dataTablePrimaryColumnClassName}>
+                  <span className="inline-flex max-w-[340px] items-center gap-2">
                     <DataTableResourceLink
                       href={detailHref}
-                      className="truncate text-foreground"
+                      title={tunnel.display_name || tunnel.id}
+                      className="truncate font-medium text-foreground"
                       onClick={(event) => handleTunnelLinkClick(event, tunnel, onOpen)}
                     >
                       {tunnel.display_name || tunnel.id}
                     </DataTableResourceLink>
                     {tunnel.archived_at ? (
-                      <Badge variant="secondary">{msg('common.archived', 'Archived')}</Badge>
+                      <ResourceStatusBadge tone="neutral">{msg('common.archived', 'Archived')}</ResourceStatusBadge>
                     ) : null}
                   </span>
                 </DataTableCell>
-                <DataTableCell>
+                <DataTableCell className={dataTableMetaColumnClassName}>
                   <ConnectionBadge state={tunnel.connection.state} />
                 </DataTableCell>
-                <DataTableCell className="text-muted-foreground">{tunnel.connection.channels.length}</DataTableCell>
-                <DataTableCell className="truncate text-muted-foreground">
-                  {formatTunnelCreatedAt(tunnel.created_at, formatters.date)}
+                <DataTableCell className={cn(dataTableNumericColumnClassName, 'text-muted-foreground')}>
+                  {tunnel.connection.channels.length}
                 </DataTableCell>
-                <DataTableCell edge="end" className="px-2">
+                <DataTableCell className={cn(dataTableTimeColumnClassName, 'pl-6')}>
+                  <RelativeTimeText value={tunnel.created_at} />
+                </DataTableCell>
+                <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
                   <TunnelListActions
                     tunnel={tunnel}
                     busy={Boolean(busyAction?.endsWith(tunnel.id))}
@@ -420,11 +422,6 @@ function filterTunnels(tunnels: McpTunnel[], search: string) {
   return tunnels.filter(
     (tunnel) => tunnel.id.toLowerCase() === value || (tunnel.display_name ?? '').toLowerCase().includes(value),
   );
-}
-
-function formatTunnelCreatedAt(value: string, formatDate: (value: Date | number) => string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : formatDate(date);
 }
 
 function errorMessage(error: unknown, fallback: string) {

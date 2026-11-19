@@ -14,11 +14,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../shared/ui/alert-dialog';
-import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
+import {
+  DataTableCell,
+  DataTableRow,
+  dataTableActionsColumnClassName,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+} from '../../shared/ui/data-table-interactions';
+import { ResourceStatusBadge } from '../../shared/ui/resource-status-badge';
 import { toast } from '../../shared/ui/sonner';
 import { Switch } from '../../shared/ui/switch';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { useWorkspace } from '../../shared/workspaces/context';
 import {
   createTelemetryDestination,
@@ -115,22 +125,24 @@ function DestinationRow({
     onSettled: refresh,
   });
   return (
-    <TableRow>
-      <TableCell className="max-w-64">
-        <div className="truncate font-medium">{destination.display_name || destination.id}</div>
-        <div className="truncate text-xs text-muted-foreground">{destination.traces.endpoint_url}</div>
-      </TableCell>
-      <TableCell>
-        <Badge variant={destination.state.type === 'enabled' ? 'secondary' : 'outline'}>
+    <DataTableRow>
+      <DataTableCell edge="start" className={`${dataTablePrimaryColumnClassName} py-2`}>
+        <div className="max-w-[340px] truncate font-medium">{destination.display_name || destination.id}</div>
+        <div className="max-w-[340px] truncate font-mono text-xs text-muted-foreground">
+          {destination.traces.endpoint_url}
+        </div>
+      </DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
+        <ResourceStatusBadge tone={destination.state.type === 'enabled' ? 'success' : 'neutral'}>
           {stateLabel(destination, msg)}
-        </Badge>
-      </TableCell>
-      <TableCell className="text-muted-foreground">
+        </ResourceStatusBadge>
+      </DataTableCell>
+      <DataTableCell className={`${dataTableMetaColumnClassName} text-muted-foreground`}>
         {destination.traces.content_mode === 'content'
           ? msg('telemetry.contentMode.content', 'Metadata and content')
           : msg('telemetry.contentMode.metadata', 'Metadata only')}
-      </TableCell>
-      <TableCell>
+      </DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
         <HealthCell destination={destination} locale={locale} />
         {test.data && (
           <span
@@ -142,8 +154,8 @@ function DestinationRow({
               : testFailure(test.data.error, msg)}
           </span>
         )}
-      </TableCell>
-      <TableCell>
+      </DataTableCell>
+      <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
         <div className="flex items-center justify-end gap-1">
           <Switch
             aria-label={msg('telemetry.toggle', 'Enable destination')}
@@ -179,8 +191,8 @@ function DestinationRow({
             <Trash2 />
           </Button>
         </div>
-      </TableCell>
-    </TableRow>
+      </DataTableCell>
+    </DataTableRow>
   );
 }
 
@@ -260,14 +272,24 @@ export function TelemetryDestinationsPage({ workspaceId }: { workspaceId?: strin
           {msg('telemetry.loadError', 'Could not load telemetry destinations.')}
         </p>
       )}
-      <Table>
+      <Table className={dataTableClassName}>
         <TableHeader>
-          <TableRow>
-            <TableHead>{msg('telemetry.destination', 'Destination')}</TableHead>
-            <TableHead>{msg('telemetry.state', 'State')}</TableHead>
-            <TableHead>{msg('telemetry.contentMode', 'Content')}</TableHead>
-            <TableHead>{msg('telemetry.health', 'Delivery')}</TableHead>
-            <TableHead className="text-right">{msg('telemetry.actions', 'Actions')}</TableHead>
+          <TableRow className={dataTableHeaderRowClassName}>
+            <TableHead className={`${dataTableHeaderCellClassName} ${dataTablePrimaryColumnClassName}`}>
+              {msg('telemetry.destination', 'Destination')}
+            </TableHead>
+            <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
+              {msg('telemetry.state', 'State')}
+            </TableHead>
+            <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
+              {msg('telemetry.contentMode', 'Content')}
+            </TableHead>
+            <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
+              {msg('telemetry.health', 'Delivery')}
+            </TableHead>
+            <TableHead className={`${dataTableHeaderCellClassName} ${dataTableActionsColumnClassName}`}>
+              {msg('telemetry.actions', 'Actions')}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

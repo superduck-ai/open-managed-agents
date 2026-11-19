@@ -1,14 +1,19 @@
-import { ArrowUpDown, MoreVertical, Trash2 } from 'lucide-react';
+import { ArrowUpDown, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
 import {
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
-  DataTableCell,
-  DataTableRow,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
 } from '../../../shared/ui/data-table-interactions';
+import { TableSkeletonRows } from '../../../shared/ui/resource-table';
 import { Table, TableHeader, TableHead, TableRow, TableBody, TableCell } from '../../../shared/ui/table';
 import {
   DropdownMenu,
@@ -43,30 +48,26 @@ export function WorkspaceMemberTable({
     email: msg('members.email', 'Email'),
     workspace_role: msg('members.role', 'Role'),
   } as const;
+  const columnClasses = {
+    name: dataTablePrimaryColumnClassName,
+    email: dataTableMetaColumnClassName,
+    workspace_role: cn(dataTableMetaColumnClassName, 'w-[200px]'),
+  } as const;
   return (
-    <Table
-      className={cn(dataTableClassName, showRows ? 'min-w-[760px]' : 'min-w-full')}
-      aria-label={msg('members.table.workspaceMembers', 'Workspace members')}
-    >
-      <colgroup>
-        <col className="w-[30%]" />
-        <col className="w-[32%]" />
-        <col className="w-[26%]" />
-        <col className="w-[12%]" />
-      </colgroup>
-      {showRows ? (
+    <Table className={dataTableClassName} aria-label={msg('members.table.workspaceMembers', 'Workspace members')}>
+      {showRows || loading ? (
         <TableHeader>
           <TableRow className={dataTableHeaderRowClassName}>
             {(['name', 'email', 'workspace_role'] as const).map((field) => (
               <TableHead
                 key={field}
-                className={dataTableHeaderCellClassName}
+                className={cn(dataTableHeaderCellClassName, columnClasses[field])}
                 aria-sort={sort.field === field ? (sort.descending ? 'descending' : 'ascending') : 'none'}
               >
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="-ml-2.5"
+                  className="-ml-2 h-7 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
                   onClick={() => setSort({ field, descending: sort.field === field && !sort.descending })}
                 >
                   {columnLabels[field]}
@@ -74,18 +75,14 @@ export function WorkspaceMemberTable({
                 </Button>
               </TableHead>
             ))}
-            <TableHead className={dataTableHeaderCellClassName}>
+            <TableHead className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}>
               <span className="sr-only">{msg('members.table.actions', 'Actions')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>
       ) : null}
       <TableBody>
-        {loading ? (
-          <TableRow>
-            <TableCell colSpan={4}>{msg('members.table.loading', 'Loading members...')}</TableCell>
-          </TableRow>
-        ) : null}
+        {loading ? <TableSkeletonRows colCount={4} label={msg('members.table.loading', 'Loading members...')} /> : null}
         {!loading && members.length === 0 ? (
           <TableRow>
             <TableCell colSpan={4}>{msg('members.table.empty', 'No members found.')}</TableCell>
@@ -93,11 +90,16 @@ export function WorkspaceMemberTable({
         ) : null}
         {members.map((member) => (
           <DataTableRow key={member.user_id}>
-            <DataTableCell edge="start" className="max-w-80 truncate">
+            <DataTableCell
+              edge="start"
+              className={cn(dataTablePrimaryColumnClassName, 'max-w-[280px] truncate font-medium')}
+            >
               {member.name || member.email}
             </DataTableCell>
-            <DataTableCell className="max-w-80 truncate">{member.email}</DataTableCell>
-            <DataTableCell>
+            <DataTableCell className={cn(dataTableMetaColumnClassName, 'max-w-[300px] truncate text-muted-foreground')}>
+              {member.email}
+            </DataTableCell>
+            <DataTableCell className={cn(dataTableMetaColumnClassName, 'w-[200px]')}>
               {member.can_edit ? (
                 <MemberRoleSelect
                   value={member.workspace_role}
@@ -118,23 +120,19 @@ export function WorkspaceMemberTable({
                 )
               )}
             </DataTableCell>
-            <DataTableCell edge="end">
+            <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
               {member.can_remove ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <Button
-                        size="icon"
-                        variant="ghost"
+                      <MoreActionsButton
                         disabled={pending}
-                        aria-label={msg('members.moreActionsFor', `More actions for ${member.name || member.email}`, {
+                        label={msg('members.moreActionsFor', `More actions for ${member.name || member.email}`, {
                           name: member.name || member.email,
                         })}
                       />
                     }
-                  >
-                    <MoreVertical className="size-4" aria-hidden />
-                  </DropdownMenuTrigger>
+                  />
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
                       variant="destructive"

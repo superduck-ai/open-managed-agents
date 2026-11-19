@@ -58,8 +58,25 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableActionsColumnClassName,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
+} from '../../shared/ui/data-table-interactions';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { ResourceStatusBadge } from '../../shared/ui/resource-status-badge';
+import { TableSkeletonRows } from '../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../shared/ui/resource-time-cell';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
 import { Input } from '../../shared/ui/input';
@@ -368,32 +385,22 @@ function WebhookList({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <div className="overflow-x-auto border-t-[0.5px] border-border">
-            <Table
-              className={clsx(
-                'table-fixed text-left',
-                showRows ? 'min-w-[880px]' : 'min-w-full [&_td]:whitespace-normal',
-              )}
-            >
-              <colgroup>
-                <col className="w-[18%]" />
-                <col className="w-[44%]" />
-                <col className="w-[14%]" />
-                <col className="w-[16%]" />
-                <col className="w-[56px]" />
-              </colgroup>
-              {showRows ? (
-                <TableHeader className="text-xs text-muted-foreground">
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="px-3 py-3 text-muted-foreground">{msg('webhooks.table.id', 'ID')}</TableHead>
+          <div>
+            <Table className={clsx(dataTableClassName, !showRows && '[&_td]:whitespace-normal')}>
+              {showRows || loading ? (
+                <TableHeader>
+                  <TableRow className={dataTableHeaderRowClassName}>
+                    <TableHead className={clsx(dataTableHeaderCellClassName, dataTableIdColumnClassName)}>
+                      {msg('webhooks.table.id', 'ID')}
+                    </TableHead>
                     {[
-                      ['name', msg('webhooks.table.name', 'Name')],
-                      ['status', msg('webhooks.table.status', 'Status')],
-                      ['created_at', msg('webhooks.table.createdAt', 'Created at')],
-                    ].map(([id, label]) => (
+                      ['name', msg('webhooks.table.name', 'Name'), dataTablePrimaryColumnClassName],
+                      ['status', msg('webhooks.table.status', 'Status'), dataTableMetaColumnClassName],
+                      ['created_at', msg('webhooks.table.createdAt', 'Created at'), dataTableTimeColumnClassName],
+                    ].map(([id, label, columnClass]) => (
                       <TableHead
                         key={id}
-                        className="px-3 py-3 text-muted-foreground"
+                        className={clsx(dataTableHeaderCellClassName, columnClass)}
                         aria-sort={
                           table.getColumn(id)?.getIsSorted() === 'asc'
                             ? 'ascending'
@@ -405,7 +412,7 @@ function WebhookList({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="-ml-2"
+                          className="-ml-2 h-7 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
                           onClick={table.getColumn(id)?.getToggleSortingHandler()}
                         >
                           {label}
@@ -413,7 +420,7 @@ function WebhookList({
                         </Button>
                       </TableHead>
                     ))}
-                    <TableHead className="px-3 py-3 text-right text-muted-foreground">
+                    <TableHead className={clsx(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}>
                       <span className="sr-only">{msg('common.actions', 'Actions')}</span>
                     </TableHead>
                   </TableRow>
@@ -421,7 +428,7 @@ function WebhookList({
               ) : null}
               <TableBody>
                 {loading ? (
-                  <WebhooksState text={msg('webhooks.loading', 'Loading webhooks...')} />
+                  <TableSkeletonRows colCount={5} label={msg('webhooks.loading', 'Loading webhooks...')} />
                 ) : errorMessage ? (
                   <WebhooksState tone="error" text={errorMessage} />
                 ) : table.getRowModel().rows.length > 0 ? (
@@ -476,93 +483,61 @@ function WebhookRow({
   onAction: (action: WebhookAction) => void;
 }) {
   const { msg } = useI18n();
-  const { locale } = useLocale();
-  const [copied, setCopied] = useState(false);
   const disabled = webhook.status === 'disabled';
 
-  const copyId = async () => {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(webhook.id);
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  };
-
   return (
-    <TableRow
-      className={clsx(
-        'h-[58px] cursor-pointer border-border text-sm text-foreground hover:bg-accent',
-        selected && 'bg-secondary',
-      )}
-      aria-selected={selected}
-      onClick={onSelect}
-    >
-      <TableCell className="min-w-0 px-3 py-2.5 align-middle">
+    <DataTableRow clickable selected={selected} aria-selected={selected} onClick={onSelect}>
+      <DataTableCell edge="start" className={dataTableIdColumnClassName}>
+        <CopyIdCell
+          value={webhook.id}
+          ariaLabel={msg('webhooks.copyId', 'Copy {id}', { id: webhook.id })}
+          stopPropagation
+        />
+      </DataTableCell>
+      <DataTableCell className={clsx(dataTablePrimaryColumnClassName, 'py-2')}>
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="h-auto max-w-full justify-start px-0 py-1 pr-1 text-left font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label={msg('webhooks.copyId', 'Copy {id}', { id: webhook.id })}
-          onClick={(event) => {
-            event.stopPropagation();
-            void copyId();
-          }}
-        >
-          <span className="truncate">{truncateWebhookId(webhook.id)}</span>
-          <span role="status" className="sr-only">
-            {copied ? msg('common.copied', 'Copied') : ''}
-          </span>
-        </Button>
-      </TableCell>
-      <TableCell className="min-w-0 px-3 py-2.5 align-middle">
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-auto min-w-0 max-w-full flex-col items-start gap-0 px-0 py-0 text-left hover:bg-transparent"
+          className="h-auto min-w-0 max-w-[380px] flex-col items-start gap-0 px-0 py-0 text-left hover:bg-transparent"
           aria-label={`${webhook.name || webhook.url} ${webhook.url}`}
           onClick={(event) => {
             event.stopPropagation();
             onSelect();
           }}
         >
-          <span className="block max-w-full truncate font-medium">
+          <span className="block max-w-full truncate font-medium text-foreground">
             {webhook.name || msg('webhooks.untitled', 'Untitled webhook')}
           </span>
-          <span className="mt-1 block max-w-full truncate font-mono text-xs text-muted-foreground">{webhook.url}</span>
+          <span className="mt-0.5 block max-w-full truncate font-mono text-xs text-muted-foreground">
+            {webhook.url}
+          </span>
         </Button>
-      </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle">
+      </DataTableCell>
+      <DataTableCell className={dataTableMetaColumnClassName}>
         <WebhookStatusBadge status={webhook.status} />
-      </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
-        <time dateTime={webhook.created_at} title={formatAbsoluteDate(webhook.created_at, locale)}>
-          {formatRelativeTime(webhook.created_at, locale)}
-        </time>
-      </TableCell>
-      <TableCell
-        className="px-3 py-2.5 text-right align-middle"
+      </DataTableCell>
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={webhook.created_at} />
+      </DataTableCell>
+      <DataTableCell
+        edge="end"
+        className={dataTableActionsColumnClassName}
         onClick={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground"
-                aria-label={msg('webhooks.actions', 'Webhook actions')}
+              <MoreActionsButton
+                label={msg('webhooks.actions', 'Webhook actions')}
                 onClick={(event) => event.stopPropagation()}
               />
             }
-          >
-            <MoreVertical className="size-4" aria-hidden />
-          </DropdownMenuTrigger>
+          />
           <WebhookActionsMenuContent disabled={disabled} onAction={onAction} />
         </DropdownMenu>
-      </TableCell>
-    </TableRow>
+      </DataTableCell>
+    </DataTableRow>
   );
 }
 
@@ -798,15 +773,9 @@ function WebhookStatusBadge({ status }: { status: WebhookEndpointStatus }) {
   const { msg } = useI18n();
   const disabled = status === 'disabled';
   return (
-    <Badge
-      variant="secondary"
-      className={clsx(
-        'h-6 rounded-md px-2 font-medium',
-        disabled ? 'bg-secondary text-muted-foreground' : 'status-success',
-      )}
-    >
+    <ResourceStatusBadge tone={disabled ? 'neutral' : 'success'}>
       {disabled ? msg('webhooks.disabled', 'Disabled') : msg('webhooks.enabled', 'Enabled')}
-    </Badge>
+    </ResourceStatusBadge>
   );
 }
 

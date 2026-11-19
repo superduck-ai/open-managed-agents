@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, ArchiveRestore, KeyRound, Pencil, MoreVertical, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, KeyRound, Pencil, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import {
@@ -11,18 +11,26 @@ import {
   DropdownMenuSeparator,
 } from '../../../shared/ui/dropdown-menu';
 import { Button } from '../../../shared/ui/button';
-import { Badge } from '../../../shared/ui/badge';
 import { ResourceFilterDropdown } from '../../../shared/ui/resource-list-controls';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import {
+  CopyIdCell,
   DataTableCell,
   DataTableRow,
+  MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '../../../shared/ui/data-table-interactions';
+import { ResourceStatusBadge } from '../../../shared/ui/resource-status-badge';
+import { RelativeTimeText } from '../../../shared/ui/resource-time-cell';
 import {
   Dialog,
   DialogClose,
@@ -225,72 +233,80 @@ function OAuthProvidersTable({
   onDelete: (provider: OAuthProviderRecord) => void;
   onStatusChange: (provider: OAuthProviderRecord, action: OAuthProviderStatusAction) => void;
 }) {
-  const { msg, locale } = useI18n();
+  const { msg } = useI18n();
   return (
-    <Table className={`${dataTableClassName} min-w-[900px]`}>
+    <Table className={dataTableClassName}>
       <TableHeader>
         <TableRow className={dataTableHeaderRowClassName}>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTablePrimaryColumnClassName}`}>
             {msg('platformAdmin.oauthManagement.name', 'Name')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
             {msg('managedAgents.filters.status', 'Status')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
             {msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
             {msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableIdColumnClassName}`}>
             {msg('platformAdmin.oauthManagement.clientId', 'Client ID')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName}>
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableTimeColumnClassName}`}>
             {msg('platformAdmin.oauthManagement.updatedAt', 'Updated')}
           </TableHead>
-          <TableHead className={dataTableHeaderCellClassName} />
+          <TableHead className={`${dataTableHeaderCellClassName} ${dataTableActionsColumnClassName}`} />
         </TableRow>
       </TableHeader>
       <TableBody>
         {providers.map((provider) => (
           <DataTableRow key={provider.id} clickable onClick={() => onEdit(provider)}>
-            <DataTableCell edge="start" className="font-medium">
+            <DataTableCell edge="start" className={`${dataTablePrimaryColumnClassName} font-medium`}>
               <span className="flex items-center gap-2">
                 <OAuthProviderAvatar logoUrl={provider.logo_url} />
-                <span>{provider.name}</span>
+                <span className="max-w-[220px] truncate">{provider.name}</span>
               </span>
             </DataTableCell>
-            <DataTableCell>
-              <Badge variant="secondary">
+            <DataTableCell className={dataTableMetaColumnClassName}>
+              <ResourceStatusBadge tone={provider.archived ? 'neutral' : provider.enabled ? 'success' : 'warning'}>
                 {provider.archived
                   ? msg('platformAdmin.oauthManagement.archived', 'Archived')
                   : provider.enabled
                     ? msg('platformAdmin.oauthManagement.enabledState', 'Enabled')
                     : msg('platformAdmin.oauthManagement.disabled', 'Disabled')}
-              </Badge>
+              </ResourceStatusBadge>
             </DataTableCell>
-            <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
-              {provider.authorize_endpoint}
+            <DataTableCell className={`${dataTableMetaColumnClassName} font-mono text-xs text-muted-foreground`}>
+              <span title={provider.authorize_endpoint} className="block max-w-[260px] truncate">
+                {provider.authorize_endpoint}
+              </span>
             </DataTableCell>
-            <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
-              {provider.token_endpoint}
+            <DataTableCell className={`${dataTableMetaColumnClassName} font-mono text-xs text-muted-foreground`}>
+              <span title={provider.token_endpoint} className="block max-w-[260px] truncate">
+                {provider.token_endpoint}
+              </span>
             </DataTableCell>
-            <DataTableCell className="font-mono text-xs">{provider.client_id}</DataTableCell>
-            <DataTableCell>{new Date(provider.updated_at).toLocaleDateString(locale)}</DataTableCell>
-            <DataTableCell edge="end">
+            <DataTableCell className={dataTableIdColumnClassName}>
+              <CopyIdCell
+                value={provider.client_id}
+                ariaLabel={msg('common.copyValue', 'Copy {value}', { value: provider.client_id })}
+                stopPropagation
+              />
+            </DataTableCell>
+            <DataTableCell className={dataTableTimeColumnClassName}>
+              <RelativeTimeText value={provider.updated_at} />
+            </DataTableCell>
+            <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={msg('skills.moreFor', 'More actions for {name}', { name: provider.name })}
+                    <MoreActionsButton
+                      label={msg('skills.moreFor', 'More actions for {name}', { name: provider.name })}
                       onClick={(event) => event.stopPropagation()}
                     />
                   }
-                >
-                  <MoreVertical className="size-4" strokeWidth={1.5} aria-hidden />
-                </DropdownMenuTrigger>
+                />
                 <DropdownMenuContent align="end" className="w-44" onClick={(event) => event.stopPropagation()}>
                   <DropdownMenuItem onClick={() => onEdit(provider)}>
                     <Pencil size={15} aria-hidden />

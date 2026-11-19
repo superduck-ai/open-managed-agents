@@ -11,6 +11,16 @@ import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
+import {
+  DataTableCell,
+  DataTableRow,
+  dataTableActionsColumnClassName,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  dataTableMetaColumnClassName,
+  dataTablePrimaryColumnClassName,
+} from '../../shared/ui/data-table-interactions';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { RoleSelect } from '../../shared/permissions/RoleSelect';
 import { platformRoleLabel, roleOptions, type PlatformRole } from '../../shared/permissions/roles';
@@ -178,14 +188,11 @@ function OrganizationMemberDirectory({
   const showRows = !loading && !hasError && table.getRowModel().rows.length > 0;
   return (
     <>
-      <Table
-        className={`table-fixed text-left ${showRows ? 'min-w-[720px]' : 'min-w-full'}`}
-        aria-label={msg('members.tableAria', 'Members')}
-      >
-        {showRows ? (
-          <TableHeader className="text-muted-foreground">
+      <Table className={dataTableClassName} aria-label={msg('members.tableAria', 'Members')}>
+        {showRows || loading ? (
+          <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
+              <TableRow key={headerGroup.id} className={dataTableHeaderRowClassName}>
                 {headerGroup.headers.map((header) => (
                   <TableHead key={header.id} className={headerClassName(header.column.id)}>
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
@@ -215,13 +222,17 @@ function OrganizationMemberDirectory({
           ) : null}
           {!loading && !hasError
             ? table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} className="border-border last:border-b-0">
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
+                <DataTableRow key={row.id}>
+                  {row.getVisibleCells().map((cell, index, cells) => (
+                    <DataTableCell
+                      key={cell.id}
+                      edge={index === 0 ? 'start' : index === cells.length - 1 ? 'end' : undefined}
+                      className={cellClassName(cell.column.id)}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
+                    </DataTableCell>
                   ))}
-                </TableRow>
+                </DataTableRow>
               ))
             : null}
         </TableBody>
@@ -284,25 +295,26 @@ function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
 function headerClassName(columnId: string) {
   switch (columnId) {
     case 'name':
-      return 'w-[34%] px-3 py-2.5 text-muted-foreground';
+      return `${dataTableHeaderCellClassName} ${dataTablePrimaryColumnClassName}`;
     case 'email':
-      return 'w-[38%] px-3 py-2.5 text-muted-foreground';
+      return `${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`;
     case 'role':
-      return 'w-[22%] px-3 py-2.5 text-muted-foreground';
+      return `${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName} w-[200px]`;
     default:
-      return 'w-14 px-3 py-2.5 text-muted-foreground';
+      return `${dataTableHeaderCellClassName} ${dataTableActionsColumnClassName}`;
   }
 }
 
 function cellClassName(columnId: string) {
   switch (columnId) {
     case 'name':
+      return `${dataTablePrimaryColumnClassName} max-w-[300px]`;
     case 'email':
-      return 'min-w-0 whitespace-normal px-3 py-2.5';
+      return `${dataTableMetaColumnClassName} max-w-[320px]`;
     case 'role':
-      return 'px-3 py-2.5';
+      return `${dataTableMetaColumnClassName} w-[200px]`;
     default:
-      return 'px-3 py-2.5';
+      return dataTableActionsColumnClassName;
   }
 }
 

@@ -1,6 +1,7 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
+import { ResourceStatusBadge, type ResourceStatusTone } from '../../../shared/ui/resource-status-badge';
 import { Skeleton } from '../../../shared/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Toggle } from '../../../shared/ui/toggle';
@@ -116,24 +117,35 @@ export function sessionMinimapViewportOverflowClassName(zoom: number) {
 
 export const SESSION_ARCHIVED_LANES_STORAGE_KEY = 'oma.sessionDetail.showArchivedLanes';
 
+function sessionStatusTone(status: string): ResourceStatusTone {
+  const normalized = status.toLowerCase();
+  if (
+    normalized.includes('running') ||
+    normalized.includes('active') ||
+    normalized.includes('运行中') ||
+    normalized.includes('活跃')
+  ) {
+    return 'success';
+  }
+  if (normalized.includes('error') || normalized.includes('failed') || normalized.includes('失败')) {
+    return 'danger';
+  }
+  if (
+    normalized.includes('queued') ||
+    normalized.includes('reschedul') ||
+    normalized.includes('等待') ||
+    normalized.includes('排队')
+  ) {
+    return 'warning';
+  }
+  return 'neutral';
+}
+
 export function SessionStatusPill({ status }: { status: string }) {
-  const tone = status.toLowerCase();
   return (
-    <Badge
-      variant="secondary"
-      className={clsx(
-        'h-6 shrink-0 rounded-md px-2 text-xs font-medium',
-        tone.includes('running') || tone.includes('active')
-          ? 'bg-success-bg text-success'
-          : tone.includes('error') || tone.includes('failed')
-            ? 'bg-destructive/10 text-destructive'
-            : tone.includes('queued') || tone.includes('reschedul')
-              ? 'bg-warning-bg text-warning'
-              : 'bg-secondary text-secondary-foreground',
-      )}
-    >
+    <ResourceStatusBadge tone={sessionStatusTone(status)} className="shrink-0">
       {status}
-    </Badge>
+    </ResourceStatusBadge>
   );
 }
 

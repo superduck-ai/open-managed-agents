@@ -7,11 +7,18 @@ import { Button } from '../../../shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
+  DataTableResourceLink,
   DataTableRow,
   MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
+  dataTableIdColumnClassName,
+  dataTableMetaColumnClassName,
+  dataTableNumericColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
 } from '../../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
@@ -19,8 +26,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
-import { Skeleton } from '../../../shared/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { TableSkeletonRows } from '../../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../../shared/ui/resource-time-cell';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../shared/ui/tooltip';
 import { toast } from '../../../shared/ui/sonner';
 import { useManagedEntityCells } from '../resources/environment-list';
@@ -197,41 +205,28 @@ export function SessionListTable({
       {
         id: 'id',
         header: msg('common.id', 'ID'),
-        size: 152,
-        cell: ({ row }) => {
-          const href = managedEntityDetailHref(workspaceId, 'sessions', row.original.id);
-          return (
-            <CopyIdCell
-              value={row.original.id}
-              ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: row.original.id })}
-              alwaysVisible
-            >
-              <a
-                href={href}
-                className="truncate font-mono text-xs text-foreground hover:underline"
-                onClick={(event) => handleInternalLinkClick(event, href)}
-              >
-                {row.original.id}
-              </a>
-            </CopyIdCell>
-          );
-        },
+        cell: ({ row }) => (
+          <CopyIdCell
+            value={row.original.id}
+            ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: row.original.id })}
+            stopPropagation
+          />
+        ),
       },
       {
         id: 'name',
         header: msg('common.name', 'Name'),
-        size: 180,
         cell: ({ row }) => {
           const href = managedEntityDetailHref(workspaceId, 'sessions', row.original.id);
           return (
-            <a
+            <DataTableResourceLink
               href={href}
               onClick={(event) => handleInternalLinkClick(event, href)}
               title={row.original.title || undefined}
-              className="block truncate hover:underline"
+              className="block max-w-[320px] truncate font-medium text-foreground"
             >
               {row.original.title || '—'}
-            </a>
+            </DataTableResourceLink>
           );
         },
       },
@@ -299,12 +294,7 @@ export function SessionListTable({
       {
         id: 'created',
         header: msg('common.created', 'Created'),
-        size: 124,
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">
-            <SessionMetricCell session={row.original} field="Created" />
-          </span>
-        ),
+        cell: ({ row }) => <RelativeTimeText value={row.original.created_at} />,
       },
       {
         id: 'actions',
@@ -340,18 +330,14 @@ export function SessionListTable({
   };
   return (
     <TooltipProvider>
-      <Table className={cn(dataTableClassName, 'min-w-[1080px]')} data-testid="session-list-table">
+      <Table className={dataTableClassName} data-testid="session-list-table">
         <TableHeader>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id} className={dataTableHeaderRowClassName}>
               {group.headers.map((header) => (
                 <TableHead
                   key={header.id}
-                  className={cn(
-                    dataTableHeaderCellClassName,
-                    sessionColumnWidthClassName(header.id),
-                    ['cost', 'tokens'].includes(header.id) && 'text-right',
-                  )}
+                  className={cn(dataTableHeaderCellClassName, sessionColumnWidthClassName(header.id))}
                   aria-label={
                     header.id === 'actions'
                       ? msg('common.actions', 'Actions')
@@ -367,38 +353,23 @@ export function SessionListTable({
           ))}
         </TableHeader>
         <TableBody>
-          {loading
-            ? Array.from({ length: 5 }, (_, index) => (
-                <TableRow key={index} className="hover:bg-transparent">
-                  {columns.map((column) => (
-                    <TableCell key={column.id} className="h-11 px-3">
-                      <Skeleton className="h-4 w-3/4" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            : table.getRowModel().rows.map((row) => (
-                <DataTableRow
-                  key={row.id}
-                  className="[&>td]:h-11"
-                  clickable
-                  onClick={(event) => previewRow(event, row.original)}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <DataTableCell
-                      key={cell.id}
-                      edge={cell.column.id === 'id' ? 'start' : cell.column.id === 'actions' ? 'end' : undefined}
-                      className={cn(
-                        'min-w-0 truncate',
-                        ['cost', 'tokens'].includes(cell.column.id) && 'whitespace-nowrap pl-4 text-right tabular-nums',
-                        cell.column.id === 'created' && 'whitespace-nowrap pl-6',
-                      )}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </DataTableCell>
-                  ))}
-                </DataTableRow>
-              ))}
+          {loading ? (
+            <TableSkeletonRows colCount={columns.length} />
+          ) : (
+            table.getRowModel().rows.map((row) => (
+              <DataTableRow key={row.id} clickable onClick={(event) => previewRow(event, row.original)}>
+                {row.getVisibleCells().map((cell) => (
+                  <DataTableCell
+                    key={cell.id}
+                    edge={cell.column.id === 'id' ? 'start' : cell.column.id === 'actions' ? 'end' : undefined}
+                    className={sessionColumnWidthClassName(cell.column.id)}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </DataTableCell>
+                ))}
+              </DataTableRow>
+            ))
+          )}
         </TableBody>
       </Table>
     </TooltipProvider>
@@ -406,14 +377,14 @@ export function SessionListTable({
 }
 
 const sessionColumnWidthClasses: Record<string, string> = {
-  id: 'w-[15%]',
-  name: 'w-[23%]',
-  status: 'w-[8%]',
-  agent: 'w-[18%]',
-  cost: 'w-[10%] whitespace-nowrap pl-4',
-  tokens: 'w-[13%] whitespace-nowrap pl-4',
-  created: 'w-[13%] whitespace-nowrap pl-6',
-  actions: 'w-[76px]',
+  id: dataTableIdColumnClassName,
+  name: dataTablePrimaryColumnClassName,
+  status: dataTableMetaColumnClassName,
+  agent: cn(dataTableMetaColumnClassName, 'max-w-[220px]'),
+  cost: cn(dataTableNumericColumnClassName, 'pl-4'),
+  tokens: cn(dataTableNumericColumnClassName, 'pl-4'),
+  created: cn(dataTableTimeColumnClassName, 'pl-6'),
+  actions: dataTableActionsColumnClassName,
 };
 
 function sessionColumnWidthClassName(columnId: string) {

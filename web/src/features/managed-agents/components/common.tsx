@@ -27,6 +27,7 @@ import {
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
+import { ResourceStatusBadge } from '../../../shared/ui/resource-status-badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Textarea } from '../../../shared/ui/textarea';
@@ -805,12 +806,6 @@ export function AgentSelectionCheckbox({
       checked={checked}
       indeterminate={indeterminate}
       disabled={disabled}
-      className={clsx(
-        'size-5 rounded-[5px] border-border bg-transparent hover:border-border',
-        'data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground',
-        'data-indeterminate:border-primary data-indeterminate:bg-primary data-indeterminate:text-primary-foreground',
-        disabled && 'cursor-not-allowed opacity-40',
-      )}
       onCheckedChange={() => onClick()}
     />
   );
@@ -954,17 +949,7 @@ export function AgentStatusBadge({ archived }: { archived: boolean }) {
 }
 
 export function StatusPill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'success' }) {
-  return (
-    <Badge
-      variant="secondary"
-      className={clsx(
-        'h-6 rounded-md px-2 text-xs font-medium',
-        tone === 'success' ? 'status-success' : 'text-secondary-foreground',
-      )}
-    >
-      {children}
-    </Badge>
-  );
+  return <ResourceStatusBadge tone={tone}>{children}</ResourceStatusBadge>;
 }
 
 export function CompactChip({ icon: Icon, children }: { icon: IconComponent; children: ReactNode }) {

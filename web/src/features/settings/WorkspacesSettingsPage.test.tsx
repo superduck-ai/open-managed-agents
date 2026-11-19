@@ -74,7 +74,9 @@ describe('Workspaces settings page', () => {
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).getByText('Current')).toBeTruthy();
     expect(within(table).getByText('wrkspc_foo')).toBeTruthy();
-    expect(within(table).getAllByText(/2026/).length).toBeGreaterThan(0);
+    expect(
+      Array.from(table.querySelectorAll('time')).some((node) => /2026/.test(node.getAttribute('title') ?? '')),
+    ).toBe(true);
     expect(within(table).getByText('2')).toBeTruthy();
     const actionButtons = within(table).getAllByRole('button', { name: 'Workspace actions' });
     expect(actionButtons.length).toBe(2);

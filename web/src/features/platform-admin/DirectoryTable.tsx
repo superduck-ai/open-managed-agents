@@ -3,7 +3,14 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { Button } from '../../shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import {
+  DataTableCell,
+  DataTableRow,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+} from '../../shared/ui/data-table-interactions';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { usePlatformAdmin } from './context';
 import type { Page } from './types';
 
@@ -42,12 +49,12 @@ export function DirectoryTable<T extends { uuid: string }>({
   return (
     <div className="space-y-3">
       {query.data.data.length > 0 && (
-        <Table>
+        <Table className={dataTableClassName}>
           <TableHeader>
             {table.getHeaderGroups().map((group) => (
-              <TableRow key={group.id}>
+              <TableRow key={group.id} className={dataTableHeaderRowClassName}>
                 {group.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead key={header.id} className={dataTableHeaderCellClassName}>
                     {flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
@@ -56,13 +63,17 @@ export function DirectoryTable<T extends { uuid: string }>({
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows.map((row) => (
-              <TableRow key={row.original.uuid}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell className="max-w-sm [overflow-wrap:anywhere]" key={cell.id}>
+              <DataTableRow key={row.original.uuid}>
+                {row.getVisibleCells().map((cell, index, cells) => (
+                  <DataTableCell
+                    edge={index === 0 ? 'start' : index === cells.length - 1 ? 'end' : undefined}
+                    className="max-w-md [overflow-wrap:anywhere]"
+                    key={cell.id}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+                  </DataTableCell>
                 ))}
-              </TableRow>
+              </DataTableRow>
             ))}
           </TableBody>
         </Table>

@@ -500,7 +500,7 @@ describe('Files page', () => {
       expect(screen.getByText(heading)).toBeTruthy();
     }
     expect(screen.getByText('321 B')).toBeTruthy();
-    expect(screen.getByText('file_...23456789')).toBeTruthy();
+    expect(screen.getByText('file_abc123456789')).toBeTruthy();
     expect(screen.queryByRole('link', { name: /View Docs/i })).toBeNull();
     expect(screen.queryByText('Copy the template below to upload your first file:')).toBeNull();
 

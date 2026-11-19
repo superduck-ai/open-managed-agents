@@ -15,9 +15,16 @@ import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
 import { TableCell, TableRow } from '@/shared/ui/table';
 
-export const dataTableClassName = 'table-fixed border-separate border-spacing-y-px text-left';
+export const dataTableClassName = 'w-full table-auto border-separate border-spacing-y-px text-left';
 export const dataTableHeaderRowClassName = 'border-0 text-muted-foreground hover:bg-transparent';
-export const dataTableHeaderCellClassName = 'h-10 px-3 text-xs text-muted-foreground';
+export const dataTableHeaderCellClassName = 'h-10 px-3 text-xs font-medium text-muted-foreground';
+export const dataTableCheckboxColumnClassName = 'w-10 px-3';
+export const dataTableIdColumnClassName = 'w-[1%] whitespace-nowrap pr-6';
+export const dataTablePrimaryColumnClassName = 'min-w-[180px]';
+export const dataTableMetaColumnClassName = 'whitespace-nowrap';
+export const dataTableNumericColumnClassName = 'w-[1%] whitespace-nowrap text-right tabular-nums';
+export const dataTableTimeColumnClassName = 'whitespace-nowrap';
+export const dataTableActionsColumnClassName = 'w-[1%] whitespace-nowrap px-2 text-right';
 
 const DataTableRowHoverContext = createContext(false);
 
@@ -68,7 +75,7 @@ export function DataTableCell({ edge, className, ...props }: DataTableCellProps)
   return (
     <TableCell
       className={cn(
-        'oma-data-table-cell h-10 px-3 align-middle transition-colors duration-250 ease-out motion-reduce:transition-none',
+        'oma-data-table-cell h-11 px-3 align-middle transition-colors duration-250 ease-out motion-reduce:transition-none',
         edge === 'start' && 'rounded-l-lg',
         edge === 'end' && 'rounded-r-lg',
         className,
@@ -132,8 +139,11 @@ export function CopyIdCell({
   };
 
   return (
-    <span className={cn('inline-flex min-w-0 max-w-full items-center gap-2', className)}>
-      <span className={cn('min-w-0 truncate font-mono text-xs font-medium text-foreground', textClassName)}>
+    <span className={cn('inline-flex min-w-0 max-w-full items-center gap-1.5', className)}>
+      <span
+        title={value}
+        className={cn('min-w-0 max-w-[360px] truncate font-mono text-xs font-medium text-foreground', textClassName)}
+      >
         {children ?? displayValue ?? value}
       </span>
       <Button

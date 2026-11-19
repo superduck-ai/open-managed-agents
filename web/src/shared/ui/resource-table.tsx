@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { ResourceListPagination } from '@/shared/ui/resource-list-pagination';
+import { Skeleton } from '@/shared/ui/skeleton';
 import { TableCell, TableRow } from '@/shared/ui/table';
 
 export function CursorPagination({
@@ -80,6 +81,31 @@ export function TableErrorRow({
         </Alert>
       </TableCell>
     </TableRow>
+  );
+}
+
+export function TableSkeletonRows({
+  colCount,
+  rowCount = 5,
+  label,
+}: {
+  colCount: number;
+  rowCount?: number;
+  label?: string;
+}) {
+  return (
+    <>
+      {Array.from({ length: rowCount }, (_, rowIndex) => (
+        <TableRow key={rowIndex} className="border-0 hover:bg-transparent">
+          {Array.from({ length: colCount }, (_, colIndex) => (
+            <TableCell key={colIndex} className="h-11 px-3">
+              {rowIndex === 0 && colIndex === 0 && label ? <span className="sr-only">{label}</span> : null}
+              <Skeleton className="h-4 w-3/4" />
+            </TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </>
   );
 }
 

@@ -4,8 +4,10 @@ import { Button } from '../../../shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
+  DataTableResourceLink,
   DataTableRow,
   MoreActionsButton,
+  dataTableActionsColumnClassName,
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
@@ -17,7 +19,9 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { TableSkeletonRows } from '../../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../../shared/ui/resource-time-cell';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
   ResourceListPagination,
@@ -26,7 +30,7 @@ import {
 } from '../../../shared/ui/resource-list-pagination';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
+import { Archive, Bot, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
@@ -69,6 +73,7 @@ import {
   type SessionApiResponse,
 } from '../types';
 import {
+  agentDetailHref,
   compactEntityId,
   copyText,
   errorMessage,
@@ -88,13 +93,6 @@ import { managedEntityErrorMessage } from './environment-model';
 import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
-const managedEntityTableWidths: Record<ManagedEntitySection, string> = {
-  sessions: 'min-w-[1080px]',
-  environments: 'min-w-[1080px]',
-  'credential-vaults': 'min-w-[760px]',
-  'memory-stores': 'min-w-[760px]',
-  deployments: 'min-w-[960px]',
-};
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
 type ManagedEntityPageState = {
   workspaceId: string;
@@ -997,17 +995,13 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         />
       ) : (
         <div>
-          <Table className={cn(dataTableClassName, managedEntityTableWidths[config.section])}>
+          <Table className={dataTableClassName}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 {config.columns.map((column) => (
                   <TableHead
                     key={column || 'select'}
-                    className={cn(
-                      dataTableHeaderCellClassName,
-                      columnWidth(config.section, column),
-                      (column === 'Tokens in / out' || column === 'Cost') && 'text-right',
-                    )}
+                    className={cn(dataTableHeaderCellClassName, columnWidth(config.section, column))}
                   >
                     {column ? (
                       managedColumnLabel(column, msg)
@@ -1023,21 +1017,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
                   </TableHead>
                 ))}
                 <TableHead
-                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  className={cn(dataTableHeaderCellClassName, dataTableActionsColumnClassName)}
                   aria-label={managedColumnLabel('Actions', msg)}
                 />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell
-                    colSpan={config.columns.length + 1}
-                    className="h-[280px] text-center text-sm text-muted-foreground"
-                  >
-                    {managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
-                  </TableCell>
-                </TableRow>
+                <TableSkeletonRows
+                  colCount={config.columns.length + 1}
+                  label={managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
+                />
               ) : (
                 visibleEntities.map((entity) => (
                   <ManagedEntityRow
@@ -1045,6 +1035,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
                     config={config}
                     entity={entity}
                     workspaceId={activeWorkspaceId}
+                    agentNames={sessionAgentNames}
                     busyAction={busyAction}
                     selected={selectedEntityIds.has(entity.id)}
                     onCopy={() => void copyText(entity.id)}
@@ -1145,6 +1136,7 @@ export function ManagedEntityRow({
   config,
   entity,
   workspaceId,
+  agentNames,
   busyAction,
   selected,
   onCopy,
@@ -1159,6 +1151,7 @@ export function ManagedEntityRow({
   config: ResourceConfig & { section: ManagedEntitySection };
   entity: ManagedEntityApiResponse;
   workspaceId: string;
+  agentNames?: ReadonlyMap<string, string>;
   busyAction: string | null;
   selected: boolean;
   onCopy: () => void;
@@ -1177,26 +1170,43 @@ export function ManagedEntityRow({
   const deployment = config.section === 'deployments' ? (entity as DeploymentApiResponse) : null;
   const paused = deployment?.status === 'paused';
   const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
+  const agentId = entityAgentId(entity);
+  const agentHref = agentId ? agentDetailHref(workspaceId, agentId) : '';
+  const agentLabel = agentId ? agentNames?.get(agentId) || entityAgentLabel(entity) : '';
 
   return (
-    <DataTableRow selected={selected} className="[&>td]:h-11">
+    <DataTableRow selected={selected}>
       {config.columns.map((column, index) => {
         const content =
           column === 'ID' ? (
             <CopyIdCell
               value={entity.id}
-              displayValue={config.section === 'sessions' ? entity.id : compactEntityId(entity.id)}
-              alwaysVisible={config.section === 'sessions'}
               ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
+              stopPropagation
             />
           ) : column === 'Name' ? (
-            <a
+            <DataTableResourceLink
               href={detailHref}
-              className="truncate text-foreground underline-offset-4 hover:underline"
+              title={entityDisplayName(config.section, entity)}
+              className="block max-w-[360px] truncate font-medium text-foreground"
               onClick={(event) => handleInternalLinkClick(event, detailHref)}
             >
               {cells[column]}
+            </DataTableResourceLink>
+          ) : column === 'Agent' && agentId ? (
+            <a
+              href={agentHref}
+              title={agentLabel}
+              onClick={(event) => handleInternalLinkClick(event, agentHref)}
+              className="inline-flex min-w-0 max-w-[260px] items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
+            >
+              <Bot className="size-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{agentLabel}</span>
             </a>
+          ) : column === 'Created' ? (
+            <RelativeTimeText value={entity.created_at} />
+          ) : column === 'Updated at' ? (
+            <RelativeTimeText value={entity.updated_at} />
           ) : column ? (
             cells[column]
           ) : (
@@ -1212,13 +1222,13 @@ export function ManagedEntityRow({
           <DataTableCell
             key={column || 'select'}
             edge={index === 0 ? 'start' : undefined}
-            className={cn('truncate', (column === 'Tokens in / out' || column === 'Cost') && 'text-right tabular-nums')}
+            className={columnWidth(config.section, column)}
           >
             {content}
           </DataTableCell>
         );
       })}
-      <DataTableCell edge="end" className="px-2">
+      <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
         <div className="flex justify-end">
           <DropdownMenu>
             <DropdownMenuTrigger

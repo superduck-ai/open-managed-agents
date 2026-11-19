@@ -3,26 +3,29 @@ import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import {
-  AlertCircle,
-  Ban,
-  Box,
-  Check,
-  Copy,
-  Info,
-  KeyRound,
-  Loader2,
-  MoreVertical,
-  Plus,
-  Power,
-  Trash2,
-} from 'lucide-react';
+import { AlertCircle, Ban, Box, Check, Copy, Info, KeyRound, Loader2, Plus, Power, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Card, CardContent } from '../../shared/ui/card';
+import {
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableActionsColumnClassName,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  dataTableMetaColumnClassName,
+  dataTableNumericColumnClassName,
+  dataTablePrimaryColumnClassName,
+  dataTableTimeColumnClassName,
+} from '../../shared/ui/data-table-interactions';
 import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { ResourceStatusBadge } from '../../shared/ui/resource-status-badge';
+import { TableSkeletonRows } from '../../shared/ui/resource-table';
+import { RelativeTimeText } from '../../shared/ui/resource-time-cell';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   AlertDialog,
@@ -62,7 +65,7 @@ import {
   type Workspace,
   type WorkspaceApiKey,
 } from '../../shared/workspaces/api';
-import { useFormatters, useI18n } from '../../shared/i18n';
+import { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceColor, workspaceIdFromPath } from '../../shared/workspaces/presentation';
 
@@ -206,29 +209,23 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
           }
         />
 
-        <Table className={`table-fixed text-left ${showRows ? 'min-w-[920px]' : 'min-w-full'}`}>
-          <colgroup>
-            <col className="w-[30%]" />
-            <col className="w-[22%]" />
-            <col className="w-[14%]" />
-            <col className="w-[14%]" />
-            <col className="w-[10%]" />
-            <col className="w-[72px]" />
-          </colgroup>
+        <Table className={`${dataTableClassName} ${showRows ? '' : '[&_td]:whitespace-normal'}`}>
           {showRows ? (
-            <TableHeader className="text-xs text-muted-foreground">
-              <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
-                <TableHead className="px-3 py-3 text-muted-foreground">
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTablePrimaryColumnClassName}`}>
+                  {msg('apiKeys.key', 'Key')}
+                </TableHead>
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTableMetaColumnClassName}`}>
                   {msg('apiKeys.createdBy', 'Created by')}
                 </TableHead>
-                <TableHead className="px-3 py-3 text-muted-foreground">
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTableTimeColumnClassName}`}>
                   {msg('apiKeys.createdAt', 'Created at')}
                 </TableHead>
-                <TableHead className="px-3 py-3 text-muted-foreground">
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTableTimeColumnClassName}`}>
                   {msg('apiKeys.lastUsedAt', 'Last used at')}
                 </TableHead>
-                <TableHead className="px-3 py-3 text-muted-foreground">
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTableNumericColumnClassName}`}>
                   <span className="inline-flex items-center gap-1">
                     {msg('analytics.cost.title', 'Cost')}
                     <InfoTooltip
@@ -236,16 +233,17 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
                     />
                   </span>
                 </TableHead>
-                <TableHead className="px-3 py-3 text-right text-muted-foreground">
-                  {msg('common.actions', 'Actions')}
+                <TableHead className={`${dataTableHeaderCellClassName} ${dataTableActionsColumnClassName}`}>
+                  <span className="sr-only">{msg('common.actions', 'Actions')}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
           ) : null}
           <TableBody>
             {keysQuery.isLoading ? (
-              <ApiKeysState
-                text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
+              <TableSkeletonRows
+                colCount={6}
+                label={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
                   workspaceName,
                 })}
               />
@@ -294,60 +292,50 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
 
 function ApiKeyRow({ apiKey, onAction }: { apiKey: WorkspaceApiKey; onAction: (action: KeyAction) => void }) {
   const { msg } = useI18n();
-  const { date } = useFormatters();
   const status = normalizeKeyStatus(apiKey);
   const inactive = status === 'inactive';
   const creator = displayCreator(apiKey, msg('common.unknown', 'Unknown'));
 
   return (
-    <TableRow
-      className={`h-[58px] border-border text-sm hover:bg-accent ${inactive ? 'text-muted-foreground' : 'text-foreground'}`}
-    >
-      <TableCell className="min-w-0 px-3 py-2.5 align-middle">
-        <div className="flex min-w-0 items-start gap-2">
+    <DataTableRow className={inactive ? 'text-muted-foreground' : 'text-foreground'}>
+      <DataTableCell edge="start" className={`${dataTablePrimaryColumnClassName} py-2`}>
+        <div className="flex min-w-0 max-w-[360px] items-center gap-2">
           <span
-            className="min-w-0 line-clamp-2 whitespace-normal font-medium [overflow-wrap:anywhere]"
+            className="min-w-0 truncate font-medium"
             title={apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}
           >
             {apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}
           </span>
           {inactive ? (
-            <Badge variant="secondary" className="h-5 shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground">
-              {msg('apiKeys.inactive', 'Inactive')}
-            </Badge>
+            <ResourceStatusBadge tone="neutral">{msg('apiKeys.inactive', 'Inactive')}</ResourceStatusBadge>
           ) : null}
         </div>
-        <div className="mt-1 truncate font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
+        <div className="mt-0.5 font-mono text-xs text-muted-foreground [font-variant-ligatures:none]">
           {keyHint(apiKey)}
         </div>
-      </TableCell>
-      <TableCell className="min-w-0 px-3 py-2.5 align-middle">
-        <div className="truncate">{creator.name}</div>
-        <div className="mt-1 truncate text-xs text-muted-foreground">{creator.email}</div>
-      </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
-        {formatDate(apiKey.created_at, date)}
-      </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
-        {apiKey.last_used_at ? formatDate(apiKey.last_used_at, date) : msg('common.never', 'Never')}
-      </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">-</TableCell>
-      <TableCell className="px-3 py-2.5 text-right align-middle">
+      </DataTableCell>
+      <DataTableCell className={`${dataTableMetaColumnClassName} py-2`}>
+        <div className="max-w-[240px] truncate">{creator.name}</div>
+        <div className="mt-0.5 max-w-[240px] truncate text-xs text-muted-foreground">{creator.email}</div>
+      </DataTableCell>
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={apiKey.created_at} />
+      </DataTableCell>
+      <DataTableCell className={dataTableTimeColumnClassName}>
+        <RelativeTimeText value={apiKey.last_used_at} emptyLabel={msg('common.never', 'Never')} />
+      </DataTableCell>
+      <DataTableCell className={`${dataTableNumericColumnClassName} text-muted-foreground`}>—</DataTableCell>
+      <DataTableCell edge="end" className={dataTableActionsColumnClassName}>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground"
-                aria-label={msg('apiKeys.moreActionsAria', 'More actions for {keyName}', {
+              <MoreActionsButton
+                label={msg('apiKeys.moreActionsAria', 'More actions for {keyName}', {
                   keyName: apiKey.name || msg('apiKeys.thisKey', 'this key'),
                 })}
               />
             }
-          >
-            <MoreVertical className="size-4" aria-hidden />
-          </DropdownMenuTrigger>
+          />
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem onClick={() => onAction(inactive ? 'enable' : 'disable')}>
               {inactive ? <Power className="size-4" aria-hidden /> : <Ban className="size-4" aria-hidden />}
@@ -361,8 +349,8 @@ function ApiKeyRow({ apiKey, onAction }: { apiKey: WorkspaceApiKey; onAction: (a
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </TableCell>
-    </TableRow>
+      </DataTableCell>
+    </DataTableRow>
   );
 }
 
@@ -702,24 +690,6 @@ function keyHint(apiKey: WorkspaceApiKey) {
     return `${apiKey.key_prefix ?? 'sk-ant'}...${apiKey.key_suffix ?? ''}`;
   }
   return 'sk-ant-api03-...';
-}
-
-function formatDate(
-  value: string | null | undefined,
-  formatter: (value: Date, options?: Intl.DateTimeFormatOptions) => string,
-) {
-  if (!value) {
-    return '-';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return formatter(date, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
 }
 
 function displayCreator(apiKey: WorkspaceApiKey, unknown: string): Identity {

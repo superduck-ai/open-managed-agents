@@ -41,10 +41,9 @@ export function budgetCreateBody(values: ManagedEntityFormValues): BudgetWire | 
 
 /** Body fragment for update requests: sent only when edited, null clears. */
 export function budgetUpdateBody(values: ManagedEntityFormValues): BudgetWire | null | undefined {
-  if (!values.budgetChanged) {
-    return undefined;
-  }
   const parsed = parseBudgetUsdInput(values.budgetUsd);
+  const original = parseBudgetUsdInput(values.originalBudgetUsd);
+  if (parsed.ok && original.ok && parsed.cents === original.cents) return undefined;
   return parsed.ok && parsed.cents !== null ? budgetWireBody(parsed.cents) : null;
 }
 

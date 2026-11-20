@@ -15,6 +15,16 @@ import (
 var ErrStreamReset = errors.New("session stream interrupted; replay required")
 var ErrStreamHeartbeat = errors.New("session stream heartbeat due")
 
+var errSessionUpdateInactive = errors.New("session must be non-terminated and unarchived to update")
+var errSessionAgentUpdateRequiresIdle = errors.New("session must be idle to update the agent")
+var errSessionUpdateTitleLength = errors.New("title must contain between 1 and 500 characters")
+var errSessionVaultUpdateUnsupported = errors.New("vault_ids updates are not supported")
+var errSessionUpdateCreateOnly = errors.New("environment_id and resources cannot be changed by a session update")
+
+func sessionUpdateConflict(err error) error {
+	return apperr.New(apperr.Conflict, "session changed during update; retry the request", err)
+}
+
 var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
 var errSessionAgentUpdateUnsupportedFields = errors.New("only tools and mcp_servers can be updated in an existing session")
 var errStoredSessionAgentInvalid = errors.New("stored session agent is invalid")
@@ -123,7 +133,7 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrSessionToolConfirmationInvalid) {
 		return invalidRequest(err)
 	}
-	if errors.Is(err, db.ErrSessionInputPaused) {
+	if errors.Is(err, db.ErrSessionInputPaused) || errors.Is(err, db.ErrSessionBudgetNotRaised) {
 		return invalidRequest(err)
 	}
 	if errors.Is(err, db.ErrSessionInputConflict) {

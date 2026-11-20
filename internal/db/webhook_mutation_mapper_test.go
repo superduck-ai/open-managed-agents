@@ -40,9 +40,9 @@ func TestWebhookMutationMapperContracts(t *testing.T) {
 		{statement: sessionMapperUpdateByExternalIDStatement,
 			bound:  buildSessionMapperUpdateByExternalID(yourbatis.DialectPostgres, sessionUpdateParams{WorkspaceUUID: "workspace", ExternalID: "session", AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`)}),
 			wantID: "SessionMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames:          []string{"params.AgentSnapshot", "params.SetTitle", "params.Title", "params.Metadata", "params.Budget", "params.BudgetReachedAt", "params.BudgetRemovedAt", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID", "params.SetTitle", "params.Title", "params.Budget", "params.BudgetReachedAt", "params.BudgetRemovedAt", "params.AgentSnapshot", "params.Metadata"},
-			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Title", "params.Metadata", "params.Budget", "params.Title", "params.Budget", "params.AgentSnapshot", "params.Metadata"},
-			wantSQLFragments:           []string{"title = CASE WHEN $2 THEN $3 ELSE title END", "workspace_uuid = $9", "external_id = $10", "$11 AND title IS DISTINCT FROM $12", "budget IS DISTINCT FROM CAST($13 AS jsonb)", "budget_reached_at IS DISTINCT FROM $14", "budget_removed_at IS DISTINCT FROM $15", "agent_snapshot IS DISTINCT FROM CAST($16 AS jsonb)", "(metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM"}},
+			wantArgumentNames:          []string{"params.AgentSnapshot", "params.Title", "params.Metadata", "params.Budget", "params.BudgetReachedAt", "params.BudgetRemovedAt", "params.WorkspaceUUID", "params.ExternalID", "params.PreviousStatus", "params.PreviousUpdatedAt"},
+			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Title", "params.Metadata", "params.Budget"},
+			wantSQLFragments:           []string{"title = $2", "workspace_uuid = $7", "external_id = $8", "archived_at IS NULL", "status = $9", "updated_at = $10"}},
 	} {
 		t.Run(tc.wantID, func(t *testing.T) { assertMapperBuilderContract(t, tc) })
 	}

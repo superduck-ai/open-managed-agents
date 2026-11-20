@@ -334,8 +334,11 @@ export function initialFormValues(
   section: ManagedEntitySection,
   entity?: ManagedEntityApiResponse,
 ): ManagedEntityFormValues {
+  const budgetUsd = entityBudgetUsdInput(entity);
   return {
-    name: entity ? entityDisplayName(section, entity) : '',
+    ...(entity?.type === 'session'
+      ? { name: entity.title ?? '', originalSessionTitle: entity.title ?? null }
+      : { name: entity ? entityDisplayName(section, entity) : '' }),
     description: entityDescription(entity),
     agentId: entity ? entityAgentId(entity) : '',
     environmentId: entity && 'environment_id' in entity ? entity.environment_id : '',
@@ -344,8 +347,8 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
-    budgetUsd: entityBudgetUsdInput(entity),
-    budgetChanged: false,
+    budgetUsd,
+    originalBudgetUsd: budgetUsd,
     ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }

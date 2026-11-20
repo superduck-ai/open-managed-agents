@@ -34,7 +34,10 @@ func (e *environment) baselineFixtureOverlay(selected scenario) (string, error) 
 			functions []string
 		}{
 			{"code_session_mapper", nil},
-			{"session_mapper", nil},
+			{"session_mapper", []string{
+				"buildSessionMapperInsert", "scanSessionMapperInsert",
+				"buildSessionMapperLockSessionForEvents", "scanSessionMapperLockSessionForEvents",
+			}},
 			{"session_thread_mapper", nil},
 			{"session_resource_file_mapper", nil},
 			{"session_resource_mapper", []string{"buildSessionResourceMapperInsertDirectory"}},

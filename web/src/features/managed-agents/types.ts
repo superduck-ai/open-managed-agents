@@ -588,6 +588,7 @@ export type MemoryAttachFormValue = {
 };
 
 export type ManagedEntityFormValues = {
+  originalSessionTitle?: string | null;
   name: string;
   description: string;
   agentId: string;
@@ -604,7 +605,7 @@ export type ManagedEntityFormValues = {
   resourcesChanged: boolean;
   /** Budget cap in USD dollars as typed; empty string means no budget. */
   budgetUsd: string;
-  budgetChanged: boolean;
+  originalBudgetUsd: string;
 };
 
 export type GitRepositoryResourceFormValue = {

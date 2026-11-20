@@ -28,7 +28,6 @@ check_duplicates() {
 check_duplicates \
   "Go production code" \
   "$repo_root/.jscpd.json" \
-  "$repo_root/session_ports.go" \
   "$repo_root/cmd" \
   "$repo_root/internal"
 

@@ -269,7 +269,8 @@ migration `00130_add_code_session_port_last_access.sql`。Mapper 为 `internal/d
 - **注册表**：Redis key `oma:session_port:owner:<code_session_uuid>`，值为 `internal_advertise_addr#<实例随机 ID>`。TTL 60s，每 20s 刷新，连接断开时比较值后删除。
 - **本地命中**：请求到达的实例就是持有者，直接写入隧道。
 - **跨实例**：`porttunnel.ClusterRouter` 先查本地，本地没有再读 owner。owner 是其它实例时，返回一个 `remoteTunnel`，网关照常调用它的 `RoundTrip` / `OpenWebSocket`。
-- **单实例**：未配置 `internal_listen_addr` 时不创建 `ClusterRouter`、不监听内部端口，网关直接使用 `Registry`，行为与之前完全相同。本地开发属于这种情况。
+- **单实例**：未配置 `internal_listen_addr` 时不创建 `ClusterRouter`、不监听内部端口、不写 Redis owner 记录，网关直接使用 `Registry`。本地开发属于这种情况。滚动升级到多副本期间，尚未配置转发的旧副本因此不会用空地址覆盖真正持有者的 owner。
+- **启动组装与停机**：`porttunnel.Start` 创建 `Registry`，配置转发时再创建 owner store、内部转发监听与 `ClusterRouter`；`main` 只把 `session_ports` 配置映射为 `porttunnel.Options`，并注入 Redis、NATS 和组件 logger。进程 context 结束不会关闭隧道；`main` 在公开 HTTP server 排空在途请求后调用 `Runtime.Close`，先在 10s 内排空内部转发端点，再以 1012 关闭全部隧道并释放 owner，避免停机期间在途的端口请求被提前切断。
 
 ```mermaid
 sequenceDiagram
@@ -543,6 +544,7 @@ session_ports:
 | `internal/portgateway` | Host 分流、404/409/413/429/502（`tunnel_disconnected` / `upstream_unreachable`）/503/504、并发请求共用一次唤醒、头与 cookie、续期与访问时间节流、调用方断开取消 |
 | `internal/porttunnel`（`cluster_routing_test.go`，多副本） | 进程内两个实例共享 miniredis 与嵌入式 NATS，隧道连 B、请求打 A：HTTP 往返（经 B 内部端点一次，头与 cookie 规则与单实例一致，续期只在 A）、8 MiB 下载在慢读者下完整、SSE 逐条到达、调用方取消传到沙箱服务、WebSocket 子协议/文本/二进制/关闭码、B 侧配额满时 A 返回 429、B 内部端点不可达时 2s 级别进入等待后返回 503 且清除 owner、owner 指向无隧道的 B 时等到隧道连上 A 后成功；所有失败响应不含内部地址 |
 | `internal/porttunnel`（转发单测） | 伪造密钥、缺失/格式错误、过期、未来时间、改路径/端口/Session、篡改请求头、目标 owner 不符均 401；有效签名进入查找；客户端不用代理且响应头/握手超时大于持有者侧；错误码往返；`WaitOnline` 在 owner 已在别处时立即返回；停机时隧道收到 1012 且 owner 释放 |
+| `internal/porttunnel`（`runtime_test.go`，启动与停机） | 内部端口被占用时启动失败；未配置 `internal_listen_addr` 时路由为本地 `Registry`、隧道连上后 Redis 无 owner 记录；配置后路由为 `ClusterRouter`、owner 带 advertise 地址并写入 Redis、内部端点接受有效签名；context 结束后隧道仍在，`Close` 后隧道关闭、owner 释放、内部端口不可连 |
 | `internal/api` | 公开 router 上 `/internal/session-ports/...` 404；隧道路径只走隧道鉴权 |
 | `internal/sessions` | 取地址接口的 404/403/400 |
 | `internal/codesessions`（`port_tools_test.go`） | `get_port_url` 工具：服务端未启用时任何 Agent 配置下主线程 launch tools、子 Agent 工具、session context 与权限表都不含该工具且与旧列表逐项一致，权限判定为 deny；启用时随 `default_config` 开启、`enabled:false` 或 `default_config.enabled:false` 时关闭、默认策略随 `default_config`；端点的 409/400 |

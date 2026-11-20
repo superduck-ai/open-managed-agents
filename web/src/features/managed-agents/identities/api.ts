@@ -23,28 +23,12 @@ export type IdentityPage = {
   agent_options: { id: string; name: string }[];
 };
 
-export type AgentIdentityBinding = {
-  identity_id: string;
-  display_name: string;
-  channel_id: string;
-  scope_kind: string;
-  remote_id: string;
-  pairing_id: string;
-  status: string;
-};
-
 export function identityBase(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}`;
 }
 
 export function listIdentities(orgUuid: string, workspaceId: string, params: URLSearchParams, signal: AbortSignal) {
   return consoleApi<IdentityPage>(`${identityBase(orgUuid, workspaceId)}/identities/directory?${params}`, { signal });
-}
-
-export function listAgentIdentityBindings(orgUuid: string, workspaceId: string, agentId: string) {
-  return consoleApi<{ data: AgentIdentityBinding[] }>(
-    `${identityBase(orgUuid, workspaceId)}/agents/${encodeURIComponent(agentId)}/identity_bindings`,
-  );
 }
 
 export type IdentityAgentChannel = {

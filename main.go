@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
@@ -36,12 +37,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
@@ -141,7 +144,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	}
 	defer tunnelBroker.Close()
 
-	sessionPorts, err := openSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
+	sessionPortSettings, sessionPorts, err := startSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
 	if err != nil {
 		return fmt.Errorf("configure session ports: %w", err)
 	}
@@ -181,7 +184,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
 		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).
-		WithSessionPorts(sessionPorts.settings)
+		WithSessionPorts(sessionPortSettings)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
@@ -254,9 +257,9 @@ func run(bootstrap *slog.Logger) (err error) {
 		ToolCallNotifications:  natsConnection,
 		ToolCallContext:        ctx,
 		EvaluationRunner:       evaluationRunner,
-		SessionPorts:           sessionPorts.settings,
-		SessionPortRegistry:    sessionPorts.registry,
-		SessionPortRouter:      sessionPorts.router,
+		SessionPorts:           sessionPortSettings,
+		SessionPortRegistry:    sessionPorts.Registry,
+		SessionPortRouter:      sessionPorts.Router,
 		InvitationJobs:         jobClient,
 		Prebuilds:              prebuilds,
 		SandboxLifecycle:       lifecycle,
@@ -521,4 +524,24 @@ func drainNATS(connection *nats.Conn, logger *slog.Logger) {
 		logger.Warn("drain nats connection", "error", err)
 		connection.Close()
 	}
+}
+
+func startSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis.Client, natsConnection *nats.Conn, logger *slog.Logger) (*sessionports.Settings, porttunnel.Runtime, error) {
+	settings, err := sessionports.New(cfg, logger.With("component", "session_port_gateway"))
+	if err != nil || !settings.Enabled() {
+		return settings, porttunnel.Runtime{}, err
+	}
+	runtime, err := porttunnel.Start(ctx, porttunnel.Deps{
+		Redis:         redisClient,
+		NATS:          natsConnection,
+		Logger:        logger.With("component", "session_port_tunnel"),
+		ForwardLogger: logger.With("component", "session_port_forwarding"),
+	}, porttunnel.Options{
+		AdvertiseAddr:       cfg.SessionPorts.InternalAdvertiseAddr,
+		ListenAddr:          cfg.SessionPorts.InternalListenAddr,
+		ForwardKey:          settings.ForwardKey(),
+		MaxRequestBodyBytes: cfg.SessionPorts.MaxRequestBodyBytes,
+		ResponseIdleTimeout: cfg.SessionPorts.ResponseIdleTimeout,
+	})
+	return settings, runtime, err
 }

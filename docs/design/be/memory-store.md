@@ -308,6 +308,8 @@ filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionr
 
 ## 7. 合同
 
+`/v1/memory_stores` 及子路由不要求 `?beta=true` 或 `anthropic-beta` 请求头。带这些标记的旧请求仍可使用，鉴权和资源访问范围不变。
+
 ### 7.1 Attach
 
 - 最多 8 个 store，不得重复。Create Session 请求体与 `POST /resources` 都强制这两条；`CreateSessionResource` 在锁定 Session 行后的同一事务里再次检查，并发附加不会写出重复 `memory_store_id` 或第 9 个 store。冲突返回 `invalid_request_error`。

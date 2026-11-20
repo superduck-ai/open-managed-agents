@@ -171,10 +171,6 @@ func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, 
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, vaultBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

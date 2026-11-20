@@ -88,9 +88,23 @@ func TestEnvironmentsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("success list and create without beta markers", func(t *testing.T) {
+		resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments", nil, defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+
+		resp = doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments", strings.NewReader(`{"name":"env-api-no-beta"}`), defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+		var created environmentAPIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil || created.ID == "" {
+			t.Fatalf("expected created environment ID, got %q, error: %v", created.ID, err)
+		}
+		defer cleanupEnvironmentRows(t, app.pool, created.ID)
 	})
 
 	t.Run("failure invalid config type", func(t *testing.T) {

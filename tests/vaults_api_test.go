@@ -73,9 +73,17 @@ func TestVaultsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults", nil, defaultTestKey, true)
-		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vaults API requires beta=true")
+	t.Run("failure unauthenticated without beta markers", func(t *testing.T) {
+		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults", nil, "", false)
+		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+	})
+
+	t.Run("success without beta markers", func(t *testing.T) {
+		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults", nil, defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
 	})
 
 	t.Run("failure invalid json", func(t *testing.T) {

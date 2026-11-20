@@ -77,7 +77,6 @@ import {
   type PageCursor,
   type SessionApiResponse,
 } from '../types';
-import { AgentIdentityBindings } from '../identities/AgentIdentityBindings';
 import { agentDetailHref, compactEntityId, copyText, errorMessage, objectRecord } from '../utils';
 import {
   agentDetailDeploymentFromSearch,
@@ -365,8 +364,6 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
           </DropdownMenu>
         </div>
       </header>
-
-      <AgentIdentityBindings orgUuid={orgUuid} workspaceId={workspaceId} agentId={agentId} />
 
       <Tabs value={detailTab} onValueChange={(nextValue) => selectTab(nextValue as AgentDetailTab)} className="gap-0">
         <TabsList

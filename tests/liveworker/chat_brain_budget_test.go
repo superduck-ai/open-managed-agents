@@ -176,7 +176,7 @@ func verifyBudgetEvents(t *testing.T, history []chatEvent, input string) {
 			if updates > 0 {
 				continuation = append(continuation, ev.StopReason.Type)
 			}
-		case "span.model_request_start":
+		case "session.status_running", "span.model_request_start":
 			if updates > 0 {
 				continuation = append(continuation, ev.Type)
 			}
@@ -189,7 +189,7 @@ func verifyBudgetEvents(t *testing.T, history []chatEvent, input string) {
 	if !slices.Equal(inputs, []string{input}) || uses != 1 || results != 1 || updates != 1 {
 		t.Fatalf("inputs=%v tool uses=%d results=%d budget updates=%d", inputs, uses, results, updates)
 	}
-	if !slices.Equal(continuation, []string{"span.model_request_start", "BUDGET_TASK_DONE", "end_turn"}) {
+	if !slices.Equal(continuation, []string{"session.status_running", "span.model_request_start", "BUDGET_TASK_DONE", "end_turn"}) {
 		t.Fatalf("after budget update: %v", continuation)
 	}
 }

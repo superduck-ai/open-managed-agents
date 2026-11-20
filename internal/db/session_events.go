@@ -185,10 +185,49 @@ func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, sessi
 	if err := settleCompletedToolRequestTx(ctx, executor, session, primary, worker, event); err != nil {
 		return nil, err
 	}
+	if event.EventType == "span.model_request_start" && session.Status == "idle" && worker.WorkerStatus == "running" {
+		return resumeBudgetedModelStepTx(ctx, executor, session, primary, worker, event)
+	}
 	if maevents.CategoryFor(event.EventType) == maevents.CategorySessionStatus || maevents.CategoryFor(event.EventType) == maevents.CategoryThreadStatus {
 		return sessionStatusEventsTx(ctx, executor, session, primary, worker, event)
 	}
 	return []SessionEvent{event}, nil
+}
+
+func resumeBudgetedModelStepTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, event SessionEvent) ([]SessionEvent, error) {
+	if session.BudgetReachedAt != nil || (len(session.Budget) == 0 && session.BudgetRemovedAt == nil) {
+		return []SessionEvent{event}, nil
+	}
+	threadID := primary.ExternalID
+	if event.ThreadExternalID != nil {
+		threadID = *event.ThreadExternalID
+	}
+	previous, found, err := NewSessionEventMapper(executor).FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || previous.EventType != "session.thread_status_idle" {
+		return []SessionEvent{event}, nil
+	}
+	var status sessionStatusPayload
+	if err := jsonv2.Unmarshal(previous.Payload, &status); err != nil {
+		return nil, err
+	}
+	if status.StopReason == nil || status.StopReason.Type != "budget_reached" {
+		return []SessionEvent{event}, nil
+	}
+	running := SessionEvent{
+		ExternalID:     derivedStatusEventID(event.ExternalID, "session.thread_status_running"),
+		EventType:      "session.thread_status_running",
+		StatusThreadID: threadID,
+		CreatedAt:      event.CreatedAt,
+		ProcessedAt:    event.ProcessedAt,
+	}
+	batch, err := sessionStatusEventsTx(ctx, executor, session, primary, worker, running)
+	if err != nil {
+		return nil, err
+	}
+	return append(batch, event), nil
 }
 
 func idleSessionInterrupt(primary SessionThread, worker codeSessionInputStateRow, event SessionEvent) bool {

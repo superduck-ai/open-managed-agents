@@ -703,7 +703,7 @@ curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
   -d '{"budget":{"type":"limit","max_list_cost":{"amount":"4000","currency":"USD"}}}'
 ```
 
-Send `{"budget":null}` to remove the budget. Once removed, it cannot be re-added to that session; raise the cap instead if you need to retain a limit. Updating clears the reached marker; inspect the session status and send a new message as needed to continue work.
+Send `{"budget":null}` to remove the budget. Once removed, it cannot be re-added to that session; raise the cap instead if you need to retain a limit. If the DSH Brain is waiting for its next model request, raising or removing the budget lets it finish the original turn with its existing tool results.
 
 #### Inspect usage
 

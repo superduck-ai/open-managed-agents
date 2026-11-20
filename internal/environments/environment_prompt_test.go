@@ -44,6 +44,8 @@ func TestManagedAgentEnvironmentPromptDefaultsToUnrestricted(t *testing.T) {
 		"## Persistence",
 		"Outbound network access is unrestricted.",
 		"You can install other software",
+		"are already on PATH; call them by name",
+		"look up the package's real command name before changing PATH",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q:\n%s", want, prompt)

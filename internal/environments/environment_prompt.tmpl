@@ -48,3 +48,4 @@ When a request is blocked, do not retry it with another client or command; tell 
 {{if .Packages}}Preinstalled for this environment: {{.Packages}}.
 {{end -}}
 You can install other software with the usual package managers when the network policy allows it. Installs do not survive a sandbox replacement.
+Commands installed with apt, npm, pip, cargo, gem or go are already on PATH; call them by name. A command name can differ from its package name: when a command is not found, look up the package's real command name before changing PATH.

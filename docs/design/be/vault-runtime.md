@@ -206,7 +206,7 @@ vault:
 在这份配置中将 `server.addr` 设为 `127.0.0.1:18080`，然后从仓库根目录启动 OMA：
 
 ```bash
-CONFIG_FILE="$PWD/config/config.vault-local.yaml" go run .
+CONFIG_FILE="$PWD/config/config.vault-local.yaml" go run ./cmd/oma-server
 ```
 
 仅用临时测试凭据验证，结束后先归档这些凭据、停止该 OMA 进程，再停止 Vault：

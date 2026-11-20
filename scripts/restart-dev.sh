@@ -84,7 +84,7 @@ pane_process_state() {
       if (!p.cwd || Bun.spawnSync(["git", "-C", p.cwd, "rev-parse", "--show-toplevel"]).stdout.toString().trim() !== root) return false;
       const command = p.cmdline ?? p.argv?.join(" ") ?? "";
       if (command.includes(recipe)) return true;
-      if (recipe === "restart-server") return /go run \.|\/exe\/open-managed-agents/.test(command);
+      if (recipe === "restart-server") return /go run \.|\/exe\/(?:open-managed-agents|oma-server)(?: |$)/.test(command);
       if (recipe === "restart-brain") return /bun (?:dist\/main\.js|src\/main\.ts)/.test(command);
       return /(?:^|\/)vite(?: |$)/.test(command);
     });

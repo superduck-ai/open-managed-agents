@@ -115,7 +115,7 @@ if [[ "$BOUND" -eq 1 ]]; then
   SERVER_BINARY="$REPO_ROOT/tmp/dev-server/exe/open-managed-agents"
   if [[ "${1:-}" != --start-locked ]]; then
     mkdir -p "$(dirname "$SERVER_BINARY")"
-    (cd "$REPO_ROOT" && go build -o "$SERVER_BINARY" .)
+    (cd "$REPO_ROOT" && go build -o "$SERVER_BINARY" ./cmd/oma-server)
     cd "$REPO_ROOT"
     exec go run ./cmd/dev-init start-locked bash "$SCRIPT_DIR/restart-server.sh" --start-locked
   fi
@@ -155,7 +155,7 @@ echo "Starting claude-api-server with $CONFIG_FILE in foreground"
 echo "Press Ctrl+C to stop"
 cd "$REPO_ROOT"
 if [[ "$BOUND" -eq 0 ]]; then
-  exec go run .
+  exec go run ./cmd/oma-server
 fi
 "$SERVER_BINARY" 3>&- &
 SERVER_PID=$!

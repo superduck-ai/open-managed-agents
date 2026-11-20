@@ -35,6 +35,9 @@ func (h *Handler) sessionUpdatedEvent(session db.Session, fields map[string]any)
 		return db.SessionEvent{}, err
 	}
 	now := time.Now().UTC()
+	if metadata, ok := fields["metadata"].(map[string]any); ok && len(metadata) == 0 {
+		delete(fields, "metadata")
+	}
 	fields["id"] = eventID
 	fields["processed_at"] = now.Format(time.RFC3339)
 	fields["type"] = "session.updated"

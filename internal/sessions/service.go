@@ -14,7 +14,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -335,86 +334,22 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	sessionID := chi.URLParam(r, "session_id")
 
-	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
-	if !found {
-		return mapSessionLoadError(db.ErrNotFound, sessionID)
-	}
-	if current.ArchivedAt != nil || current.Status != "idle" {
-		return invalidRequest(errors.New("session must be idle and unarchived to update"))
-	}
 	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if len(body.VaultIDs) > 0 {
-		return invalidRequest(errors.New("vault_ids updates are not supported"))
-	}
-	next := current
-	if len(body.Title) > 0 {
-		next.Title, err = nullableStringFromRaw(body.Title, "title")
-		if err != nil {
-			return invalidRequest(err)
+	var updated db.Session
+	for range 3 {
+		updated, err = h.updateSession(r, principal, sessionID, body)
+		if !errors.Is(err, db.ErrSessionUpdateConflict) {
+			break
 		}
 	}
-	if len(body.Metadata) > 0 {
-		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, body.Metadata, validateMetadataEntries)
-		if err != nil {
-			return invalidRequest(err)
+	if err != nil {
+		if errors.Is(err, db.ErrSessionUpdateConflict) {
+			return sessionUpdateConflict(err)
 		}
-	}
-	if len(body.Agent) > 0 {
-		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		env, err := h.db.GetEnvironment(r.Context(), current.WorkspaceUUID, current.EnvironmentExternalID)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return environmentNotFound(current.EnvironmentExternalID, err)
-			}
-			return internalError("Could not update session", fmt.Errorf("get environment: %w", err))
-		}
-		if err := webtools.ValidateSession(env.Config, next.AgentSnapshot); err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Budget) > 0 {
-		if err := h.applyBudgetUpdate(r, &next, body.Budget); err != nil {
-			return err
-		}
-	}
-	// An agent-only patch must not smuggle an unpriced model into a session
-	// that still carries a budget: unpriced requests accrue no cost, so the
-	// budget would silently never trigger.
-	if len(body.Agent) > 0 && len(next.Budget) > 0 {
-		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
-			return invalidRequest(err)
-		}
-	}
-	updated := current
-	var changed bool
-	if len(changedSessionFields(current, next)) > 0 {
-		next.UpdatedAt = time.Now().UTC()
-		setTitle := len(body.Title) > 0
-		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next, setTitle)
-		if err != nil {
-			return mapSessionLoadError(err, sessionID)
-		}
-		if !setTitle {
-			current.Title = updated.Title
-		}
-		if fields := changedSessionFields(current, updated); changed && len(fields) > 0 {
-			event, err := h.sessionUpdatedEvent(updated, fields)
-			if err == nil {
-				h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
-			}
-		}
-	}
-	if changed {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil, updated.UpdatedAt)
+		return err
 	}
 	response, err := h.responseFromSession(r, updated, true)
 	if err != nil {
@@ -422,6 +357,108 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
+}
+
+func (h *Handler) updateSession(r *http.Request, principal auth.Principal, sessionID string, body *sessionMutationRequest) (db.Session, error) {
+	ctx := r.Context()
+	current, found, err := h.db.GetSession(ctx, principal.WorkspaceUUID, sessionID)
+	if err != nil {
+		return db.Session{}, mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return db.Session{}, mapSessionLoadError(db.ErrNotFound, sessionID)
+	}
+	next, err := h.patchSession(r, current, body)
+	if err != nil {
+		return db.Session{}, err
+	}
+	var replacementLimit int64
+	if len(body.Budget) != 0 {
+		replacementLimit, _ = sessionBudgetAmount(next)
+	}
+	fields := changedSessionFields(current, next)
+	if len(fields) == 0 {
+		if err := h.db.CheckSessionBudget(ctx, current, replacementLimit); err != nil {
+			return db.Session{}, mapSessionLoadError(err, sessionID)
+		}
+		return current, nil
+	}
+	event, err := h.sessionUpdatedEvent(next, fields)
+	if err != nil {
+		return db.Session{}, internalError("Could not build session update event", err)
+	}
+	events := []db.SessionEvent{event}
+	prepared, err := h.eventPayloads.PreparePublic(ctx, current.OrganizationUUID, current.WorkspaceUUID, events)
+	if err != nil {
+		return db.Session{}, internalError("Could not prepare session update event", err)
+	}
+	updated, stored, err := h.db.UpdateSession(ctx, next, prepared[0], replacementLimit)
+	if errors.Is(err, db.ErrSessionUpdateConflict) {
+		return db.Session{}, err
+	}
+	if err != nil {
+		return db.Session{}, mapSessionLoadError(err, sessionID)
+	}
+	stored.Payload = event.Payload
+	h.publishSessionEvents(ctx, []db.SessionEvent{stored})
+	h.enqueuePrincipalWebhook(ctx, principal, stored.EventType, updated.ExternalID, nil, updated.UpdatedAt)
+	return updated, nil
+}
+
+func (h *Handler) patchSession(r *http.Request, current db.Session, body *sessionMutationRequest) (db.Session, error) {
+	if current.ArchivedAt != nil || current.Status == "terminated" {
+		return db.Session{}, invalidRequest(errSessionUpdateInactive)
+	}
+	if len(body.Agent) > 0 && current.Status != "idle" {
+		return db.Session{}, invalidRequest(errSessionAgentUpdateRequiresIdle)
+	}
+	if len(body.VaultIDs) > 0 {
+		return db.Session{}, invalidRequest(errSessionVaultUpdateUnsupported)
+	}
+	if len(body.EnvironmentID) > 0 || len(body.Resources) > 0 {
+		return db.Session{}, invalidRequest(errSessionUpdateCreateOnly)
+	}
+	next := current
+	var err error
+	if len(body.Title) > 0 {
+		next.Title, err = sessionUpdateTitle(body.Title)
+		if err != nil {
+			return db.Session{}, invalidRequest(err)
+		}
+	}
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, body.Metadata, validateMetadataEntries)
+		if err != nil {
+			return db.Session{}, invalidRequest(err)
+		}
+	}
+	if len(body.Agent) > 0 {
+		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
+		if err != nil {
+			return db.Session{}, invalidRequest(err)
+		}
+		env, err := h.db.GetEnvironment(r.Context(), current.WorkspaceUUID, current.EnvironmentExternalID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return db.Session{}, environmentNotFound(current.EnvironmentExternalID, err)
+			}
+			return db.Session{}, internalError("Could not update session", fmt.Errorf("get environment: %w", err))
+		}
+		if err := webtools.ValidateSession(env.Config, next.AgentSnapshot); err != nil {
+			return db.Session{}, invalidRequest(err)
+		}
+	}
+	if len(body.Budget) > 0 {
+		if err := h.applyBudgetUpdate(r, &next, body.Budget); err != nil {
+			return db.Session{}, err
+		}
+	}
+	if len(body.Agent) > 0 && len(next.Budget) > 0 {
+		if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
+			return db.Session{}, invalidRequest(err)
+		}
+	}
+	return next, nil
 }
 
 // applyBudgetUpdate mutates next per the session budget update contract: a
@@ -456,14 +493,6 @@ func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.
 	// otherwise introduce an unpriced model that silently accrues no cost.
 	if err := h.codeSessions.Billing().ValidateSnapshot(r.Context(), next.OrganizationUUID, next.WorkspaceUUID, next.AgentSnapshot); err != nil {
 		return invalidRequest(err)
-	}
-	totals, err := h.db.SumSessionUsageTotals(r.Context(), next.WorkspaceUUID, next.ExternalID)
-	if err != nil {
-		return internalError("Could not update session", fmt.Errorf("sum session usage: %w", err))
-	}
-	spent := billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds)
-	if budget.MaxListCost.Amount <= spent {
-		return invalidRequest(errors.New("budget.max_list_cost must be greater than the session's consumed list cost"))
 	}
 	encoded, err := httpapi.MarshalRaw(budget)
 	if err != nil {

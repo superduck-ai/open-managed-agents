@@ -22,7 +22,18 @@
 
 ## OMA 对齐决策
 
-当前能作为兼容目标的行为是：创建 Session 时接受可选 `title`，未提供时允许返回 `null`；客户端可通过 Update Session 设置或清除标题，并从 Session 资源及 `session.updated` 观察变化。OMA 已有创建、更新与页面空标题回退路径；更新路由目前要求 Session 为 `idle`，这一额外限制应另行核对官方 Update Session 状态约束。不能因为 Claude Code 内部产生了标题辅助响应，就将其文本提升为 Managed Agents 的 Session 标题，也不能把它作为 Agent 对用户的回答。
+控制台编辑已有会话时，只提交用户改动的标题和预算。清空标题发送 `{"title":null}`。后端在同一个数据库事务中保存修改和 `session.updated`，提交后广播事件。重复提交相同值不会产生第二条事件。标题变化可通过会话查询、事件历史和 SSE 观察。
+
+2026-11-19 核对的字段如下。[Update Session](https://platform.claude.com/docs/en/api/beta/sessions/update) · [Session operations](https://platform.claude.com/docs/en/managed-agents/session-operations) · [List Events](https://platform.claude.com/docs/en/api/beta/sessions/events/list)
+
+| 字段 | OMA 已有会话的更新方式 |
+| --- | --- |
+| `title` | 未归档、未终止的会话可以改名，运行中也可以。接受 1 至 500 个 Unicode 字符或 `null`。 |
+| `metadata` | API 支持按键更新。非空字符串设置值，`null` 删除键。OMA 也接受空字符串删除键。清空后仍产生更新事件，事件省略空的 `metadata`。 |
+| `budget` | 有预算的会话可以调整上限或移除预算。新上限必须高于已用费用。没有预算或已移除预算的会话不能新增预算。 |
+| `agent.tools`、`agent.mcp_servers` | 空闲时可通过 API 替换对应列表，空数组清空，省略保留。修改只作用于本会话。 |
+| Agent ID、模型、系统提示、技能、环境、保险库 | 创建会话时确定。更新接口保留 `vault_ids` 字段，当前会拒绝设置它。 |
+| `resources` | 已有会话通过专用资源接口管理挂载，例如通过 `POST /v1/sessions/{session_id}/resources` 添加文件。[Add Session Resource](https://platform.claude.com/docs/en/api/beta/sessions/resources/add) |
 
 ## OMA 首条消息自动命名
 

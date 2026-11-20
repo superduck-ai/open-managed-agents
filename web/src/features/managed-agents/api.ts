@@ -14,6 +14,7 @@ import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } 
 import { sessionFileResourcePayload } from './sessions/file-resource-form';
 import { managedResourcesBody } from './resources/git-resource';
 import { budgetCreateBody, budgetUpdateBody } from './resources/budget';
+import { sessionEditBody } from './sessions/sessionEdit';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
@@ -1787,12 +1788,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
   const description = values.description.trim();
   switch (section) {
     case 'sessions':
-      return {
-        title: name || null,
-        agent: values.agentId || undefined,
-        environment_id: values.environmentId || undefined,
-        ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
-      };
+      return sessionEditBody(values);
     case 'deployments':
       return {
         name,

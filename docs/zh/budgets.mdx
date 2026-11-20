@@ -41,7 +41,7 @@ curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
   -d '{"budget":{"type":"limit","max_list_cost":{"amount":"4000","currency":"USD"}}}'
 ```
 
-发送 `{"budget":null}` 可移除预算。移除后不能为该会话重新添加预算；如需继续限制成本，请提高上限。更新会清除触顶标记；请检查会话状态并按需发送新消息继续工作。
+发送 `{"budget":null}` 可移除预算。移除后不能为该会话重新添加预算；如需继续限制成本，请提高上限。如果 DSH Brain 因预算触顶正在等待下一次模型请求，提高或移除预算后，它会沿用已有工具结果继续原任务，无需再发消息。
 
 ## 查看使用量
 

@@ -43,15 +43,16 @@ var requestHeadersToRemove = map[string]struct{}{
 
 // responseHeadersToRemove 防止把仅对上游连接有效的 hop-by-hop header 返回给客户端。
 var responseHeadersToRemove = map[string]struct{}{
-	"Connection":          {},
-	"Keep-Alive":          {},
-	"Proxy-Authenticate":  {},
-	"Proxy-Authorization": {},
-	"Proxy-Connection":    {},
-	"Te":                  {},
-	"Trailer":             {},
-	"Transfer-Encoding":   {},
-	"Upgrade":             {},
+	codesessions.SessionBudgetHeader: {},
+	"Connection":                     {},
+	"Keep-Alive":                     {},
+	"Proxy-Authenticate":             {},
+	"Proxy-Authorization":            {},
+	"Proxy-Connection":               {},
+	"Te":                             {},
+	"Trailer":                        {},
+	"Transfer-Encoding":              {},
+	"Upgrade":                        {},
 }
 
 // Handler 校验顶层 model 后按原样转发请求体。
@@ -178,6 +179,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		if errors.Is(err, db.ErrSessionBudgetReached) {
 			call.failBeforeProxy("budget_reached")
 			w.Header().Set("X-Should-Retry", "false")
+			w.Header().Set(codesessions.SessionBudgetHeader, "reached")
 		} else {
 			call.failBeforeProxy("begin_model_request")
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)

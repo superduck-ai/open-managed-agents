@@ -151,10 +151,18 @@ func createPublicChat(t *testing.T, e *liveEnv) *liveSession {
 
 func createPublicChatWithTitle(t *testing.T, e *liveEnv, title string) *liveSession {
 	t.Helper()
+	return createPublicChatWithBudget(t, e, title, nil)
+}
+
+func createPublicChatWithBudget(t *testing.T, e *liveEnv, title string, budget any) *liveSession {
+	t.Helper()
 	var session struct {
 		ID string `json:"id"`
 	}
-	body := map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}
+	body := map[string]any{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}
+	if budget != nil {
+		body["budget"] = budget
+	}
 	if title != "" {
 		body["title"] = title
 	}

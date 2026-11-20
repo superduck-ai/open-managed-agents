@@ -6,6 +6,7 @@
 | 真实模型的六个内置工具与持久调用结果 | [Brain](brain.md#真实模型的六个内置工具) | `chat.brain-tools`，显式私有模型配置 |
 | 消息图片或 Read 图片无法被视觉模型识别 | [Brain 图片](brain.md#真实视觉模型与图片) | `chat brain-images`，显式私有模型配置 |
 | DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
+| 提高或移除预算后原任务停住 | [会话预算恢复](brain.md#会话预算恢复) | `chat brain-budget` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
 | Brain owner replacement invalidates Bash HTTPS proxy credentials | [Rust Brain](brain.md) | `chat brain-proxy` with actual public HTTPS |
 | Brain system prompt composition or Skill discovery and loading | [Rust Brain](brain.md) | `chat brain-skills` |

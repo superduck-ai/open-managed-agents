@@ -1,4 +1,4 @@
-package main
+package oma
 
 import (
 	"context"
@@ -19,22 +19,22 @@ import (
 
 const sessionPortForwardShutdownTimeout = 10 * time.Second
 
-type sessionPortRuntime struct {
-	settings *sessionports.Settings
-	registry *porttunnel.Registry
-	router   porttunnel.Router
+type SessionPortRuntime struct {
+	Settings *sessionports.Settings
+	Registry *porttunnel.Registry
+	Router   porttunnel.Router
 }
 
-func openSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis.Client, natsConnection *nats.Conn, logger *slog.Logger) (sessionPortRuntime, error) {
+func OpenSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis.Client, natsConnection *nats.Conn, logger *slog.Logger) (SessionPortRuntime, error) {
 	settings, err := sessionports.New(cfg, logger.With("component", "session_port_gateway"))
 	if err != nil || !settings.Enabled() {
-		return sessionPortRuntime{settings: settings}, err
+		return SessionPortRuntime{Settings: settings}, err
 	}
 	owner := cfg.SessionPorts.InternalAdvertiseAddr + "#" + uuid.NewString()
 	owners := porttunnel.NewRedisOwnerStore(redisClient)
 	registry := porttunnel.NewRegistry(owner, owners, porttunnel.NewNATSOnlineNotifier(natsConnection), logger.With("component", "session_port_tunnel"))
 	go registry.Run(ctx)
-	runtime := sessionPortRuntime{settings: settings, registry: registry}
+	runtime := SessionPortRuntime{Settings: settings, Registry: registry}
 	if !cfg.SessionPorts.ForwardingEnabled() {
 		return runtime, nil
 	}
@@ -42,7 +42,7 @@ func openSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis
 	signer := porttunnel.NewForwardSigner(settings.ForwardKey())
 	listener, err := net.Listen("tcp", cfg.SessionPorts.InternalListenAddr)
 	if err != nil {
-		return sessionPortRuntime{}, fmt.Errorf("listen session port forwarding: %w", err)
+		return SessionPortRuntime{}, fmt.Errorf("listen session port forwarding: %w", err)
 	}
 	server := porttunnel.NewForwardServer(registry, signer, cfg.SessionPorts.MaxRequestBodyBytes, cfg.SessionPorts.ResponseIdleTimeout, logger).HTTPServer()
 	go func() {
@@ -60,6 +60,6 @@ func openSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis
 			_ = server.Close()
 		}
 	}()
-	runtime.router = porttunnel.NewClusterRouter(registry, owners, porttunnel.NewForwardClient(signer), logger)
+	runtime.Router = porttunnel.NewClusterRouter(registry, owners, porttunnel.NewForwardClient(signer), logger)
 	return runtime, nil
 }

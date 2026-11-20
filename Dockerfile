@@ -22,7 +22,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN ./scripts/generate-go.sh
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-server .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-server ./cmd/oma-server
 
 # ---- 前端构建 (Bun) ---------------------------------------------------------
 FROM ${REGISTRY}/node:22 AS web-builder

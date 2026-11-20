@@ -116,7 +116,7 @@ sequenceDiagram
 
 没有配置队列时（单元测试），观察者在当前 goroutine 里同步循环结算。
 
-职责划分：`Handler` 只处理 HTTP 请求校验、读取与响应，依赖的 `Store` 不再包含运行期方法；`TaskRunner` 负责启动、取消、观察者、结算、巡检和评分，依赖更窄的 `RunnerStore` 与 `SessionControl`（启动、归档会话）。`main.go` 创建唯一的 `TaskRunner` 交给 River 任务和 API 组装层共用，API 层再注入会话控制并把它注册为会话事件观察者。评分模型客户端仍在 `model.go` 里按 Messages 和 Chat Completions 两种后端拼请求；平台没有其他单次补全调用方可以共用，暂不抽公共客户端。
+职责划分：`Handler` 只处理 HTTP 请求校验、读取与响应，依赖的 `Store` 不再包含运行期方法；`TaskRunner` 负责启动、取消、观察者、结算、巡检和评分，依赖更窄的 `RunnerStore` 与 `SessionControl`（启动、归档会话）。`cmd/oma-server/main.go` 创建唯一的 `TaskRunner` 交给 River 任务和 API 组装层共用，API 层再注入会话控制并把它注册为会话事件观察者。评分模型客户端仍在 `model.go` 里按 Messages 和 Chat Completions 两种后端拼请求；平台没有其他单次补全调用方可以共用，暂不抽公共客户端。
 
 ## 数据
 

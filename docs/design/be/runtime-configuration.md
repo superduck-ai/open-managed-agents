@@ -118,7 +118,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 1. 保留旧 `.env` 的安全备份，不要提交到 Git。
 2. 复制 `config/config.example.yaml`，迁移实际覆盖值，并将运行配置权限限制为部署用户可读。
-3. 使用 `CONFIG_FILE=/absolute/path/config.yaml go run .` 或等价部署命令验证新版本，再切换流量。
+3. 使用 `CONFIG_FILE=/absolute/path/config.yaml go run ./cmd/oma-server` 或等价部署命令验证新版本，再切换流量。
 4. 验证完成后从部署系统移除旧业务环境变量，避免形成两份看似有效的配置来源。
 
 需要回滚时，停止新版本，重新部署仍支持 `.env` 的旧二进制或镜像，并恢复升级前的环境变量与启动方式。仅删除 YAML 不能让当前版本回退到 `.env`。

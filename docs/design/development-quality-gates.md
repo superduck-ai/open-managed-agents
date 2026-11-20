@@ -25,7 +25,7 @@
 ## 配置与执行
 
 - yourbatis 根据 `internal/db/*.xml` 生成的 `*.sqlmap.gen.go` 不提交；`scripts/generate-go.sh` 是统一生成入口。无参数调用会先删除 `internal/db` 下已有的 `*.sqlmap.gen.go`，再执行 `go generate ./internal/db`，避免已删除 Mapper 留下的 ignored 生成文件继续参与编译。Go lint、死代码、复杂度、测试、CI 和 Docker 构建继续使用该全量入口。
-- 开发重启使用 `scripts/generate-go.sh --cached`，由重启脚本调用一次；`just server` 和 `just restart-server` 不再另设生成前置步骤。检查通过后才停止旧服务，因此生成失败时旧服务继续运行。其他 Go 业务代码的编译仍由 `go run .` 完成。
+- 开发重启使用 `scripts/generate-go.sh --cached`，由重启脚本调用一次；`just server` 和 `just restart-server` 不再另设生成前置步骤。检查通过后才停止旧服务，因此生成失败时旧服务继续运行。其他 Go 业务代码的编译仍由 `go run ./cmd/oma-server` 完成。
 - `cmd/generate-go` 只依赖 Go 标准库。缓存输入包含 DB 包非测试、非 Mapper 生成的 Go 源码和 XML、DB 与生成器的本地传递依赖源码、模块文件、workspace 配置、生成入口源码及稳定的 Go 构建环境。通过 `go list -deps -e -json` 发现依赖；无法解析时全量生成且不保存缓存。摘要包含路径和内容，能识别新增、删除和保留原修改时间的修改。
 - 缓存同时保存 `internal/db` 下全部 `*.sqlmap.gen.go` 的路径与内容摘要。产物缺失、修改或出现多余文件时缓存失效，先清空全部旧产物再全量生成。缓存保存在当前 worktree 的 ignored 路径 `tmp/go-generation/cache.json`，不跨 worktree 共享。成功的全量生成也可以建立缓存。
 - 两种模式均通过操作系统文件锁串行执行；生成子进程继承锁，即使父进程被强制终止，也不会在旧生成进程退出前允许另一个任务生成。进程退出后锁自动释放。开始重建前删除旧缓存；仅生成成功且前后输入摘要一致时原子保存新缓存。收到中断或终止信号时停止生成子进程组。生成失败、中断、依赖解析失败或生成期间输入变化都不会留下有效缓存。使用 `GOFLAGS` 指定 `-overlay` 或 `-modfile` 时保守地禁用缓存，继续全量生成。

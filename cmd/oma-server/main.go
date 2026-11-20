@@ -15,6 +15,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/riverqueue/river"
+	"github.com/superduck-ai/open-managed-agents"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
@@ -141,7 +142,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	}
 	defer tunnelBroker.Close()
 
-	sessionPorts, err := openSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
+	sessionPorts, err := oma.OpenSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
 	if err != nil {
 		return fmt.Errorf("configure session ports: %w", err)
 	}
@@ -181,7 +182,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
 		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).
-		WithSessionPorts(sessionPorts.settings)
+		WithSessionPorts(sessionPorts.Settings)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
@@ -254,9 +255,9 @@ func run(bootstrap *slog.Logger) (err error) {
 		ToolCallNotifications:  natsConnection,
 		ToolCallContext:        ctx,
 		EvaluationRunner:       evaluationRunner,
-		SessionPorts:           sessionPorts.settings,
-		SessionPortRegistry:    sessionPorts.registry,
-		SessionPortRouter:      sessionPorts.router,
+		SessionPorts:           sessionPorts.Settings,
+		SessionPortRegistry:    sessionPorts.Registry,
+		SessionPortRouter:      sessionPorts.Router,
 		InvitationJobs:         jobClient,
 		Prebuilds:              prebuilds,
 		SandboxLifecycle:       lifecycle,

@@ -72,13 +72,13 @@ func serviceCommand(root, command string) bool {
 		return false
 	}
 	executable := filepath.Base(fields[0])
-	if executable == "open-managed-agents" && strings.Contains(fields[0], "/exe/") {
+	if (executable == "open-managed-agents" || executable == "oma-server") && strings.Contains(fields[0], "/exe/") {
 		return true
 	}
 	arguments := strings.Join(fields[1:], " ")
 	switch executable {
 	case "go":
-		return arguments == "run ."
+		return arguments == "run ." || arguments == "run ./cmd/oma-server"
 	case "bun", "node":
 		if arguments == "run dev" || strings.HasPrefix(arguments, "run dev -- ") {
 			return true

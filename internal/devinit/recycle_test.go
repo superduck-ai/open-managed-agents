@@ -212,7 +212,7 @@ func TestRecycleServiceCommandOwnership(t *testing.T) {
 			t.Fatalf("unexpected service: %s", command)
 		}
 	}
-	for _, command := range []string{"go run .", "bun dist/main.js", "bun run src/main.ts", "node /fixture/web/node_modules/.bin/vite --port 61000", "bun run dev -- --host 127.0.0.1", "/tmp/go-build123/b001/exe/open-managed-agents"} {
+	for _, command := range []string{"go run .", "go run ./cmd/oma-server", "bun dist/main.js", "bun run src/main.ts", "node /fixture/web/node_modules/.bin/vite --port 61000", "bun run dev -- --host 127.0.0.1", "/tmp/go-build123/b001/exe/open-managed-agents", "/tmp/go-build123/b001/exe/oma-server"} {
 		if !serviceCommand(root, command) {
 			t.Fatalf("missing service: %s", command)
 		}

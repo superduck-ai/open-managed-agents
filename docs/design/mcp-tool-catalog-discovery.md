@@ -400,7 +400,7 @@ catalog handler 或浏览器。
 - `internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql`：最终全局表。
 - `web/src/features/managed-agents/agents/tools/`：Directory、catalog API/query、展示模型与卡片。
 
-MCP catalog 不再依赖 `jobs` 表，`main.go` 不启动 discovery worker，Agent handler 不注入 Enqueuer，也不在 create/update 后预热。
+MCP catalog 不再依赖 `jobs` 表，`cmd/oma-server/main.go` 不启动 discovery worker，Agent handler 不注入 Enqueuer，也不在 create/update 后预热。
 
 ## 14. 测试与验收
 

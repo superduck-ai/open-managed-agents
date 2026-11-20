@@ -621,7 +621,7 @@ Store 仅在整体事务成功后返回有效 changed；归档未命中时使用
 3. `internal/db/vaults.go` 和两个 Vault Mapper：重复归档、并发写入与级联返回标识；`internal/vaults/handler.go` 仅在成功后通知。
 4. `internal/vaults/oauth_refresh.go`：永久错误分类和并发兜底顺序；从 API 组装追踪到 Injector，确认仍使用原有 Enqueuer。
 5. `internal/deployments/store.go` 与 `webhooks.go`：两条入口提交后通知，启动前依赖注入；`tests/deployment_webhooks_test.go` 覆盖实际 River worker 投递与事务回滚。
-6. 运行事件矩阵，再按第一阶段顺序验收控制台。启动隔离后端使用 `CONFIG_FILE=/path/to/test-config.yaml go run .`（`127.0.0.1:18080`），前端使用 `PORT=4173 API_PORT=18080 just restart-web`；测试后停止这些进程。不要在常用数据库执行测试清理。
+6. 运行事件矩阵，再按第一阶段顺序验收控制台。启动隔离后端使用 `CONFIG_FILE=/path/to/test-config.yaml go run ./cmd/oma-server`（`127.0.0.1:18080`），前端使用 `PORT=4173 API_PORT=18080 just restart-web`；测试后停止这些进程。不要在常用数据库执行测试清理。
 
 
 ## Deployment 五项资源事件（2026-09-21）

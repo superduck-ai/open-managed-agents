@@ -183,7 +183,11 @@ func (e *environment) start(ctx context.Context, images map[string]string) error
 	if err := loggedCommand(ctx, buildRoot, e.env(), filepath.Join(e.directory, "build.log"), 5*time.Minute, "./scripts/generate-go.sh"); err != nil {
 		return err
 	}
-	if err := loggedCommand(ctx, buildRoot, e.env(), filepath.Join(e.directory, "build.log"), 10*time.Minute, "go", "build", "-o", filepath.Join(e.directory, "server"), "."); err != nil {
+	serverPackage := "./cmd/oma-server"
+	if _, err := os.Stat(filepath.Join(buildRoot, serverPackage)); os.IsNotExist(err) {
+		serverPackage = "."
+	}
+	if err := loggedCommand(ctx, buildRoot, e.env(), filepath.Join(e.directory, "build.log"), 10*time.Minute, "go", "build", "-o", filepath.Join(e.directory, "server"), serverPackage); err != nil {
 		return err
 	}
 	log, err := os.OpenFile(filepath.Join(e.directory, "server.log"), os.O_CREATE|os.O_WRONLY, 0o600)

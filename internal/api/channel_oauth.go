@@ -51,7 +51,13 @@ func (s *Server) handleChannelOAuthStart(w http.ResponseWriter, r *http.Request)
 	if cookie, err := r.Cookie("oma_channel_oauth"); err == nil && len(cookie.Value) >= 32 {
 		browser = cookie.Value
 	}
-	link, err := s.channelService.BeginOAuth(r.Context(), chi.URLParam(r, "channel_id"), chi.URLParam(r, "session_id"), chi.URLParam(r, "request_id"), channelOAuthBrowserHash(browser))
+	var link string
+	var err error
+	if id := chi.URLParam(r, "input_id"); id != "" {
+		link, err = s.channelService.BeginPairingOAuth(r.Context(), chi.URLParam(r, "channel_id"), id, channelOAuthBrowserHash(browser))
+	} else {
+		link, err = s.channelService.BeginOAuth(r.Context(), chi.URLParam(r, "channel_id"), chi.URLParam(r, "session_id"), chi.URLParam(r, "request_id"), channelOAuthBrowserHash(browser))
+	}
 	if err != nil {
 		http.Error(w, "授权请求不可用，请回到原对话重新发起。", http.StatusConflict)
 		return
@@ -87,6 +93,9 @@ func (s *Server) completeChannelOAuthIdentity(w http.ResponseWriter, r *http.Req
 func (s *Server) resumeChannelOAuth(ctx context.Context, workspaceUUID string, continuation *db.OAuthContinuation, credentialID string) error {
 	if continuation == nil {
 		return nil
+	}
+	if continuation.InputUUID != "" {
+		return s.channelService.CompletePairingOAuth(ctx, workspaceUUID, continuation, credentialID)
 	}
 	target, result, err := s.channelService.OAuthCompletion(ctx, workspaceUUID, continuation, credentialID)
 	if err != nil {

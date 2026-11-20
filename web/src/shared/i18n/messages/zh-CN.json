@@ -3155,6 +3155,8 @@
   "managedAgents.channels.toolsHint": "在回复中展示工具调用",
   "managedAgents.channels.threads": "话题归属",
   "managedAgents.channels.threadsHint": "开启后机器人在话题内回复，每个话题一个独立会话；关闭则直接发在群里，整个群共用一个会话。",
+  "managedAgents.channels.pairingProvider": "私聊配对授权",
+  "managedAgents.channels.noPairingProvider": "无需授权",
   "managedAgents.channels.mode": "渠道模式",
   "managedAgents.channels.open": "开放模式",
   "managedAgents.channels.pairing": "配对模式",

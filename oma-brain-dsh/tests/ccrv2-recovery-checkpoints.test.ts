@@ -6,14 +6,14 @@ import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
-import { Backend, textEvents, toolEvents } from "./backend.ts";
+import { Backend, textEvents } from "./backend.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function mount(backend: Backend, beforeOpen?: (session: ReturnType<typeof createOmaSession>) => void) {
+async function mount(backend: Backend) {
   await backend.ready;
   const ctx = new Context();
   const api = new OmaApi(backend.url);
@@ -27,45 +27,27 @@ async function mount(backend: Backend, beforeOpen?: (session: ReturnType<typeof 
     finally { await ctx.fiber.dispose(); }
   };
   cleanups.push(close);
-  beforeOpen?.(session);
   await session.open();
   return { session, close };
 }
 
-for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
+for (const phase of ["requested", "dispatch", "removed-tool", "removed-before-oauth"] as const) {
   test(`native ${phase} tool recovery persists once across another restart`, async () => {
     const backend = new Backend();
     cleanups.push(async () => { backend.stop(); });
-    const friday = phase === "friday-oauth";
-    const name = friday ? "Friday" : "Bash";
-    const args = friday ? '{"args":["app","list"]}' : '{"command":"write"}';
-    if (friday) {
-      backend.modelScript = [toolEvents("echo check", "followup-call"), textEvents("恢复查询完成")];
-      const route = backend.route.bind(backend);
-      backend.route = request => request.url.endsWith("/interrupted-call/oauth-credential?resume=1")
-        ? Promise.resolve(Response.json({ authorized: true, placeholder: "oma_ph_test" })) : route(request);
-    }
+    const removed = phase.startsWith("removed");
+    const name = removed ? "RemovedTool" : "Bash";
+    const args = removed ? '{"args":["app","list"]}' : '{"command":"write"}';
     const first = await mount(backend);
     const callId = "interrupted-call";
     await seedInterruptedTool(first.session, "interrupted-input", callId, { name, arguments: args }, phase !== "requested");
-    if (friday) (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
+    if (phase === "removed-tool") (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
     await first.session.checkpoint();
     await first.close();
-    let decisions = 0;
-    const recovered = await mount(backend, session => {
-      if (!friday) return;
-      backend.onApproval = async payload => {
-        decisions++;
-        expect(session.initializing).toBe(true);
-        await session.receive("followup-decision", { type: "control_response", response: {
-          subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
-        } });
-      };
-    });
-    expect(decisions).toBe(friday ? 1 : 0);
+    const recovered = await mount(backend);
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
-    expect(results).toHaveLength(friday ? 2 : 1);
-    expect(results[0]?.data.error?.code).toBe(friday ? undefined : "TOOL_NOT_STARTED");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.data.error?.code).toBe(phase === "removed-before-oauth" ? "TOOL_OUTCOME_UNKNOWN" : "TOOL_NOT_STARTED");
     expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
       .find(block => block.type === "tool_result" && block.tool_use_id === callId);
@@ -74,45 +56,13 @@ for (const phase of ["requested", "dispatch", "friday-oauth"] as const) {
     const persisted = () => [...backend.privateLog.values()].filter(payload => payload.data?.type !== "session/end-seed");
     const stored = structuredClone(persisted());
     const reopened = await mount(backend);
-    expect(reopened.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result")).toHaveLength(friday ? 2 : 1);
+    expect(reopened.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result")).toHaveLength(1);
     await reopened.close();
     expect(persisted()).toEqual(stored);
-    expect(backend.requests).toHaveLength(friday ? 2 : 0);
-    expect(backend.executions).toHaveLength(friday ? 2 : 0);
+    expect(backend.requests).toHaveLength(0);
+    expect(backend.executions).toHaveLength(0);
   });
 }
-
-test("Friday 恢复保留临时授权错误和已提交但无法确认的取消结果", async () => {
-  const backend = new Backend();
-  cleanups.push(async () => { backend.stop(); });
-  const first = await mount(backend);
-  await seedInterruptedTool(first.session, "input", "friday-call", { name: "Friday", arguments: '{"args":["app","list"]}' });
-  await first.session.checkpoint();
-  await first.close();
-
-  const route = backend.route.bind(backend);
-  let available = false;
-  let submitted = false;
-  let interrupt: () => void = () => {};
-  backend.route = async request => {
-    const url = new URL(request.url);
-    if (url.pathname.endsWith("/oauth-credential"))
-      return available ? Response.json({ authorized: true, placeholder: "oma_ph_test" }) : new Response(null, { status: 503 });
-    if (url.pathname.endsWith("/tool-calls") && request.method === "POST") submitted = true;
-    if (submitted && url.pathname.endsWith("/friday-call") && request.method === "GET") interrupt();
-    if (url.pathname.endsWith("/friday-call/cancel")) return new Response(null, { status: 409 });
-    return route(request);
-  };
-  await expect(mount(backend)).rejects.toThrow();
-  expect(submitted).toBe(false);
-  available = true;
-  const recovered = await mount(backend, session => {
-    interrupt = () => { void session.receive("stop", { type: "user.interrupt" }); };
-  });
-  const result = recovered.session.agent.session.snapshotEvents().find(event => event.type === "tool/result");
-  expect(result?.data.error?.code).toBe("TOOL_OUTCOME_UNKNOWN");
-  expect(backend.executions).toHaveLength(1);
-});
 
 test("publication leaves events arriving during its checkpoint for the next confirmed batch", async () => {
   const backend = new Backend();

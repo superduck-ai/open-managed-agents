@@ -14,7 +14,7 @@ import (
 )
 
 func TestOAuthCardRequiresPrivateConversationAndTrustedOrigin(t *testing.T) {
-	event := omaEvent{ID: "evnt_oauth", Type: "agent.custom_tool_use", Name: "RequestOAuth", Input: []byte(`{"kind":"env_oauth","provider":"custom:friday","secret_name":"FRIDAY_4A_TOKEN","parent_call_id":"bash_1","reason":"missing","authorization_url":"https://untrusted.example"}`)}
+	event := omaEvent{ID: "evnt_oauth", Type: "agent.custom_tool_use", Name: "RequestOAuth", Input: []byte(`{"kind":"env_oauth","provider":"custom:catalog","secret_name":"CATALOG_TOKEN","parent_call_id":"bash_1","reason":"missing","authorization_url":"https://untrusted.example"}`)}
 	reply := channelReply{oauthOrigin: "https://oma.example", stopValue: &channelActionValue{ChannelID: "channel_1", SessionID: "session_1", ChatType: "group"}}
 	if !reply.consumeInteraction(event) {
 		t.Fatal("应保留 OAuth 交互")
@@ -102,7 +102,7 @@ func TestCancelOAuthUsesCanonicalEventThread(t *testing.T) {
 	}
 }
 
-func TestFridayConnectionCardColor(t *testing.T) {
+func TestCatalogConnectionCardColor(t *testing.T) {
 	for status, color := range map[string]string{"等待授权": "blue", "已连接": "green", "已取消授权": "grey", "连接失效": "red"} {
 		var card struct {
 			Header struct {
@@ -112,10 +112,14 @@ func TestFridayConnectionCardColor(t *testing.T) {
 				} `json:"title"`
 			} `json:"header"`
 		}
-		if err := json.Unmarshal([]byte(feishu.Render(contracts.Reply{Title: "连接 Friday", Status: status})), &card); err != nil {
+		if err := json.Unmarshal([]byte(feishu.Render(contracts.Reply{Title: "连接 Catalog", Status: status})), &card); err != nil {
 			t.Fatal(err)
 		}
-		if card.Header.Template != color || card.Header.Title.Content != "连接 Friday" {
+		wantTitle := "连接 Catalog"
+		if status == "已连接" {
+			wantTitle = status
+		}
+		if card.Header.Template != color || card.Header.Title.Content != wantTitle {
 			t.Errorf("%s：表头为 %+v", status, card.Header)
 		}
 	}
@@ -147,7 +151,7 @@ func TestSeparateOAuthCardRequiresMatchingReceipt(t *testing.T) {
 	}
 }
 
-func TestFridayContinuationKeepsOriginalDeliveryAcrossReplay(t *testing.T) {
+func TestCatalogContinuationKeepsOriginalDeliveryAcrossReplay(t *testing.T) {
 	worker, _, _, _, task, msg := artifactDeliveryFixture(t)
 	adapter := &independentAdapter{}
 	worker.adapter = adapter

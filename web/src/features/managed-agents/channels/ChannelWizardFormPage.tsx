@@ -58,7 +58,8 @@ function WizardStepFields({
   onGenerateQr: (openAuthorization?: boolean) => void;
   showQr: boolean;
 }) {
-  if (step === 2) return <StepStrategy value={value} onChange={onChange} modeLocked={Boolean(saved)} />;
+  if (step === 2)
+    return <StepStrategy workspaceId={workspaceId} value={value} onChange={onChange} modeLocked={Boolean(saved)} />;
   if (step === 3) {
     return (
       <StepMa
@@ -401,6 +402,8 @@ function channelPayload(value: WizardValue, binding: string) {
   return {
     name: value.name.trim(),
     mode: value.mode,
+    pairing_oauth_provider: value.mode === 'pairing' ? (value.pairing_oauth_provider ?? '') : '',
+    ...(value.mode === 'pairing' && value.pairing_oauth_provider ? { identity_resolution: { mode: 'pairing' } } : {}),
     agent_version: value.agent_version ?? null,
     memory_store_id: value.memory_store_id ?? null,
     vault_ids: channelVaultIds(value),

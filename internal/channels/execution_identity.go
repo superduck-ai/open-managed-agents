@@ -15,6 +15,7 @@ import (
 
 type identityIngress interface {
 	PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error)
+	PrepareSelfPairing(context.Context, identities.Ingress) (string, error)
 	AllowsSelfPairing(context.Context, identities.Ingress) (bool, error)
 	ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error
 	Resolve(context.Context, identities.Ingress) (identities.Decision, error)

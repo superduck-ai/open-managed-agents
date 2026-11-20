@@ -61,6 +61,8 @@ type runtimeSupervisor struct {
 	personalVault         func(context.Context, db.ChannelRecord, string) (string, error)
 	personalVaultLookup   func(context.Context, db.ChannelRecord, string) (string, bool, error)
 	agentEnvironment      func(context.Context, string, string, string) (string, error)
+	pairingProvider       func(context.Context, string) (string, error)
+	pairingPrompt         func(context.Context, *channelWorker, *channelMessage) (bool, error)
 	oauthOrigin           string
 	fileMaxBytes          int64
 	putAttachment         SessionAttachmentWriter

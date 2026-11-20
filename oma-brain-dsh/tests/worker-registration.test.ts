@@ -94,16 +94,6 @@ test("assignment rejects unknown launch tools", () => {
  expect(() => validateAssignment(a)).toThrow("Invalid launch tools");
 });
 
-test("根会话可使用 CLI，子 Agent 仅接受能在子线程执行的工具", () => {
- const a = assignment();
- a.launch.tools = ["Friday"];
- expect(() => validateAssignment(a)).not.toThrow();
- a.launch.subagents = { agents: [{name:"reader", description:"读取", systemPrompt:"读取", tools:["Friday"]}] };
- expect(() => validateAssignment(a)).toThrow("Invalid subagent definition");
- a.launch.subagents.agents![0]!.tools = ["Read"];
- expect(() => validateAssignment(a)).not.toThrow();
-});
-
 test("trace context ignores malformed and all-zero traceparent values", () => {
  for (const value of [undefined, null, "", "ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
   "00-00000000000000000000000000000000-0123456789abcdef-01", "00-0123456789abcdef0123456789abcdef-0000000000000000-01",

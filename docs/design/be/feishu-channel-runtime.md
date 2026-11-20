@@ -75,7 +75,7 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 扫码授权和跳转授权共用飞书官方 Go SDK（`scene/registration`）的同一条设备码流程，前端既能把 `url` 渲染成二维码，也能直接打开该链接：
 
-1. `POST /v1/channels/authorizations` 先落库一条 `channel_registrations` 记录，再在后台调用 SDK `RegisterApp`：传入 `Source=open-managed-agents`、`AppPreset.Name=渠道名`，并用 `Addons` 预置机器人所需权限（`im:message`、`im:message:send_as_bot`、`im:chat:readonly`）与事件（`im.message.receive_v1`），创建完的应用不需要再手工勾选。
+1. `POST /v1/channels/authorizations` 先落库一条 `channel_registrations` 记录，再在后台调用 SDK `RegisterApp`：传入 `Source=open-managed-agents`、`AppPreset.Name=渠道名`，并用 `Addons` 预置应用身份和用户身份权限、接收消息事件（`im.message.receive_v1`）及卡片交互回调（`card.action.trigger`）。权限申请清单见[消息渠道接入](/docs/zh/message-channels#手动接入)，实际开通状态以飞书后台为准。
 2. SDK 的 `OnQRCode` 回调把确认地址与过期时间写回记录并唤醒请求，HTTP 响应因此能同步拿到 `url`；`OnStatusChange` 同步 `slow_down` 后的轮询间隔。
 3. SDK 在本进程内完成后续轮询与 Lark 域名切换；成功、拒绝（`access_denied`）、过期（`expired_token`）分别落为 `bound` / `denied` / `expired`，其他失败落 `unknown`。
 4. 渠道向导里的扫码入口用 `GET /v1/channels/{channel_id}/qr`（工作区级，只需渠道 ID），授权成功后直接把应用凭据绑定到该渠道并启动运行时；过期或拒绝后再次请求会重新发起。

@@ -311,6 +311,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	defer sessionPorts.Close()
 	return serveHTTP(ctx, server, logger, stopChannels)
 }
 

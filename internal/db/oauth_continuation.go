@@ -12,6 +12,8 @@ func (d *DB) GetSessionEventByUUID(ctx context.Context, workspaceUUID, sessionUU
 }
 
 type OAuthContinuation struct {
+	InputUUID   string `json:"input_uuid,omitempty"`
+	ChannelID   string `json:"channel_id,omitempty"`
 	SessionUUID string `json:"session_uuid"`
 	EventUUID   string `json:"event_uuid"`
 	ChannelUUID string `json:"channel_uuid"`

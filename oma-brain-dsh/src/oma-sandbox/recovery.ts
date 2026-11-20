@@ -1,7 +1,6 @@
 import { recoverMcpOAuth } from "../external-mcp/recovery.ts";
 import { externalServers } from "../external-mcp/config.ts";
 import { sandboxToolDefinitions } from "../sandbox-tools/definitions.ts";
-import { cliTools } from "../sandbox-tools/cli.ts";
 import { normalizeSandboxResult } from "./output.ts";
 import { admitEncodedImages } from "@deepseek-ai/dsh-attachment";
 import { withAttachmentSession } from "../attachments/remote.ts";
@@ -11,11 +10,11 @@ import { appendPluginRecord, pluginRecordOf, Session, SessionId, SessionSeq, typ
 import { createToolResultMessage } from "@deepseek-ai/dsh-llm";
 import { HttpError } from "../api.ts";
 import { CANCELLATION_UNCONFIRMED, type SandboxCalls } from "./client.ts";
-import { UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxRecovery } from "../runtime/contracts.ts";
+import { type SandboxRecovery, type ThreadMcpContext } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
 import { object, type Payload } from "../json.ts";
 
-const names = new Set([...cliTools, ...sandboxToolDefinitions()].map(tool => tool.name));
+const names = new Set(sandboxToolDefinitions().map(tool => tool.name));
 
 async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery): Promise<Payload> {
   const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;
@@ -33,7 +32,7 @@ async function settledCall(sandbox: SandboxCalls, callId: string, signal: AbortS
   }
 }
 
-export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, loadMcp?: () => Promise<{config:unknown;fetcher:typeof fetch}>): Promise<void> {
+export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, id: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery, mcp?: ThreadMcpContext): Promise<void> {
   if (!await ctx.get("sessionPersistence")!.stat(SessionId(id))) return;
   const handle = await ctx.get("sessionPersistence")!.open(SessionId(id), "write");
   try {
@@ -57,8 +56,11 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
       await handle.flush();
       await ctx.ccrReplication.flush(id);
     }
-    const calls = [...pending].filter(([id,event]) => names.has(event.data.name) || (loadMcp && authorizations.has(id) && event.data.name.startsWith("mcp__")));
-    const mcp = calls.some(([, event]) => event.data.name.startsWith("mcp__")) ? await loadMcp?.() : undefined;
+    const calls = [...pending].filter(([id, event]) => {
+      const name = event.data.name;
+      if (name.startsWith("mcp__")) return !!mcp && authorizations.has(id);
+      return names.has(name) || authorizations.has(id);
+    });
     const servers = externalServers(mcp?.config);
     const settled = await Promise.all(calls.map(async ([callId, event]) => {
       const state = authorizations.get(callId);
@@ -72,22 +74,6 @@ export async function recoverSandboxCalls(ctx: Context, sandbox: SandboxCalls, i
         return { event, result, code: result.errorCode as string | undefined };
       } catch (error) {
         if (!(error instanceof HttpError) || error.status !== 404) throw error;
-        const cli = cliTools.find(tool => tool.name === event.data.name);
-        if (cli) {
-          recovery?.blocking();
-          const waiting = recovery ? AbortSignal.any([signal, recovery.interrupt]) : signal;
-          try {
-            const result = await sandbox.call(cli,
-              JSON.parse(event.data.arguments), waiting, threadId, callId, undefined, true);
-            return { event, result, code: result.errorCode as string | undefined };
-          } catch (cause) {
-            signal.throwIfAborted();
-            if (cause instanceof UnknownSandboxOutcomeError) {
-              return { event, result: { isError: true, content: [{ type: "text", text: CANCELLATION_UNCONFIRMED }] }, code: "TOOL_OUTCOME_UNKNOWN" };
-            }
-            if (!(cause instanceof ToolNotForwardedError)) throw cause;
-          }
-        }
         const result: Payload = { isError: true, content: [{ type: "text", text: "Tool call was not submitted before the previous owner exited." }] };
         return { event, result, code: "TOOL_NOT_STARTED" as string | undefined };
       }

@@ -20,11 +20,21 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	ingress := Ingress{
 		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelUUID: "channel", ChannelExternalID: "chn_self",
 		ChannelType: "feishu", AppID: "app", ChatType: "p2p", ActorID: "ou_left", DisplayName: "张三",
-		AgentExternalID: "agent_friday",
+		AgentExternalID: "agent_catalog",
 	}
 	preview, err := service.Preview(t.Context(), ingress)
 	if err != nil || preview.Mode != "hold" || len(store.pairings) != 0 || len(store.links) != 0 {
 		t.Fatalf("预览创建了配对或身份：%+v %v", preview, err)
+	}
+	pending, err := service.PrepareSelfPairing(t.Context(), ingress)
+	if err != nil || pending == "" || store.pairings[pending].Status != "pending" || len(store.links) != 0 {
+		t.Fatalf("授权前应仅保存待配对记录：%q %v", pending, err)
+	}
+	if err := service.ConfirmSelfPairing(t.Context(), ingress, pending, store.version); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := service.PrepareSelfPairing(t.Context(), ingress); err != nil || again != "" {
+		t.Fatalf("已有配对仍要求重新授权：%q %v", again, err)
 	}
 	owner, err := service.PersonalActorIdentity(t.Context(), ingress, true)
 	if err != nil {
@@ -42,7 +52,7 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 	ingress.AgentExternalID = "agent_new"
 	store.version = nil
 	again, err := service.Resolve(t.Context(), ingress)
-	if err != nil || again.AgentExternalID != "agent_friday" || again.AgentVersion != 4 {
+	if err != nil || again.AgentExternalID != "agent_catalog" || again.AgentVersion != 4 {
 		t.Fatalf("已有配对目标被覆盖：%+v %v", again, err)
 	}
 	other := ingress
@@ -61,7 +71,7 @@ func TestSelfPairingUsesActorIdentityAndKeepsOriginalTarget(t *testing.T) {
 		t.Fatal("普通删除可以清除个人身份的稳定归属")
 	}
 	current, err := store.FindScopePairing(t.Context(), "ws", first)
-	if err != nil || current.AgentExternalID != "agent_friday" || current.AgentVersion == nil || *current.AgentVersion != 4 || current.Revision != 1 {
+	if err != nil || current.AgentExternalID != "agent_catalog" || current.AgentVersion == nil || *current.AgentVersion != 4 || current.Revision != 1 {
 		t.Fatalf("重复确认覆盖了已有配对: %+v %v", current, err)
 	}
 	second, err := service.Resolve(t.Context(), other)
@@ -114,7 +124,7 @@ func TestLegacyChannelKeepsAdmissionAndOnlyResumesMatchingConfirmedInput(t *test
 	}
 	ingress.ConfirmedPairingID = "chsp_alice"
 	decision, err = service.Resolve(t.Context(), ingress)
-	if err != nil || decision.Mode != "execute" || decision.IdentityUUID != "id_friday" {
+	if err != nil || decision.Mode != "execute" || decision.IdentityUUID != "id_catalog" {
 		t.Fatalf("匹配的旧确认没有续跑原输入：%+v %v", decision, err)
 	}
 }
@@ -125,7 +135,7 @@ func TestSelfPairingRejectsConcurrentDifferentTarget(t *testing.T) {
 	service := NewService(store, nil)
 	decision, err := service.Resolve(t.Context(), Ingress{
 		OrganizationUUID: "org", WorkspaceUUID: "ws", ChannelUUID: "channel", ChannelExternalID: "chn_self",
-		ChannelType: "feishu", AppID: "app", ChatType: "p2p", ActorID: "ou_left", DisplayName: "张三", AgentExternalID: "agent_friday",
+		ChannelType: "feishu", AppID: "app", ChatType: "p2p", ActorID: "ou_left", DisplayName: "张三", AgentExternalID: "agent_catalog",
 	})
 	if err != nil || decision.Mode != "hold" || !strings.Contains(decision.Notice, "配对目标已变化") {
 		t.Fatalf("并发改到其他目标后仍继续原消息：%+v %v", decision, err)

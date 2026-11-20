@@ -317,7 +317,7 @@ main 的 `env_oauth` 已支持内置飞书和自定义 OAuth 提供方、授权�
 
 提供方的 OAuth Client ID 与渠道机器人 App ID 可能不同；open_id 是应用内身份，不能跨应用直接比较。当前先使用渠道应用核验原消息发送者，再进入目标服务的原生 ENV/MCP OAuth。原生 flow 的可空 continuation 只补充原会话、请求、渠道及浏览器关联，不保存 token 副本。
 
-当前已实现私聊个人 Vault 挂载、授权卡片、操作者核验、原生回调交接及取消。真实飞书中的 Friday 首次授权、自然到期刷新、撤销后到期重新授权，以及 Notion 首次授权、撤销、取消与重新授权续跑已通过。群列表与邀请机器人不包含在本轮迁移中；其余验收边界见 [工具 OAuth 设计与记录](channel-tool-oauth.md)。
+当前已实现私聊个人 Vault 挂载、授权卡片、操作者核验、原生回调交接及取消。真实飞书中的 CLI 首次授权、自然到期刷新、撤销后到期重新授权，以及 Notion 首次授权、撤销、取消与重新授权续跑已通过。群列表与邀请机器人不包含在本轮迁移中；其余验收边界见 [工具 OAuth 设计与记录](channel-tool-oauth.md)。
 
 这条旧逻辑也用于普通个人对话：`shared-chat.ts` 在 `prepareCredentials` 返回个人 Vault，并在有运行任务时定期调用 `ChatCredentials.prepare` 同步 CLI 刷新后的 token；并非只用于报告。因此报告功能排除在外不构成遗漏普通对话个人授权的理由。新实现应由 OMA `env_oauth` 在实际出口请求时解析/刷新凭据，删除对话层的定时同步职责。旧按需 scope 与原生提供方固定 scope 的配置合同也需对齐，渠道不能自行扩大平台提供方的授权范围。
 

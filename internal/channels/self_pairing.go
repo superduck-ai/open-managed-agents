@@ -21,6 +21,9 @@ func (w *channelWorker) confirmSelfPairing(ctx context.Context, event *contracts
 	if err != nil {
 		return err
 	}
+	if parseChannelMounts(record.Mounts).PairingProvider != "" {
+		return invalidChannelCardReceipt()
+	}
 	if !record.Enabled || record.DeletedAt != nil || record.BindingStatus != "bound" || record.AppID != w.record.AppID || record.ChannelType != "feishu" {
 		return invalidChannelCardReceipt()
 	}

@@ -5,9 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
-	"github.com/superduck-ai/open-managed-agents/internal/clitools"
 	"maps"
-	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -196,8 +194,6 @@ func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claud
 		return resolvedToolPermissionAsk, identity
 	}
 	switch {
-	case slices.ContainsFunc(clitools.Bindings[:], func(binding clitools.Binding) bool { return binding.Name == claudeToolName }):
-		return resolvedToolPermissionEvaluation(resolveAgentToolPermission(snapshot.Tools, "bash"), toolIdentity{Kind: "agent_toolset", ToolName: claudeToolName})
 	case isDelegationTool(claudeToolName):
 		return delegationToolPermission(snapshot.Multiagent), toolIdentity{Kind: "delegation", ToolName: claudeToolName}
 	case strings.HasPrefix(claudeToolName, "mcp__"):

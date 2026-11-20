@@ -347,6 +347,15 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlow, token vaultsapi.OAuthTokenEndpointResult, customProvider *vaultsapi.EnvOAuthCustomProvider, now time.Time) (string, error) {
+	if c := flow.Continuation; c != nil && c.InputUUID != "" {
+		target, err := s.channelService.OAuthContinuationTarget(ctx, flow.WorkspaceUUID, c)
+		if err != nil {
+			return "", err
+		}
+		if target.Vault.UUID != flow.VaultUUID || target.Request.Provider != flow.ProviderKey || target.Request.SecretName != flow.SecretName {
+			return "", db.ErrInvalidState
+		}
+	}
 	credentials, _, err := s.db.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
 		WorkspaceUUID:   flow.WorkspaceUUID,
 		VaultExternalID: flow.VaultExternalID,

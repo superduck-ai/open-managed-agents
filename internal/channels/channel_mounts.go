@@ -21,6 +21,7 @@ type channelGitMount struct {
 }
 
 type channelMounts struct {
+	PairingProvider           string                 `json:"pairing_oauth_provider,omitempty"`
 	LegacyResourceFingerprint string                 `json:"legacy_resource_fingerprint,omitempty"`
 	Resources                 []channelResourceMount `json:"resources,omitempty"`
 	AgentVersion              int                    `json:"agent_version,omitzero"`
@@ -65,6 +66,20 @@ func gitMountWithoutToken(mount *channelGitMount) *channelGitMount {
 
 func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Principal, record *db.ChannelRecord, input channelMutation) error {
 	mounts := parseChannelMounts(record.Mounts)
+	changedProvider := input.PairingProvider != nil && *input.PairingProvider != mounts.PairingProvider
+	if changedProvider {
+		mounts.PairingProvider = *input.PairingProvider
+	}
+	if mounts.PairingProvider != "" {
+		if record.Mode != "pairing" || record.ExecutionMode == nil || *record.ExecutionMode != "pairing" {
+			return invalidChannelMounts(errors.New("个人授权需要私聊配对模式"))
+		}
+	}
+	if changedProvider && mounts.PairingProvider != "" {
+		if _, err := s.runtime.pairingProvider(ctx, mounts.PairingProvider); err != nil {
+			return invalidChannelMounts(err)
+		}
+	}
 	version, err := s.channelAgentVersion(ctx, principal, record.AgentExternalID, mounts.AgentVersion, input.AgentVersion)
 	if err != nil {
 		return err
@@ -101,7 +116,7 @@ func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Pr
 func channelMountView(record db.ChannelRecord) map[string]any {
 	mounts := parseChannelMounts(record.Mounts)
 	view := map[string]any{
-		"agent_version":   nil,
+		"agent_version": nil, "pairing_oauth_provider": mounts.PairingProvider,
 		"memory_store_id": nil,
 		"vault_id":        nil,
 		"vault_ids":       mounts.VaultIDs,

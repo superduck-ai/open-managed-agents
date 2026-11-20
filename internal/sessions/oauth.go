@@ -79,9 +79,6 @@ func (h *Handler) WaitForOAuthCredential(ctx context.Context, code db.CodeSessio
 			return result, err
 		}
 	}
-	if input.CheckOnly {
-		return jsonv2.Marshal(map[string]any{"requirement": input})
-	}
 	return h.waitForOAuthResult(ctx, code, input, prepare)
 }
 

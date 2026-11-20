@@ -12,7 +12,8 @@ import (
 func (f *Adapter) OAuthProvider() vaults.EnvOAuthProviderSnapshot {
 	return vaults.EnvOAuthProviderSnapshot{
 		Builtin: true, Enabled: true, Configured: true, ProviderKey: "builtin:feishu", Name: "渠道操作者核验",
-		Version: 1, ClientID: f.Config.AppID, ClientSecret: f.Config.Secret,
+		DefaultAllowedHosts: []string{"open.feishu.cn"},
+		Version:             1, ClientID: f.Config.AppID, ClientSecret: f.Config.Secret,
 		AuthorizeEndpoint:       "https://accounts.feishu.cn/open-apis/authen/v1/authorize",
 		TokenEndpoint:           "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
 		TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "json", Scope: "contact:user.employee_id:readonly",

@@ -68,6 +68,7 @@ type localService struct {
 }
 
 type channelMutation struct {
+	PairingProvider    *string         `json:"pairing_oauth_provider"`
 	AgentVersion       json.RawMessage `json:"agent_version"`
 	EnvironmentID      *string         `json:"environment_id"`
 	Name               *string         `json:"name"`

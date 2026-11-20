@@ -49,6 +49,12 @@ func (w *channelWorker) claimAndDispatchInput(ctx context.Context, inputUUID str
 	}
 	msg.Input = &row
 	if row.State == "buffering" {
+		if msg.ChatType == "p2p" && msg.PairingID == "" && parseChannelMounts(w.record.Mounts).PairingProvider != "" {
+			held, err := w.supervisor.pairingPrompt(ctx, w, &msg)
+			if err != nil || held {
+				return err
+			}
+		}
 		if adapter, ok := w.adapter.(interface {
 			QueueInput(context.Context, *channelMessage) error
 		}); ok {

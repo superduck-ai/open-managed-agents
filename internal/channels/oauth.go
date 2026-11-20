@@ -117,7 +117,7 @@ func (s *Service) beginActorCheck(ctx context.Context, target OAuthTarget) (stri
 		OrganizationUUID: target.Scope.Channel.OrganizationUUID, WorkspaceUUID: target.Scope.Channel.WorkspaceUUID,
 		VaultUUID: target.Vault.UUID, VaultExternalID: target.Vault.ExternalID,
 		SecretName: "OMA_CHANNEL_IDENTITY", RedirectURL: s.supervisor.oauthOrigin + "/oauth/vault/env-success",
-		NetworkingType: "limited", AllowedHosts: []string{"open.feishu.cn"}, Continuation: target.Continuation,
+		NetworkingType: "limited", AllowedHosts: provider.DefaultAllowedHosts, Continuation: target.Continuation,
 		CreatedByAPIKeyUUID: target.Scope.Session.CreatedByAPIKeyUUID,
 	})
 	return link, err

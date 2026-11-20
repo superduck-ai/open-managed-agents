@@ -41,7 +41,8 @@ if (args[0] === "pane" && args[1] === "list") {
   if ((id.startsWith("new-") && count === 2) || mode === "busy") processes = [{ pid: 101, name: "git", cwd: root, cmdline: "git status" }];
   if (id.startsWith("old-") && mode === "replace" && count === 1) {
     const recipe = ["restart-server", "restart-brain", "restart-web"][Number(id.slice(-1))];
-    processes = [{ pid: 101, name: "just", cwd: root, cmdline: `just ${recipe}` }];
+    const cmdline = id === "old-0" ? "/tmp/go-build123/b001/exe/oma-server" : `just ${recipe}`;
+    processes = [{ pid: 101, cwd: root, cmdline }];
   }
   reply({ process_info: { shell_pid: 100, foreground_processes: processes } });
 } else if (args[1] === "run") {

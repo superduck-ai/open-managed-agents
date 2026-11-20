@@ -72,7 +72,7 @@ flowchart LR
     Interface -.实现.-> Transit
 ```
 
-`internal/secretservice` 是应用装配边界，由 `cmd/oma-server/main.go` 调用。`internal/secrets` 定义通用 `KeyProvider`（`Name`、`WrapDEK`、`UnwrapDEK`），仅处理本地 AES-GCM 和信封；它不导入云 SDK。`internal/secrets/local`、`internal/secrets/aliyunkms` 与 `internal/secrets/hashicorpvault` 是并列的叶子插件，不导入 `vaults`、MITM 或 `db`。Transit 只使用标准库 HTTP/JSON 调用两个接口，不引入登录或 SDK 生命周期；未知 Provider 直接拒绝。
+`internal/secretservice` 是应用装配边界，由 `main.go` 调用。`internal/secrets` 定义通用 `KeyProvider`（`Name`、`WrapDEK`、`UnwrapDEK`），仅处理本地 AES-GCM 和信封；它不导入云 SDK。`internal/secrets/local`、`internal/secrets/aliyunkms` 与 `internal/secrets/hashicorpvault` 是并列的叶子插件，不导入 `vaults`、MITM 或 `db`。Transit 只使用标准库 HTTP/JSON 调用两个接口，不引入登录或 SDK 生命周期；未知 Provider 直接拒绝。
 
 本地 KEK 读取、版本选择和 DEK 封装集中在 `secrets/local`；公共包只保留信封合同、AAD 和加解密流程。公共信封错误位于 `secrets/errors.go`，厂商错误解析仍在各插件中。根目录 `crypto.go` 保留信封加密辅助函数，local 直接使用标准库完成密钥封装；不增加共享子包。`local.New` 不接受 context，调用方以 `secrets.NewService(provider)` 显式组装。`local/provider_test.go` 内的固定旧版信封常量验证解密兼容性，无额外 testdata 目录。
 

@@ -16,7 +16,7 @@ HTTP 超时仍作为错误返回。此预算仅覆盖 HTTP 排空，不是整个
 第一次 SIGINT 或 SIGTERM 后解除信号接管，后续信号恢复默认行为，允许再次 Ctrl-C 中断等待。
 
 执行 `just generate` 后，回归入口为
-`go test . ./internal/httpapi -run 'TestShutdownHTTP|TestServeHTTP|TestStreamContext' -count=1`，
+`go test ./cmd/oma-server ./internal/httpapi -run 'TestShutdownHTTP|TestServeHTTP|TestStreamContext' -count=1`，
 覆盖超时关闭活跃连接、退出时结束长流、普通请求继续完成及客户端取消传播。
 完整静态检查与单测按仓库质量门禁执行；这些测试不替代真实 Worker、NATS 和数据库集成验收。
 真实退出验收使用 `just verify-be chat doctor shutdown` 与 `just verify-be chat shutdown`，

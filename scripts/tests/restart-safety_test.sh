@@ -60,6 +60,7 @@ cat > "$fixture/bin/go" <<'MOCK'
 #!/bin/bash
 set -euo pipefail
 if [[ "$1" == build ]]; then
+  [[ "$4" == ./cmd/oma-server ]]
   echo build >> "$MOCK_ROOT/events"
   cat > "$3" <<'SERVER'
 #!/bin/sh

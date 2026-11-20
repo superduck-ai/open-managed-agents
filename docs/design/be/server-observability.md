@@ -121,7 +121,7 @@ flowchart TB
   不依赖 HTTP 或业务资源包。领域指标与枚举规则就近定义，详见 P1.3 与代码地图。
 - `internal/logging` 提供 `ContextHandler`、`LevelHandler`，组装层使用标准库 `slog.NewMultiHandler`。
 - 新包 `internal/statemetrics`：进程内的状态上报器 `Reporter`，是 OMA 进程里的一个 goroutine，
-  定期查询数据库和 NATS 并上报 gauge。它不是独立服务，属于组装层，由 `cmd/oma-server/main.go` 注入依赖。它依赖
+  定期查询数据库和 NATS 并上报 gauge。它不是独立服务，属于组装层，由 `main.go` 注入依赖。它依赖
   `internal/db` 与 NATS，因此不并入基础包 `internal/telemetry`，避免基础包反向依赖持久化层；包名与配置
   `telemetry.state_metrics` 保持一致，上报的是 `oma.sessions.*`、`oma.environment_work.*`、`oma.nats.*`、
   `oma.db.pool.*`、`oma.brain_claims.*` 等状态 gauge（第 6.6 节）。
@@ -517,13 +517,13 @@ console 一路由 `ConsoleHandler` 自身按 `telemetry.logs.level` 过滤，`Le
 
 ### P0.5 日志上下文组装
 
-`cmd/oma-server/main.go` 的 `logContextAttrs` 为 console 一路提取 `trace_id`、`span_id`、`request_id`；OTLP 一路只用
+`main.go` 的 `logContextAttrs` 为 console 一路提取 `trace_id`、`span_id`、`request_id`；OTLP 一路只用
 `requestIDAttrs` 补 `request_id`，trace 关联使用 otelslog 写入的原生字段。两者都通过 `ContextHandler`
 注入。该映射属于组装层；`internal/telemetry` 不依赖 `internal/httpapi`。
 
 ### P0.6 生命周期
 
-`cmd/oma-server/main.go` 在配置加载后初始化遥测与应用 logger，后续组件显式接收该 logger。遥测 shutdown 在
+`main.go` 在配置加载后初始化遥测与应用 logger，后续组件显式接收该 logger。遥测 shutdown 在
 HTTP server、River、NATS 等组件关闭后执行。`run` 的终止错误在遥测 shutdown 之前由应用 logger 记录一次
 （遥测开启时随 OTLP 导出），遥测初始化之前的失败由 console-only bootstrap logger 报告；`main` 只设置退出码。
 未启用遥测时，console 日志仍可携带 `request_id`。
@@ -533,7 +533,7 @@ HTTP server、River、NATS 等组件关闭后执行。`run` 的终止错误在�
 `internal/telemetry` 测试覆盖禁用、端点和头构造、部分失败清理、traceparent 校验和取消分类；
 `TestRuntimeMetrics` 用 ManualReader 验证九个 runtime 指标（设置临时 `GOMEMLIMIT` 以产生 `go.memory.limit`）；
 `internal/logging` 测试检查结构化 record、多路分发、显式属性优先及级别过滤。
-`cmd/oma-server/main_test.go` 验证日志上下文映射。OpenObserve 实际导出需要单独运行期验收。
+`main_test.go` 验证日志上下文映射。OpenObserve 实际导出需要单独运行期验收。
 
 ## P1. HTTP 入口
 
@@ -576,7 +576,7 @@ console 行首打印 `path`。请求日志为 Debug；响应小于 400 且耗时
 
 `internal/api/telemetry_http_test.go` 验证跳过路径（不建 span、不记指标但仍写访问日志）、心跳只记指标、路由命名、
 租户属性、错误状态、panic 后的 500、499 与日志关联。`http_log_test.go` 与 `internal/httpapi/client_gone_test.go`
-验证级别映射、query 不入日志与取消边界；`cmd/oma-server/main_test.go` 的 `TestApplicationLoggerHonorsLevel` 验证 console 级别跟随配置。
+验证级别映射、query 不入日志与取消边界；`main_test.go` 的 `TestApplicationLoggerHonorsLevel` 验证 console 级别跟随配置。
 
 ## P2. 会话、消息队列与工具确认
 
@@ -811,7 +811,7 @@ Reporter 定期查询 DB、NATS 并替换缓存快照；OTel gauge 回调只读�
 DB 采集失败清空 ready 状态，避免继续输出陈旧值；单个 NATS 来源失败跳过该来源并累计失败指标。
 未 ready 时仍可上报连接池。未来的 NATS FirstTime 归零年龄。
 
-`cmd/oma-server/main.go` 的 `startStateMetrics` 注入依赖、stream 与 consumer 清单；Brain 领取队列来自 DB 快照
+`main.go` 的 `startStateMetrics` 注入依赖、stream 与 consumer 清单；Brain 领取队列来自 DB 快照
 （P8.3），不再有对应的 NATS stream。关闭时停止 goroutine 并注销 callback。多副本全局状态取 max，连接池按实例聚合。
 `reporter_test.go` 与 `nats_test.go` 验证失败刷新、未 ready、连接池、空流、未来时间和正常统计。
 
@@ -1231,7 +1231,7 @@ exporter）。PostgreSQL 测试覆盖"有新事件的 running 会话不计入 st
 | --- | --- |
 | Provider、传播、通用 instrument、枚举与 SSE | `internal/telemetry/{telemetry,trace,metrics,attributes,enum,sse,log_values}.go` |
 | 测试 provider 安装与清理 | `internal/telemetry/telemetrytest/telemetrytest.go` |
-| 日志上下文、级别和组装 | `internal/logging/context.go`、`cmd/oma-server/main.go` |
+| 日志上下文、级别和组装 | `internal/logging/context.go`、`main.go` |
 | HTTP 指标、访问日志与取消边界 | `internal/api/{telemetry_http,http_log}.go`、`internal/httpapi/{client_gone,app_error}.go` |
 | Worker 投递、MCP、工具确认 | `internal/codesessions/{telemetry,worker_delivery,sandbox_mcp,sandbox_mcp_outcome,tool_permissions}.go` |
 | 会话输入、状态和错误 | `internal/sessions/{telemetry,outcome_telemetry}.go` |

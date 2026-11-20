@@ -53,30 +53,80 @@ description: "连接消息平台，选择私聊和群聊的执行身份，并通
 
 恢复历史会话时，OMA 会核对渠道应用、聊天范围、执行目标、版本和挂载资源。在固定身份渠道中，发送 `/new` 后，下一条消息会按当前渠道配置创建会话。对于已配对的聊天，`/new` 只重置会话绑定，下一条消息仍按配对记录选择智能体和版本。
 
-## 钉钉接入
-
-OMA 尚未开放钉钉渠道接入。
-
 ## 飞书接入
 
 ### 扫码绑定
 
 在 **渠道 → 新增渠道** 选择 **飞书**，在 **连接应用** 中扫码并确认授权。
 
-### 手动接入已有应用
+### 手动接入
 
-在飞书开放平台启用机器人能力，配置收发消息所需权限。
+1. **创建应用并添加机器人。** 登录 [飞书开放平台开发者后台](https://open.feishu.cn/app)，选择 **创建企业自建应用**，填写应用名称和描述。进入应用后，在 **添加应用能力** 中添加 **机器人**。已有应用可直接检查机器人能力和下列配置。
+2. **开通权限。** 在 **权限管理 → 批量处理 → 批量导入/导出权限** 中选择 **导入**，粘贴以下 JSON 并提交申请。此清单与 OMA 扫码绑定时申请的权限一致。
 
-1. 在 OMA 的 **连接应用** 中填写应用的 **App ID** 和 **App Secret**，保存并启用渠道。确认渠道已连通后，返回飞书开放平台。
-2. 在 **事件与回调 → 事件配置** 中选择 **使用长连接接收事件**，添加接收消息事件 `im.message.receive_v1`。
-3. 在 **事件与回调 → 回调配置** 中选择 **使用长连接接收回调**，在 **已订阅的回调** 中添加 **卡片回传交互**（`card.action.trigger`）。
-4. 发布飞书应用版本。
+   ```json
+   {
+     "scopes": {
+       "tenant": [
+         "application:app_slash_command:read",
+         "application:app_slash_command:write",
+         "application:application:self_manage",
+         "application:bot.basic_info:read",
+         "application:bot.menu:write",
+         "cardkit:card:read",
+         "cardkit:card:write",
+         "contact:contact.base:readonly",
+         "docs:document.comment:create",
+         "docs:document.comment:delete",
+         "docs:document.comment:read",
+         "docs:document.comment:update",
+         "docs:document.comment:write_only",
+         "docx:document.block:convert",
+         "docx:document:readonly",
+         "docx:document:write_only",
+         "drive:drive.metadata:readonly",
+         "im:chat.members:bot_access",
+         "im:chat:create",
+         "im:chat:read",
+         "im:chat:update",
+         "im:message",
+         "im:message.group_at_msg.include_bot:readonly",
+         "im:message.group_at_msg:readonly",
+         "im:message.p2p_msg:readonly",
+         "im:message.pins:read",
+         "im:message.pins:write_only",
+         "im:message.reactions:read",
+         "im:message.reactions:write_only",
+         "im:message:readonly",
+         "im:message:send_as_bot",
+         "im:message:send_multi_users",
+         "im:message:send_sys_msg",
+         "im:message:update",
+         "im:resource",
+         "wiki:node:read"
+       ],
+       "user": [
+         "contact:user.employee_id:readonly",
+         "offline_access"
+       ]
+     }
+   }
+   ```
+
+3. **填写应用凭据并启用渠道。** 在飞书应用的 **凭证与基础信息** 页面获取 **App ID** 和 **App Secret**。在 OMA 的 **渠道 → 新增渠道 → 飞书 → 连接应用** 中填写两项凭据，保存并启用渠道。确认渠道已连通后，返回飞书开放平台。
+4. **订阅消息事件。** 在 **事件与回调 → 事件配置** 中选择 **使用长连接接收事件**，添加接收消息事件 `im.message.receive_v1`。
+5. **订阅卡片回调。** 在 **事件与回调 → 回调配置** 中选择 **使用长连接接收回调**，在 **已订阅的回调** 中添加 **卡片回传交互**（`card.action.trigger`）。
+6. **发布应用。** 在 **版本管理与发布 → 创建版本** 中填写版本信息，把验收账号加入应用可用范围，然后提交发布。如果组织要求审批，等版本发布后再验证消息收发。
 
 ### 验证消息收发
 
 在 OMA 渠道详情页运行 **连接检测**。用应用可用范围内的账号私聊机器人，确认能够收到回复。需要群聊时，可选固定身份，将机器人加入群并 @ 它。
 
 开启 **话题回复** 后，群聊按话题使用独立会话。选择 **主会话回复** 时，机器人在群主会话回复。群聊使用当前执行目标显式挂载的共享密钥库。
+
+## 钉钉接入
+
+OMA 尚未开放钉钉渠道接入。
 
 ## 企业微信接入
 

@@ -64,7 +64,11 @@ export function ProtectedConsoleLayout() {
           </div>
         ) : (
           <div role={organizations.error ? 'alert' : 'status'} className="space-y-3">
-            <p>{organizations.error ? '加载组织失败，请重试。' : '暂无可用工作区。请选择组织或接受邀请。'}</p>
+            <p>
+              {organizations.error
+                ? scopeFailureMessage(organizations.error, msg)
+                : '暂无可用工作区。请选择组织或接受邀请。'}
+            </p>
             <Button variant="outline" onClick={() => void organizations.retry()}>
               重试
             </Button>
@@ -88,4 +92,11 @@ export function ProtectedConsoleLayout() {
       )}
     </>
   );
+}
+
+function scopeFailureMessage(error: unknown, msg: ReturnType<typeof useI18n>['msg']) {
+  const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+  if (status === 403) return msg('workspace.linkAccessDenied', 'You do not have access to this workspace.');
+  if (status === 404) return msg('workspace.linkUnavailable', 'This workspace does not exist or is archived.');
+  return msg('workspace.scopeLoadFailed', 'Could not load the organization. Please try again.');
 }

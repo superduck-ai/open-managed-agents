@@ -102,3 +102,34 @@ test('系统技能 ZIP 使用 multipart 并保留平台 CSRF', async () => {
   expect(new Headers(captured?.headers).has('Content-Type')).toBe(false);
   expect(new Headers(captured?.headers).get('X-CSRF-Token')).toBe('platform-token');
 });
+
+test('调用方在读取响应体期间取消后，迟到401不能清除新会话', async () => {
+  let finish!: () => void;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      finish = () => {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ error: { code: 'authentication_error' } })));
+        controller.close();
+      };
+    },
+  });
+  globalThis.fetch = mock(async () => new Response(body, { status: 401 })) as typeof fetch;
+  const denied = mock();
+  const client = new PlatformAdminClient(denied);
+  client.setCSRFToken('current-session');
+  const failures: number[] = [];
+  const dispose = onApiAuthFailure((status) => failures.push(status));
+  try {
+    const controller = new AbortController();
+    const pending = client.request('/workspaces/target/scope', { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    finish();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(denied).not.toHaveBeenCalled();
+    expect(failures).toEqual([]);
+    expect(client.csrfToken).toBe('current-session');
+  } finally {
+    dispose();
+  }
+});

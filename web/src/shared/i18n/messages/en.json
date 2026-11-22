@@ -4127,5 +4127,8 @@
   "managedAgents.identities.channelUnbound": "Unbound",
   "managedAgents.identities.channelExpired": "Binding expired",
   "managedAgents.channels.statusConnecting": "Connecting",
-  "managedAgents.channels.statusNoticeConnecting": "Establishing channel connection"
+  "managedAgents.channels.statusNoticeConnecting": "Establishing channel connection",
+  "workspace.linkAccessDenied": "You do not have access to this workspace.",
+  "workspace.linkUnavailable": "This workspace does not exist or is archived.",
+  "workspace.scopeLoadFailed": "Could not load the organization. Please try again."
 }

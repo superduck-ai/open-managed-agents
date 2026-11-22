@@ -4127,5 +4127,8 @@
   "managedAgents.identities.channelUnbound": "未绑定",
   "managedAgents.identities.channelExpired": "绑定已过期",
   "managedAgents.channels.statusConnecting": "连接中",
-  "managedAgents.channels.statusNoticeConnecting": "正在建立渠道连接"
+  "managedAgents.channels.statusNoticeConnecting": "正在建立渠道连接",
+  "workspace.linkAccessDenied": "你没有访问此工作区的权限。",
+  "workspace.linkUnavailable": "此工作区不存在或已归档。",
+  "workspace.scopeLoadFailed": "加载组织失败，请重试。"
 }

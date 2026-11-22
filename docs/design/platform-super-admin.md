@@ -225,6 +225,20 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 退出先使 generation 失效，阻止在途 SSE/读取和下载的结果提交，清头及缓存，删除标签目标，清空当前 Console scope，随后通过 TanStack Router 返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`；目标缺失时回退 `/platform-admin`。退出无需网络请求，不恢复进入前的组织或工作区，也不跳转原工作区。退出不撤销平台授权；原组织后续带头请求仍按统一规则计算有效 Admin。已创建资源与在途外部副作用继续存在。
 
+### 平台超管通过用户链接直达资源
+
+平台超管凭有效的平台授权访问任意组织，组织成员身份不是前置条件。打开用户反馈链接时，超管使用自己的账号，享有与从后台手动进入目标组织相同的权限。审计记录使用超管账号和目标组织、工作区。
+
+对于含真实工作区 ID 的控制台链接，公共路由入口优先使用 URL 指定的工作区。跨组织定位接口先由服务端验证登录态和当前平台超管授权。通过后跳过组织成员查询，按工作区 ID 解析目标组织。普通账号沿用已有的成员访问流程。资源接口在已确定的组织和工作区内读取目标资源，工作区与资源不匹配时返回未找到。
+
+前端在当前标签页加载原路径，保留查询参数和锚点。会话、环境及其他工作区页面共用这一流程。登录后通过站内 `returnTo` 恢复目标。仅有 `default` 或缺少目标标识的链接，需要可确定组织的上下文。
+
+验收时使用一个从未加入目标组织的平台超管账号，从其他组织直接打开用户的链接：
+
+- 会话链接带有 `interactive=true&event={event_id}&inspector=events` 时，打开指定会话的事件面板，并选中该事件。刷新或登录后返回原链接，也能到达同一位置。
+- 环境详情链接打开指定环境。并排打开两个组织的链接时，每个标签页分别显示并使用各自的组织和工作区。
+- 普通组织管理员打开无权访问的链接时，不能获取目标组织资料。工作区已归档或资源已删除时，在原链接提示目标不可用。
+
 ## 8. API 草案
 
 全局 API 独立挂载在 `/api/platform-admin`，不复用已有 `/v1/organizations` 的组织内 Admin API。下表路径均相对此前缀，除 bootstrap 同样要求超级管理员外，没有公开的目录接口。
@@ -237,6 +251,7 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 | DELETE `/administrators/{accountUuid}`                                       | 撤销平台权限，保留最后一位有效超级管理员              |
 | GET `/accounts?query=&cursor=&limit=`                                        | 选择已注册管理员的最小账号目录                        |
 | GET `/organizations?query=&cursor=&limit=`                                   | 全部组织分页列表                                      |
+| GET `/workspaces/{workspaceId}/scope`                                        | 按真实工作区 external ID 返回 `workspace_id` 和 `organization_uuid` |
 | POST `/organizations`                                                        | `{name, admin_account_uuids}`，要求 `Idempotency-Key` |
 | GET `/organizations/{organizationUuid}`                                      | 基础资料、管理员摘要、统计、管理版本                  |
 | PATCH `/organizations/{organizationUuid}`                                    | 白名单资料、`expected_version`                        |

@@ -6,9 +6,8 @@ import { I18nProvider, useI18n } from '../shared/i18n';
 import { ThemeProvider } from '../shared/theme/ThemeProvider';
 import { Toaster } from '../shared/ui/sonner';
 import { WorkspaceProvider } from '../shared/workspaces/WorkspaceProvider';
+import { startupWorkspaceId } from '../shared/workspaces/workspace-link';
 import { workspaceIdFromPath, workspaceSwitchPath } from '../shared/workspaces/presentation';
-
-const initialWorkspaceId = workspaceIdFromPath(window.location.pathname);
 
 async function navigateScope(workspaceId: string) {
   if (workspaceIdFromPath(router.state.location.pathname) === workspaceId) return;
@@ -27,6 +26,11 @@ const queryClient = new QueryClient({
   },
 });
 
+function currentWorkspaceTarget() {
+  const location = router.state.location;
+  return startupWorkspaceId({ pathname: location.pathname, search: location.searchStr });
+}
+
 export function App() {
   return (
     <I18nProvider>
@@ -34,7 +38,7 @@ export function App() {
         <AppToaster />
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <WorkspaceProvider navigateScope={navigateScope} initialWorkspaceId={initialWorkspaceId}>
+            <WorkspaceProvider navigateScope={navigateScope} currentWorkspaceTarget={currentWorkspaceTarget}>
               <RouterProvider router={router} />
             </WorkspaceProvider>
           </AuthProvider>

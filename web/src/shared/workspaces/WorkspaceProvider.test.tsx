@@ -96,7 +96,7 @@ function mount({
   render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={auth}>
-        <WorkspaceProvider navigateScope={navigate} initialWorkspaceId={initialWorkspaceId}>
+        <WorkspaceProvider navigateScope={navigate} currentWorkspaceTarget={() => initialWorkspaceId}>
           <Probe dirty={dirty} />
         </WorkspaceProvider>
       </AuthContext.Provider>
@@ -440,7 +440,7 @@ for (const path of ['/workspaces/ws-a/agents', '/workspaces/ws-a/agents/agent-de
             logout: async () => {},
           }}
         >
-          <WorkspaceProvider navigateScope={navigate} initialWorkspaceId="ws-a">
+          <WorkspaceProvider navigateScope={navigate} currentWorkspaceTarget={() => 'ws-a'}>
             <Probe />
             <RouterProvider router={router} />
           </WorkspaceProvider>

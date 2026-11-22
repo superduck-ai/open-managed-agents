@@ -43,6 +43,8 @@ curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
 
 Send `{"budget":null}` to remove the budget. Once removed, it cannot be re-added to that session; raise the cap instead if you need to retain a limit. If the DSH Brain is waiting for its next model request, raising or removing the budget lets it finish the original turn with its existing tool results.
 
+For a standalone Claude Code Worker, check the session status after changing the budget. If the turn stopped before finishing, send a message asking it to continue.
+
 ## Inspect usage
 
 Retrieve the session's `budget` and `usage.list_cost`, or inspect `session.usage` and status events in the [session event stream](/docs/en/events-and-streaming). Threads share the session budget. A deployment budget applies to each session it starts, not to cumulative deployment spend; changes apply to subsequent sessions.

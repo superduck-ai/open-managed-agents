@@ -6,7 +6,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// SessionBudgetHeader identifies a local budget gate before the model proxy forwards a request.
 const SessionBudgetHeader = "X-Oma-Session-Budget"
 
 func (h *Handler) handleSessionBudget(w http.ResponseWriter, r *http.Request) {

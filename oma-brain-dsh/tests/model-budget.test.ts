@@ -31,6 +31,32 @@ test("provider validation errors do not retry a model request", async () => {
   expect(posts).toBe(1);
 });
 
+test("an unrelated budget probe error ends the wait", async () => {
+  const methods: string[] = [];
+  const call = budgetCall("messages", async (_input, init) => {
+    methods.push(init!.method!);
+    if (methods.length === 1) return budgetResponse("reached", 400);
+    throw new Error("invalid probe configuration");
+  });
+  await expect(call).rejects.toThrow("invalid probe configuration");
+  expect(methods).toEqual(["POST", "HEAD"]);
+});
+
+test.each(["ConnectionRefused", "ECONNRESET"])("a Bun %s during a budget probe preserves the pending model request", async (code) => {
+  const methods: string[] = [];
+  const call = await budgetCall("messages", async (_input, init) => {
+    methods.push(init!.method!);
+    switch (methods.length) {
+      case 1: return budgetResponse("reached", 400);
+      case 2: throw Object.assign(new Error("connection failed"), { code });
+      case 3: return budgetResponse("available", 204);
+      default: return new Response("", { headers: { "content-type": "text/event-stream" } });
+    }
+  });
+  await call.stream.cancel();
+  expect(methods).toEqual(["POST", "HEAD", "HEAD", "POST"]);
+});
+
 test("cancelling a paused turn discards its pending request", async () => {
   const stop = new AbortController();
   const probed = Promise.withResolvers<void>();

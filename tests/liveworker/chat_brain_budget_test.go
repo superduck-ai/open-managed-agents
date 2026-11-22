@@ -12,6 +12,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,7 +100,7 @@ func budgetTaskModel(t *testing.T, calls *atomic.Int32) string {
 			return
 		}
 		for _, m := range req.Messages {
-			if bytes.Contains(m.Content, []byte("tool_result")) && bytes.Contains(m.Content, []byte("BUDGET_TASK_PROOF")) {
+			if hasBudgetToolProof(m.Content) {
 				writeCompactionResponse(w, req.Model, 100, "BUDGET_TASK_DONE", "", nil)
 				return
 			}
@@ -109,6 +110,37 @@ func budgetTaskModel(t *testing.T, calls *atomic.Int32) string {
 	}))
 	t.Cleanup(model.Close)
 	return model.URL
+}
+
+func hasBudgetToolProof(content []byte) bool {
+	var blocks []struct {
+		Type    string `json:"type"`
+		Content string `json:"content"`
+		IsError bool   `json:"is_error"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return false
+	}
+	for _, block := range blocks {
+		if block.Type == "tool_result" && !block.IsError && strings.Contains(block.Content, "BUDGET_TASK_PROOF") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBudgetToolProof(t *testing.T) {
+	for _, content := range []string{
+		`[{"type":"text","text":"BUDGET_TASK_PROOF"},{"type":"tool_result","content":"wrong output"}]`,
+		`[{"type":"tool_result","is_error":true,"content":"BUDGET_TASK_PROOF"}]`,
+	} {
+		if hasBudgetToolProof([]byte(content)) {
+			t.Fatalf("accepted invalid tool proof: %s", content)
+		}
+	}
+	if !hasBudgetToolProof([]byte(`[{"type":"tool_result","content":"BUDGET_TASK_PROOF"}]`)) {
+		t.Fatal("missing successful tool output")
+	}
 }
 
 func verifyBudgetContinuation(t *testing.T, e *liveEnv, name string, replacement any, denied <-chan string) {

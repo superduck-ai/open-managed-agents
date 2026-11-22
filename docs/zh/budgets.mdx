@@ -43,6 +43,8 @@ curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
 
 发送 `{"budget":null}` 可移除预算。移除后不能为该会话重新添加预算；如需继续限制成本，请提高上限。如果 DSH Brain 因预算触顶正在等待下一次模型请求，提高或移除预算后，它会沿用已有工具结果继续原任务，无需再发消息。
 
+如果使用独立运行的 Claude Code Worker，请在修改预算后查看会话状态。若回合已停止且任务尚未完成，发送一条消息让它继续。
+
 ## 查看使用量
 
 查询会话的 `budget` 和 `usage.list_cost`，或查看[会话事件流](/docs/zh/events-and-streaming)中的 `session.usage` 与状态事件。多线程共享会话预算；部署预算限制每次新启动的会话，而非所有运行的累计金额。修改部署预算只影响之后启动的会话。

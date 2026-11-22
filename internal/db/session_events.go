@@ -185,7 +185,7 @@ func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, sessi
 	if err := settleCompletedToolRequestTx(ctx, executor, session, primary, worker, event); err != nil {
 		return nil, err
 	}
-	if event.EventType == "span.model_request_start" && session.Status == "idle" && worker.WorkerStatus == "running" {
+	if event.EventType == "span.model_request_start" && session.Status != "terminated" && worker.WorkerStatus == "running" {
 		return resumeBudgetedModelStepTx(ctx, executor, session, primary, worker, event)
 	}
 	if maevents.CategoryFor(event.EventType) == maevents.CategorySessionStatus || maevents.CategoryFor(event.EventType) == maevents.CategoryThreadStatus {
@@ -201,6 +201,9 @@ func resumeBudgetedModelStepTx(ctx context.Context, executor yourbatis.Executor,
 	threadID := primary.ExternalID
 	if event.ThreadExternalID != nil {
 		threadID = *event.ThreadExternalID
+	}
+	if threadID == primary.ExternalID && primary.Status != "idle" {
+		return []SessionEvent{event}, nil
 	}
 	previous, found, err := NewSessionEventMapper(executor).FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {

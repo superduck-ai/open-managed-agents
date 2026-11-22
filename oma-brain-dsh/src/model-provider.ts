@@ -6,6 +6,7 @@ import type { Assignment } from "./assignment.ts";
 import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
+import { isBudgetRejection, waitForModelBudget } from "./model-budget.ts";
 import { traceHeaders } from "./observability/trace-context.ts";
 
 type ModelBackend = "messages" | "chat_completions";
@@ -28,12 +29,12 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
   const extraHeaders = { ...(options.purpose ? { "X-OMA-Model-Purpose": options.purpose } : {}), ...traceHeaders(assignment.trace_parent), ...(agentID ? { "X-Claude-Code-Agent-Id": agentID } : {}) };
   if (backend === "messages") {
-    const fetcher = proxyFetch(api, `${root}/messages`, extraHeaders, undefined, options);
+    const fetcher = proxyFetch(api, assignment, `${root}/messages`, extraHeaders, undefined, options);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
       imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
-  const fetcher = proxyFetch(api, `${root}/chat/completions`, extraHeaders, normalizeChatReasoning, options);
+  const fetcher = proxyFetch(api, assignment, `${root}/chat/completions`, extraHeaders, normalizeChatReasoning, options);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
     fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, maxOutputTokens: output, maxOutputTokensLimit, toolImagesAsUser: true, replayFormat: "oma-chat-completions-v1" };
 }
@@ -49,7 +50,7 @@ function chatRequestBody({ max_tokens: maxTokens, ...body }: Record<string, any>
   return maxTokens === undefined ? body : { ...body, max_completion_tokens: maxTokens };
 }
 
-function proxyFetch(api: OmaApi, endpoint: string, extraHeaders: Record<string, string>,
+function proxyFetch(api: OmaApi, assignment: Assignment, endpoint: string, extraHeaders: Record<string, string>,
   response: (value: Response) => Response = (value) => value, options?: GenerateOptions): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -63,14 +64,19 @@ function proxyFetch(api: OmaApi, endpoint: string, extraHeaders: Record<string, 
     const headers = new Headers(init.headers);
     headers.delete("x-api-key");
     for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
-    const idle = new IdleTimeout(MODEL_IDLE_TIMEOUT_MS);
-    try {
-      const result = await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
-        signal: init.signal ? AbortSignal.any([init.signal, idle.signal]) : idle.signal });
-      return response(idle.watch(result));
-    } catch (error) {
+    for (;;) {
+      const idle = new IdleTimeout(MODEL_IDLE_TIMEOUT_MS);
+      try {
+        const result = await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",
+          signal: init.signal ? AbortSignal.any([init.signal, idle.signal]) : idle.signal });
+        if (!isBudgetRejection(result)) return response(idle.watch(result));
+        await result.body?.cancel();
+      } catch (error) {
+        idle.clear();
+        throw error;
+      }
       idle.clear();
-      throw error;
+      await waitForModelBudget(api, assignment, init.signal ?? undefined);
     }
   }) as typeof fetch;
 }

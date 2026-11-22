@@ -2552,7 +2552,7 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
 
 工作进程事件持久化后，OMA 汇总会话的用量。达到[预算](/docs/zh/budgets)时，会话产生 `session.usage` 和 `stop_reason` 为 `budget_reached` 的 `session.status_idle`。请求完成后的检查可能使累计成本超过预算。达到上限后，新任务消息会被拒绝；工具确认、工具结果和中断等结算事件仍可提交。
 
-通过会话更新提高或移除预算，并检查会话状态，再按需发送新消息继续工作。
+通过会话更新提高或移除预算。正在等待下一次模型请求的 DSH Brain 会沿用已有工具结果继续原任务。
 
 ### 发送系统消息
 

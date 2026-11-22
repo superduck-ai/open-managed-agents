@@ -106,8 +106,32 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if err := rejectPausedSessionInput(t.Context(), store.mapperDB, session, primary.thread(), []SessionEvent{message}); err != nil {
 		t.Fatalf("提高预算后消息仍被暂停：%v", err)
 	}
-	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{start}); err != nil {
-		t.Fatalf("提高预算后模型调用仍被阻止：%v", err)
+	child := primary.thread()
+	child.UUID, child.ExternalID = uuid.NewV4().String(), "sthr_child"
+	child.ParentThreadUUID, child.ParentThreadExternalID = &primary.UUID, &primary.ExternalID
+	if _, err := NewSessionThreadMapper(store.mapperDB).Insert(t.Context(), sessionThreadWriteParameters(child)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(t.Context(), "UPDATE code_sessions SET worker_status = 'running' WHERE uuid = $1", scope.CodeSessionUUID); err != nil {
+		t.Fatal(err)
+	}
+	childRunning := event("sevt_child_running", "session.thread_status_running", `{}`, now)
+	childRunning.StatusThreadID = child.ExternalID
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{childRunning, start}); err != nil {
+		t.Fatal(err)
+	}
+	primary, err = NewSessionThreadMapper(store.mapperDB).FindPrimary(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil || primary.Status != "running" {
+		t.Fatalf("子线程先运行后，主线程恢复模型请求时状态应为 running，实际为 %q：%v", primary.Status, err)
+	}
+	childIdle := event("sevt_child_idle", "session.thread_status_idle", `{"stop_reason":{"type":"end_turn"}}`, now)
+	childIdle.StatusThreadID = child.ExternalID
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{childIdle}); err != nil {
+		t.Fatal(err)
+	}
+	session, _, err = store.GetSession(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil || session.Status != "running" {
+		t.Fatalf("子线程结束时，主线程仍在执行，会话状态为 %q：%v", session.Status, err)
 	}
 	setBudget(nil, 0, &now)
 	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{message}, nil); err != nil {

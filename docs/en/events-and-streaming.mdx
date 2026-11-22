@@ -2552,7 +2552,7 @@ To resume a session, send a `user.message` event to it as usual:
 
 After worker events are persisted, OMA aggregates session usage. When the [budget](/docs/en/budgets) is reached, the session emits `session.usage` and `session.status_idle` with a `stop_reason` of `budget_reached`. The check follows request completion, so the accumulated cost can exceed the budget. New task messages are rejected at the limit; settlement events such as tool confirmations, tool results, and interrupts remain accepted.
 
-Raise or remove the budget with a session update, inspect the session status, and send a new message as needed to continue work.
+Raise or remove the budget with a session update. A DSH Brain turn waiting for its next model request continues with the existing tool results.
 
 ### Sending system messages
 

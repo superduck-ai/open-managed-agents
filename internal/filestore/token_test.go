@@ -30,8 +30,6 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	wrongAudienceClaims["aud"] = []string{"session-ingress"}
 	expiredClaims := decodeFilestoreTokenPayload(t, validToken)
 	expiredClaims["exp"] = time.Now().Add(-time.Minute).Unix()
-	missingExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
-	delete(missingExpiryClaims, "exp")
 	readonlyFalseClaims := decodeFilestoreTokenPayload(t, validToken)
 	readonlyFalseClaims["readonly"] = false
 	readonlyNullClaims := decodeFilestoreTokenPayload(t, validToken)
@@ -48,7 +46,6 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 		{name: "wrong issuer", token: signFilestoreTokenPayload(t, credentials, wrongIssuerClaims)},
 		{name: "wrong audience", token: signFilestoreTokenPayload(t, credentials, wrongAudienceClaims)},
 		{name: "expired", token: signFilestoreTokenPayload(t, credentials, expiredClaims)},
-		{name: "missing expiry", token: signFilestoreTokenPayload(t, credentials, missingExpiryClaims)},
 		{name: "readonly false", token: signFilestoreTokenPayload(t, credentials, readonlyFalseClaims)},
 		{name: "readonly null", token: signFilestoreTokenPayload(t, credentials, readonlyNullClaims)},
 		{name: "not a jwt", token: "not-a-jwt"},
@@ -66,6 +63,37 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	incomplete.FilesystemID = ""
 	if _, err := credentials.Issue(incomplete); err == nil {
 		t.Fatal("Issue() succeeded with missing filesystem_id")
+	}
+}
+
+func TestTokenCredentialsAcceptLongLivedTokens(t *testing.T) {
+	t.Parallel()
+
+	credentials := newTokenCredentialsForTest(t)
+	credentials.now = func() time.Time { return time.Now().UTC().Add(-25 * time.Hour) }
+	longLivedToken := mustIssueFilestoreToken(t, credentials, filestoreTokenIdentityForTest())
+	legacyClaims := decodeFilestoreTokenPayload(t, longLivedToken)
+	legacyClaims["exp"] = time.Now().Add(time.Minute).Unix()
+	credentials.now = time.Now
+
+	for _, test := range []struct {
+		name  string
+		token string
+	}{
+		{name: "issued more than an hour ago without exp", token: longLivedToken},
+		{name: "legacy token with unexpired exp", token: signFilestoreTokenPayload(t, credentials, legacyClaims)},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			claims, err := credentials.Verify(test.token)
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			if claims.FilesystemID != filestoreTokenIdentityForTest().FilesystemID {
+				t.Fatalf("filesystem_id = %q", claims.FilesystemID)
+			}
+		})
 	}
 }
 
@@ -118,8 +146,8 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			if got := int64(payload["iat"].(float64)); got != issuedAt.Unix() {
 				t.Fatalf("iat = %d, want %d", got, issuedAt.Unix())
 			}
-			if got := int64(payload["exp"].(float64)); got != issuedAt.Add(filestoreTokenTTL).Unix() {
-				t.Fatalf("exp = %d, want %d", got, issuedAt.Add(filestoreTokenTTL).Unix())
+			if exp, exists := payload["exp"]; exists {
+				t.Fatalf("filestore token unexpectedly contains exp: %#v", exp)
 			}
 			if _, exists := payload["session_id"]; exists {
 				t.Fatalf("filestore token unexpectedly contains session ingress claims: %#v", payload)
@@ -132,7 +160,7 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			if !ok || len(taints) != 2 || taints[0] != "compliance" || taints[1] != "restricted" {
 				t.Fatalf("org_taints = %#v", payload["org_taints"])
 			}
-			wantClaimCount := 13
+			wantClaimCount := 12
 			if test.wantPresent {
 				wantClaimCount++
 			}

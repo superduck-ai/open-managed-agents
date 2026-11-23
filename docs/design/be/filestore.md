@@ -82,7 +82,7 @@ Filestore JWT 包含以下注册 claims 与业务 claims：
 | `iss`                                                  | 固定为 `open-managed-agents`                                         |
 | `sub`                                                  | 非空的主体标识                                                       |
 | `aud`                                                  | 必须包含 `filestore`                                                 |
-| `iat` / `exp`                                          | 签发时间与到期时间必填；当前有效期固定为 1 小时                      |
+| `iat` / `exp`                                          | `iat` 必填；新签发 token 不含 `exp`，旧 token 携带的 `exp` 仍按到期时间校验 |
 | `org_uuid`                                             | 必须匹配文件系统所属组织                                             |
 | `account_uuid`                                         | 必须匹配未删除账号，且属于目标组织或等于该 filesystem 所属 Session 的已保存运行账号                                           |
 | `workspace_uuid`                                       | 必须匹配未归档工作区                                                 |
@@ -120,7 +120,7 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 - 组织有多个 taint 时重复传入 `--org-taint`。
 - workspace 已启用 CMEK 时传入 `--workspace-cmek-enabled`。
 - 默认签发读写 Token 1；增加 `--readonly` 后签发携带 `readonly=true` 的 Token 2。
-- token 自签发起 1 小时后失效；长时间 mount 或联调需要在到期前重新签发并更新客户端凭证。
+- token 没有墙钟有效期，与所属 Session 同生命周期；每次请求回查 Session、workspace、filesystem 与安全策略，任一失效即拒绝。需要全局撤销时轮换签名密钥。
 - 所有身份和策略字段都必须与当前数据库一致，且 `filesystem-id` 必须已经存在，否则服务端验签后的范围回查仍会拒绝请求。
 
 当前公开合同没有 filesystem 创建接口，Filestore 鉴权也不会根据其他凭证惰性建档。public Session 创建事务会自动建立唯一 filesystem，并在同一事务中建立 `/outputs`、`/skills`、`/uploads`、`/transcripts`、`/tool_results` 五个固定一级目录；JWT 在 sandbox 启动等受信边界按需签发，不持久化。请求改用同 workspace 的其他 filesystem、同名 filesystem 已被其他 Session 绑定，或数据库记录尚未创建时，都必须拒绝，不能改绑或泄露其存在性。每次鉴权还会回查所属 Session；Session 一旦归档、终止或删除，既有 JWT 立即失效。

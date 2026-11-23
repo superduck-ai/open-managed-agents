@@ -25,7 +25,6 @@ import (
 const (
 	filestoreTokenIssuer   = "open-managed-agents"
 	filestoreTokenAudience = "filestore"
-	filestoreTokenTTL      = time.Hour
 )
 
 // TokenClaims 是 Filestore 专用 JWT 合同。它与 code-session ingress claims
@@ -59,7 +58,6 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		"iss",
 		"sub",
 		"aud",
-		"exp",
 		"iat",
 		"org_uuid",
 		"account_uuid",
@@ -70,13 +68,14 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		"org_taints",
 		"workspace_cmek_enabled",
 	}
-	allowed := make(map[string]struct{}, len(required)+1)
+	allowed := make(map[string]struct{}, len(required)+2)
 	for _, name := range required {
 		allowed[name] = struct{}{}
 		if _, exists := fields[name]; !exists {
 			return fmt.Errorf("filestore token is missing claim %q", name)
 		}
 	}
+	allowed["exp"] = struct{}{}
 	allowed["readonly"] = struct{}{}
 	for name := range fields {
 		if _, exists := allowed[name]; !exists {
@@ -214,11 +213,10 @@ func (c *TokenCredentials) issue(identity TokenIdentity, readonly *bool) (string
 	now := c.now().UTC()
 	claims := TokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    filestoreTokenIssuer,
-			Subject:   identity.Subject,
-			Audience:  jwt.ClaimStrings{filestoreTokenAudience},
-			ExpiresAt: jwt.NewNumericDate(now.Add(filestoreTokenTTL)),
-			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:   filestoreTokenIssuer,
+			Subject:  identity.Subject,
+			Audience: jwt.ClaimStrings{filestoreTokenAudience},
+			IssuedAt: jwt.NewNumericDate(now),
 		},
 		OrgUUID:                   identity.OrgUUID,
 		AccountUUID:               identity.AccountUUID,
@@ -248,7 +246,6 @@ func (c *TokenCredentials) Verify(rawToken string) (TokenClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
 		jwt.WithStrictDecoding(),
-		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),
 		jwt.WithIssuer(filestoreTokenIssuer),
 		jwt.WithAudience(filestoreTokenAudience),

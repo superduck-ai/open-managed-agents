@@ -45,8 +45,8 @@
     <select id="FindMember" resultType="PlatformAdminMember">
         SELECT uuid, email, name, role FROM users WHERE organization_uuid = #{organizationUUID} AND uuid = #{memberUUID} AND deleted_at IS NULL
     </select>
-    <select id="FindWorkspaceScopeByExternalID" resultType="platformAdminWorkspaceScopeRow">
-        SELECT w.external_id, w.organization_uuid FROM workspaces w
+    <select id="FindWorkspaceOrganization" result="scalar" resultType="string">
+        SELECT w.organization_uuid FROM workspaces w
         JOIN organizations o ON o.uuid = w.organization_uuid
         WHERE w.external_id = #{externalID} AND w.external_id &lt;&gt; 'default' AND w.archived_at IS NULL
     </select>

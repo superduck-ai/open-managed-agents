@@ -6,14 +6,9 @@ import (
 	"errors"
 )
 
-type PlatformAdminWorkspaceScope struct {
-	WorkspaceID      string
-	OrganizationUUID string
-}
-
-func (d *DB) GetPlatformAdminWorkspaceScope(ctx context.Context, externalID string) (PlatformAdminWorkspaceScope, error) {
-	row, err := NewPlatformAdminOrganizationMapper(d.mapperDB).FindWorkspaceScopeByExternalID(ctx, externalID)
-	return PlatformAdminWorkspaceScope{WorkspaceID: row.ExternalID, OrganizationUUID: row.OrganizationUUID}, mapNoRows(err)
+func (d *DB) GetWorkspaceOrganization(ctx context.Context, externalID string) (string, error) {
+	org, err := NewPlatformAdminOrganizationMapper(d.mapperDB).FindWorkspaceOrganization(ctx, externalID)
+	return org, mapNoRows(err)
 }
 
 func (d *DB) ListPlatformAdminOrganizations(ctx context.Context, query PlatformAdminPageQuery) ([]PlatformAdminOrganization, error) {

@@ -121,7 +121,7 @@ test('调用方在读取响应体期间取消后，迟到401不能清除新会�
   const dispose = onApiAuthFailure((status) => failures.push(status));
   try {
     const controller = new AbortController();
-    const pending = client.request('/workspaces/target/scope', { signal: controller.signal });
+    const pending = client.request('/organizations', { signal: controller.signal });
     await Promise.resolve();
     controller.abort();
     finish();

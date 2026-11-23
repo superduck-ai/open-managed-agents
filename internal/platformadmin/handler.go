@@ -64,7 +64,6 @@ func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r.Post("/administrators", h.addPlatformAdministrator)
 	r.Delete("/administrators/{accountUuid}", h.removePlatformAdministrator)
 	r.Get("/organizations", h.organizations)
-	r.Get("/workspaces/{workspaceId}/scope", h.workspaceScope)
 	r.Post("/organizations", h.createOrganization)
 	r.Get("/oauth-providers", h.listOAuthProviders)
 	r.Post("/oauth-providers", h.createOAuthProvider)

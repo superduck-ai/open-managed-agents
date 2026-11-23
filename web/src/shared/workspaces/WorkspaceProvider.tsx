@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { cancelScopeRequests, getScopeSignal, onApiAuthFailure, setConsoleRequestContext } from '../api/client';
-import { PlatformAdminClient } from '../api/platform-admin';
-import { loadWorkspaceLink, workspaceLinkError } from './workspace-link';
+import { fetchWorkspaceBootstrap, workspaceLinkError } from './workspace-link';
 import { AuthContext, useAuth } from '../auth/context';
-import { fetchBootstrap, type AuthAccount, type OrganizationAccess } from '../auth/api';
+import { fetchBootstrap, type AuthAccount, type BootstrapResponse, type OrganizationAccess } from '../auth/api';
 import {
   readPlatformScope,
   savePlatformScope,
@@ -39,6 +38,37 @@ type Scope = {
 };
 type ScopeAttempt = { kind: 'organization'; orgUuid?: string } | { kind: 'workspace'; workspaceId: string };
 
+type PlatformTarget =
+  { kind: 'organization'; orgUuid: string; restore?: PlatformScope } | { kind: 'workspace'; workspaceId: string };
+
+function platformBootstrapAccess(target: PlatformTarget, bootstrap: BootstrapResponse, accountUuid: string) {
+  const { account, organization_access: access } = bootstrap;
+  const orgUuid = target.kind === 'organization' ? target.orgUuid : access?.organization.uuid;
+  if (!orgUuid || account?.uuid !== accountUuid || !isPlatformOrganizationAccess(access, orgUuid)) return;
+  return { account, access };
+}
+
+function selectPlatformScope(
+  target: PlatformTarget,
+  account: AuthAccount,
+  access: OrganizationAccess,
+  workspaces: Workspace[],
+): Scope {
+  const orgUuid = access.organization.uuid;
+  const selected =
+    target.kind === 'workspace'
+      ? workspaces.find((item) => item.id === target.workspaceId && !item.archived_at)
+      : chooseWorkspace(workspaces, target.restore?.targetWorkspaceId ?? '');
+  if (!selected) throw workspaceLinkError(404);
+  const memberLink =
+    target.kind === 'workspace' && account.memberships?.some((item) => item.organization?.uuid === orgUuid);
+  const platform =
+    memberLink && readPlatformScope(account.uuid)?.targetOrganizationUuid !== orgUuid
+      ? undefined
+      : { accountUuid: account.uuid, targetOrganizationUuid: orgUuid };
+  return { orgUuid, workspaces, activeWorkspaceId: selected.id, account, access, platform };
+}
+
 const emptyScope: Scope = { workspaces: [], activeWorkspaceId: '' };
 
 export function WorkspaceProvider({
@@ -57,7 +87,6 @@ export function WorkspaceProvider({
   const [error, setError] = useState<unknown>(null);
   const generation = useRef(0);
   const attempted = useRef<ScopeAttempt>({ kind: 'organization' });
-  const [platformClient] = useState(() => new PlatformAdminClient(() => undefined));
   const recovery = useRef<'idle' | 'checking' | 'failed'>('idle');
   const authRef = useRef(auth);
   authRef.current = auth;
@@ -156,30 +185,38 @@ export function WorkspaceProvider({
     [installScope, queryClient],
   );
 
-  const enterOrganization = useCallback(
-    async (orgUuid: string, restore?: PlatformScope) => {
-      const current = scopeRef.current;
-      attempted.current = { kind: 'organization', orgUuid };
+  const openPlatformTarget = useCallback(
+    async (target: PlatformTarget) => {
       const account = authRef.current.account;
       if (!account) throw new Error('Authentication required');
-      const platform = restore ??
-        current.platform ?? {
-          accountUuid: account.uuid,
-          targetOrganizationUuid: orgUuid,
-        };
+      const current = scopeRef.current;
+      const link = target.kind === 'workspace';
+      const restore = target.kind === 'organization' ? target.restore : undefined;
       const ticket = ++generation.current;
+      attempted.current = target;
+      recovery.current = 'idle';
       setSwitching(true);
       setError(null);
       cancelScopeRequests();
+      const signal = getScopeSignal();
       setConsoleRequestContext({});
-      await queryClient.cancelQueries({ predicate: isBusinessQuery });
+      if (link) {
+        scopeRef.current = emptyScope;
+        setScope(emptyScope);
+      }
+      await Promise.all([
+        queryClient.cancelQueries({ predicate: isBusinessQuery }),
+        queryClient.cancelQueries({ queryKey: ['auth', 'bootstrap'] }),
+      ]);
+      if (ticket !== generation.current) return false;
       queryClient.removeQueries({ predicate: isBusinessQuery });
-      await queryClient.cancelQueries({ queryKey: ['auth', 'bootstrap'] });
       try {
-        const bootstrap = await fetchBootstrap({ organizationUuid: orgUuid });
+        const bootstrap = link
+          ? await fetchWorkspaceBootstrap(target.workspaceId, signal)
+          : await fetchBootstrap({ organizationUuid: target.orgUuid });
         if (ticket !== generation.current) return false;
-        const access = bootstrap.organization_access;
-        if (bootstrap.account?.uuid !== account.uuid || !isPlatformOrganizationAccess(access, orgUuid)) {
+        const authorized = platformBootstrapAccess(target, bootstrap, account.uuid);
+        if (!authorized) {
           if (restore && !current.orgUuid) {
             clearPlatformScope();
             return await switchOrganization(
@@ -190,82 +227,29 @@ export function WorkspaceProvider({
               restore.targetWorkspaceId,
             );
           }
-          throw new Error('Platform organization access denied');
+          throw workspaceLinkError(403);
         }
-        const workspaces = await listConsoleWorkspaces(orgUuid);
+        const workspaces = await listConsoleWorkspaces(authorized.access.organization.uuid);
         if (ticket !== generation.current) return false;
-        const selected = chooseWorkspace(workspaces, restore?.targetWorkspaceId ?? '');
-        if (!selected) throw new Error('Default workspace unavailable');
-        return await installScope(
-          {
-            orgUuid,
-            workspaces,
-            activeWorkspaceId: selected.id,
-            access,
-            account: bootstrap.account,
-            csrfToken: bootstrap.csrf_token,
-            platform: { ...platform, targetOrganizationUuid: orgUuid },
-          },
-          ticket,
-          restore?.targetWorkspaceId !== 'default',
-        );
+        const next = selectPlatformScope(target, authorized.account, authorized.access, workspaces);
+        if (!next.platform) clearPlatformScope();
+        return await installScope({ ...next, csrfToken: bootstrap.csrf_token }, ticket, !link && !restore);
       } catch (cause) {
         if (ticket !== generation.current) return false;
-        if (restore) {
-          setScope({ ...emptyScope, platform: restore });
-          setError(cause);
-        } else
+        if (link || restore) setError(cause);
+        setSwitching(false);
+        if (link) return false;
+        if (restore) setScope({ ...emptyScope, platform: restore });
+        else
           setConsoleRequestContext({
             organizationUuid: current.orgUuid,
             workspaceId: current.activeWorkspaceId,
             csrfToken: current.csrfToken ?? authRef.current.csrfToken,
           });
-        setSwitching(false);
         throw cause;
       }
     },
     [installScope, queryClient, switchOrganization],
-  );
-
-  const openWorkspaceLink = useCallback(
-    async (workspaceId: string) => {
-      const account = authRef.current.account;
-      if (!account) return false;
-      const ticket = ++generation.current;
-      const savedPlatform = readPlatformScope(account.uuid);
-      attempted.current = { kind: 'workspace', workspaceId };
-      recovery.current = 'idle';
-      setSwitching(true);
-      setError(null);
-      cancelScopeRequests();
-      const signal = getScopeSignal();
-      setConsoleRequestContext({});
-      scopeRef.current = emptyScope;
-      setScope(emptyScope);
-      await queryClient.cancelQueries({ predicate: isBusinessQuery });
-      if (ticket !== generation.current) return false;
-      queryClient.removeQueries({ predicate: isBusinessQuery });
-      try {
-        const next = await loadWorkspaceLink(platformClient, workspaceId, account.uuid, signal);
-        if (ticket !== generation.current) return false;
-        const member = account.memberships?.some((membership) => membership.organization?.uuid === next.orgUuid);
-        const platformAccess = isPlatformOrganizationAccess(next.access, next.orgUuid);
-        if (!member && !platformAccess) throw workspaceLinkError(403);
-        const platform =
-          platformAccess && (!member || savedPlatform?.targetOrganizationUuid === next.orgUuid)
-            ? { accountUuid: account.uuid, targetOrganizationUuid: next.orgUuid, targetWorkspaceId: workspaceId }
-            : undefined;
-        clearPlatformScope();
-        return await installScope({ ...next, platform }, ticket, false);
-      } catch (cause) {
-        if (ticket !== generation.current) return false;
-        recovery.current = 'failed';
-        setError(cause);
-        setSwitching(false);
-        return false;
-      }
-    },
-    [installScope, platformClient, queryClient],
   );
 
   const exitOrganization = useCallback(async () => {
@@ -297,8 +281,13 @@ export function WorkspaceProvider({
       const savedPlatform = readPlatformScope(accountUuid);
       const platform =
         savedPlatform && workspaceId === 'default' ? { ...savedPlatform, targetWorkspaceId: 'default' } : savedPlatform;
-      if (explicitPlatformTarget) void openWorkspaceLink(workspaceId);
-      else if (platform) void enterOrganization(platform.targetOrganizationUuid, platform).catch(() => undefined);
+      if (explicitPlatformTarget) void openPlatformTarget({ kind: 'workspace', workspaceId });
+      else if (platform)
+        void openPlatformTarget({
+          kind: 'organization',
+          orgUuid: platform.targetOrganizationUuid,
+          restore: platform,
+        }).catch(() => undefined);
       else void switchOrganization(readPreference(accountUuid), false, false, undefined, workspaceId);
     } else {
       ++generation.current;
@@ -310,7 +299,7 @@ export function WorkspaceProvider({
     return () => {
       ++generation.current;
     };
-  }, [accountUuid, currentWorkspaceTarget, switchOrganization, enterOrganization, openWorkspaceLink]);
+  }, [accountUuid, currentWorkspaceTarget, switchOrganization, openPlatformTarget]);
 
   useEffect(() => {
     if (auth.account && !switching && !error)
@@ -463,7 +452,7 @@ export function WorkspaceProvider({
     <OrganizationContext.Provider
       value={{
         platformScope: scope.platform,
-        enterOrganization,
+        enterOrganization: (orgUuid) => openPlatformTarget({ kind: 'organization', orgUuid }),
         exitOrganization,
         memberships: auth.account?.memberships ?? [],
         orgUuid: scope.orgUuid,
@@ -471,10 +460,14 @@ export function WorkspaceProvider({
         error,
         switchOrganization,
         retry: () =>
-          scope.platform
-            ? enterOrganization(scope.platform.targetOrganizationUuid, scope.platform)
-            : attempted.current.kind === 'workspace'
-              ? openWorkspaceLink(attempted.current.workspaceId)
+          attempted.current.kind === 'workspace'
+            ? openPlatformTarget(attempted.current)
+            : scope.platform
+              ? openPlatformTarget({
+                  kind: 'organization',
+                  orgUuid: scope.platform.targetOrganizationUuid,
+                  restore: scope.platform,
+                })
               : switchOrganization(attempted.current.orgUuid),
       }}
     >

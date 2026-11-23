@@ -34,11 +34,6 @@ type PlatformAdminWorkspace struct {
 	Archived   bool   `db:"archived"`
 }
 
-type platformAdminWorkspaceScopeRow struct {
-	ExternalID       string `db:"external_id"`
-	OrganizationUUID string `db:"organization_uuid"`
-}
-
 type PlatformAdminOrganizationPatch struct {
 	OrganizationUUID string
 	Name             *string
@@ -73,7 +68,7 @@ type PlatformAdminOrganizationMapper interface {
 	Update(ctx context.Context, params PlatformAdminOrganizationPatch) error
 	ListMembers(ctx context.Context, params PlatformAdminPageQuery) ([]PlatformAdminMember, error)
 	ListWorkspaces(ctx context.Context, params PlatformAdminPageQuery) ([]PlatformAdminWorkspace, error)
-	FindWorkspaceScopeByExternalID(ctx context.Context, externalID string) (platformAdminWorkspaceScopeRow, error)
+	FindWorkspaceOrganization(ctx context.Context, externalID string) (string, error)
 	FindMember(ctx context.Context, organizationUUID, memberUUID string) (PlatformAdminMember, error)
 	FindMemberByEmail(ctx context.Context, organizationUUID, email string) (PlatformAdminMember, bool, error)
 	InsertMember(ctx context.Context, params PlatformAdminMemberInput) error

@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -136,6 +137,64 @@ func TestPlatformAdminOrganizationAccessPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("按工作区初始化只使用真实超管权限", func(t *testing.T) {
+		target, err := database.CreateAdminWorkspace(t.Context(), db.AdminWorkspace{UUID: uuid.NewV4().String(), ExternalID: "wrkspc_link", OrganizationUUID: foreign.UUID, Name: "反馈", CreatedAt: time.Now(), DataResidency: []byte("{}"), Tags: []byte("{}")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{target.ExternalID, "missing", "default"} {
+			path := "/api/bootstrap?target_workspace_id=" + id
+			request(t, "GET", path, "", "", "", 401)
+			request(t, "GET", path, ordinary, "", "", 403)
+		}
+		orphan := target
+		orphan.UUID, orphan.ExternalID, orphan.OrganizationUUID = uuid.NewV4().String(), "wrkspc_orphan", uuid.NewV4().String()
+		if _, err := database.CreateAdminWorkspace(t.Context(), orphan); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"missing", "default", target.UUID, orphan.ExternalID} {
+			request(t, "GET", "/api/bootstrap?target_workspace_id="+id, operator, "", "", 404)
+		}
+		path := "/api/bootstrap?target_workspace_id=" + target.ExternalID
+		request(t, "GET", "/api/bootstrap?target_workspace_id=", operator, "", "", 400)
+		request(t, "GET", path, operator, home, "", 400)
+		request(t, "GET", path, operator, "", workspace.ExternalID, 400)
+		for _, header := range []string{"X-Api-Key", "Authorization"} {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.AddCookie(&http.Cookie{Name: "sessionKey", Value: operator})
+			r.Header.Set(header, "unused")
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, r)
+			if w.Code != 403 {
+				t.Fatalf("credential status = %d", w.Code)
+			}
+		}
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.AddCookie(&http.Cookie{Name: "sessionKey", Value: operator})
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, r)
+		var result struct {
+			Account struct {
+				UUID string `json:"uuid"`
+			} `json:"account"`
+			Access struct {
+				Source       string `json:"source"`
+				Organization struct {
+					UUID string `json:"uuid"`
+				} `json:"organization"`
+			} `json:"organization_access"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || result.Account.UUID != operator || result.Access.Organization.UUID != foreign.UUID || result.Access.Source != "platform_admin" || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("workspace bootstrap status=%d account=%v access=%+v err=%v", w.Code, result.Account, result.Access, err)
+		}
+		if _, err = database.GetActivePlatformUserByEmail(t.Context(), foreign.UUID, operator+"@example.com"); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("unexpected membership: %v", err)
+		}
+		if _, err = database.ArchiveAdminWorkspace(t.Context(), foreign.UUID, target.ExternalID); err != nil {
+			t.Fatal(err)
+		}
+		request(t, "GET", path, operator, "", "", 404)
+	})
 	t.Run("普通账号拒绝且超管实时授权目标组织", func(t *testing.T) {
 		request(t, "GET", "/v1/agents?beta=true", outsider, foreign.UUID, "default", 403)
 		request(t, "GET", "/v1/agents?beta=true&organization_uuid="+foreign.UUID, operator, "", "default", 403)
@@ -155,9 +214,11 @@ func TestPlatformAdminOrganizationAccessPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		request(t, "GET", "/v1/agents?beta=true", "legacy", foreign.UUID, "default", 403)
+		request(t, "GET", "/api/bootstrap?target_workspace_id=wrkspc_home", "legacy", "", "", 403)
 		trustedProvider := server.platformAuth
 		server.platformAuth = platformauth.New(config.AuthConfig{}, database, nil, nil)
 		defer func() { server.platformAuth = trustedProvider }()
+		request(t, "GET", "/api/bootstrap?target_workspace_id=wrkspc_home", operator, "", "", 403)
 		request(t, "GET", "/v1/agents?beta=true", operator, foreign.UUID, "default", 403)
 	})
 
@@ -227,6 +288,7 @@ func TestPlatformAdminOrganizationAccessPostgres(t *testing.T) {
 		if err := service.SetAdministrator(t.Context(), operator, "测试运维", "逐请求撤权", false); err != nil {
 			t.Fatal(err)
 		}
+		request(t, "GET", "/api/bootstrap?target_workspace_id=wrkspc_home", operator, "", "", 403)
 		request(t, "GET", "/v1/agents?beta=true", operator, foreign.UUID, "default", 403)
 		request(t, "GET", "/v1/agents?beta=true", operator, home, "default", 200)
 		request(t, "GET", "/v1/agents?beta=true", operator, home, workspace.ExternalID, 403)

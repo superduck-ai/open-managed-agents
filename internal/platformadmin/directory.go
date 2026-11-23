@@ -29,19 +29,6 @@ type Workspace struct {
 	IsDefault bool   `json:"is_default"`
 	Archived  bool   `json:"archived"`
 }
-type WorkspaceScope struct {
-	WorkspaceID      string `json:"workspace_id"`
-	OrganizationUUID string `json:"organization_uuid"`
-}
-
-func (h *Handler) workspaceScope(w http.ResponseWriter, r *http.Request) {
-	row, err := h.service.db.GetPlatformAdminWorkspaceScope(r.Context(), chi.URLParam(r, "workspaceId"))
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	respond(w, http.StatusOK, WorkspaceScope{WorkspaceID: row.WorkspaceID, OrganizationUUID: row.OrganizationUUID})
-}
 
 func readPage(r *http.Request) (db.PlatformAdminPageQuery, error) {
 	v := r.URL.Query()

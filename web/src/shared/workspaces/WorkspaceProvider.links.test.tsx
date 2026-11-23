@@ -4,7 +4,7 @@ import { StrictMode, useState } from 'react';
 import { resetTestDom } from '../../test/setup';
 import { AuthContext, useAuth, type AuthContextValue } from '../auth/context';
 import type { AuthAccount } from '../auth/api';
-import { getConsoleRequestContext, setConsoleRequestContext } from '../api/client';
+import { reportApiAuthFailure, getConsoleRequestContext, setConsoleRequestContext } from '../api/client';
 import { useOrganizations, type OrganizationContextValue } from '../organizations/context';
 import { readPlatformScope, savePlatformScope } from '../organizations/platform-scope';
 import { useWorkspace, type WorkspaceContextValue } from './context';
@@ -40,14 +40,12 @@ function mount(path: string, { admin = true, anonymous = false, strict = false }
   globalThis.fetch = mock(async (input, options) => {
     const path = String(input);
     const headers = new Headers(options?.headers);
-    const org = headers.get('X-Organization-UUID');
-    requests.push({ path, organization: org, workspace: headers.get('X-Workspace-ID') });
-    if (path.startsWith('/api/platform-admin/workspaces/')) {
-      const id = decodeURIComponent(path.split('/')[4]!);
-      if (id === 'missing') return Response.json({ error: { code: 'not_found' } }, { status: 404 });
-      return Response.json({ workspace_id: id, organization_uuid: id === 'ws-home' ? 'home' : 'target' });
-    }
-    if (path === '/api/bootstrap')
+    const headerOrg = headers.get('X-Organization-UUID');
+    const id = new URL(path, 'https://console.test').searchParams.get('target_workspace_id');
+    const org = id ? (id === 'ws-home' ? 'home' : 'target') : headerOrg;
+    requests.push({ path, organization: headerOrg, workspace: headers.get('X-Workspace-ID') });
+    if (id === 'missing') return Response.json({}, { status: 404 });
+    if (path.startsWith('/api/bootstrap'))
       return Response.json({
         account: identity,
         csrf_token: `csrf-${org}`,
@@ -110,7 +108,7 @@ test('无效深链保留原 URL 和空请求上下文，不切到默认空间', 
   expect(getConsoleRequestContext()).toEqual({});
   expect(window.location.href).toBe(`https://oma.duck.ai${path}`);
   expect(navigate).not.toHaveBeenCalled();
-  expect(requests.map((request) => request.path)).toEqual(['/api/platform-admin/workspaces/missing/scope']);
+  expect(requests.map((request) => request.path)).toEqual(['/api/bootstrap?target_workspace_id=missing']);
   expect(readPlatformScope(identity.uuid)).toBeUndefined();
 });
 
@@ -153,8 +151,7 @@ for (const path of [
     expect(window.location.href).toBe(`https://oma.duck.ai${path}`);
     expect(navigate).not.toHaveBeenCalled();
     expect(requests).toEqual([
-      { path: '/api/platform-admin/workspaces/ws-target/scope', organization: null, workspace: null },
-      { path: '/api/bootstrap', organization: 'target', workspace: null },
+      { path: '/api/bootstrap?target_workspace_id=ws-target', organization: null, workspace: null },
       { path: '/api/console/organizations/target/workspaces', organization: 'target', workspace: null },
     ]);
   });
@@ -181,7 +178,7 @@ test('普通成员和 default 别名不调用平台解析接口', async () => {
   ] as const) {
     const view = mount(`/workspaces/${id}/agents`, { admin });
     await waitFor(() => expect(workspace.activeWorkspaceId).toBe('ws-home'));
-    expect(requests.some((request) => request.path.startsWith('/api/platform-admin'))).toBe(false);
+    expect(requests.some((request) => request.path.startsWith('/api/bootstrap?target_workspace_id='))).toBe(false);
     expect(organizations.platformScope).toBeUndefined();
     view.unmount();
   }
@@ -225,43 +222,21 @@ test('手动切换后刷新保持最新选择，不再次应用启动深链', as
   await act(async () => workspace.refreshWorkspaces());
   expect(workspace.activeWorkspaceId).toBe('ws-home');
   expect(organizations.platformScope).toBeUndefined();
-  expect(requests.filter((request) => request.path.startsWith('/api/platform-admin'))).toHaveLength(1);
+  expect(requests.filter((request) => request.path.startsWith('/api/bootstrap?target_workspace_id='))).toHaveLength(1);
 });
 
-test('手动选择使迟到解析失效，不能覆盖新组织或请求上下文', async () => {
-  mount('/workspaces/ws-target/agents');
-  const fallbackFetch = globalThis.fetch;
-  let complete!: (response: Response) => void;
-  globalThis.fetch = mock((input, options) =>
-    String(input).startsWith('/api/platform-admin')
-      ? new Promise<Response>((resolve) => {
-          complete = resolve;
-        })
-      : fallbackFetch(input, options),
-  ) as typeof fetch;
-  await waitFor(() => expect(complete).toBeDefined());
-  await act(async () => expect(await organizations.switchOrganization('home')).toBe(true));
-  await act(async () => complete(Response.json({ workspace_id: 'ws-target', organization_uuid: 'target' })));
-  expect(workspace.activeWorkspaceId).toBe('ws-home');
-  expect(getConsoleRequestContext().organizationUuid).toBe('home');
-  expect(readPlatformScope(identity.uuid)).toBeUndefined();
-  expect(requests.some((request) => request.organization === 'target')).toBe(false);
-});
-
-for (const failure of ['resolver', 'account', 'organization', 'access', 'source', 'archived']) {
+for (const failure of ['account', 'organization', 'access', 'source', 'archived']) {
   test(`深链拒绝无效服务端范围并保持空请求上下文 ${failure}`, async () => {
     mount('/workspaces/ws-target/agents/agent-7');
     const fallbackFetch = globalThis.fetch;
     globalThis.fetch = mock(async (input, options) => {
       const path = String(input);
       const response = await fallbackFetch(input, options);
-      if (failure === 'resolver' && path.startsWith('/api/platform-admin'))
-        return Response.json({ workspace_id: 'different', organization_uuid: 'target' });
-      if (path === '/api/bootstrap') {
+      if (path.startsWith('/api/bootstrap?')) {
         const body = await response.json();
         if (failure === 'source') body.organization_access.source = 'organization_member';
         if (failure === 'account') body.account.uuid = 'another-account';
-        if (failure === 'organization') body.organization_access.organization.uuid = 'another-org';
+        if (failure === 'organization') body.organization_access.organization.uuid = '';
         if (failure === 'access') return Response.json({ error: 'forbidden' }, { status: 403 });
         return Response.json(body);
       }
@@ -286,7 +261,9 @@ for (const stage of ['bootstrap', 'list']) {
       const path = String(input);
       const org = new Headers(options?.headers).get('X-Organization-UUID');
       const response = await fallbackFetch(input, options);
-      if (org === 'target' && (stage === 'bootstrap' ? path === '/api/bootstrap' : path.endsWith('/workspaces'))) {
+      if (
+        stage === 'bootstrap' ? path.startsWith('/api/bootstrap?') : org === 'target' && path.endsWith('/workspaces')
+      ) {
         pendingResponse = response;
         return new Promise<Response>((resolve) => {
           complete = resolve;
@@ -336,8 +313,10 @@ test('会话失效后按当前登录 returnTo 恢复，不复用已消费的启�
   expect(organizations.orgUuid).toBe('home');
   expect(organizations.platformScope).toBeUndefined();
   expect(
-    requests.filter((request) => request.path.startsWith('/api/platform-admin')).map((request) => request.path),
-  ).toEqual(['/api/platform-admin/workspaces/ws-target/scope', '/api/platform-admin/workspaces/ws-home/scope']);
+    requests
+      .filter((request) => request.path.startsWith('/api/bootstrap?target_workspace_id='))
+      .map((request) => request.path),
+  ).toEqual(['/api/bootstrap?target_workspace_id=ws-target', '/api/bootstrap?target_workspace_id=ws-home']);
 });
 
 test('已保存成员组织的平台模式在临时错误和明确重试后保持', async () => {
@@ -370,9 +349,37 @@ for (const saved of [false, true]) {
       });
     const { navigate } = mount(path);
     await waitFor(() => expect(workspace.activeWorkspaceId).toBe(saved ? 'ws-target' : 'ws-home'));
-    expect(requests.some((request) => request.path.startsWith('/api/platform-admin'))).toBe(false);
+    expect(requests.some((request) => request.path.startsWith('/api/bootstrap?target_workspace_id='))).toBe(false);
     expect(navigate).not.toHaveBeenCalled();
     expect(window.location.href).toBe(`https://oma.duck.ai${path}`);
     expect(Boolean(organizations.platformScope)).toBe(saved);
   });
 }
+
+test('恢复已进入的组织时由旧设置路由处理查询参数和锚点', async () => {
+  const path = '/llm-models?from=notice#model-config';
+  resetTestDom(`https://oma.duck.ai${path}`);
+  savePlatformScope({ accountUuid: identity.uuid, targetOrganizationUuid: 'target', targetWorkspaceId: 'ws-other' });
+  const { navigate } = mount(path);
+  await waitFor(() => expect(workspace.activeWorkspaceId).toBe('ws-other'));
+  expect(organizations.orgUuid).toBe('target');
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+test('外部链接的工作区归档后重试，保留原目标且不读取默认工作区', async () => {
+  const path = '/workspaces/ws-other/sessions';
+  const { navigate } = mount(path);
+  await waitFor(() => expect(workspace.activeWorkspaceId).toBe('ws-other'));
+  act(() => reportApiAuthFailure(403, getConsoleRequestContext()));
+  const fallbackFetch = globalThis.fetch;
+  globalThis.fetch = mock((input, options) =>
+    String(input).includes('target_workspace_id=ws-other')
+      ? Promise.resolve(Response.json({}, { status: 404 }))
+      : fallbackFetch(input, options),
+  ) as typeof fetch;
+  await act(async () => expect(await organizations.retry()).toBe(false));
+  expect(workspace.activeWorkspaceId).toBe('');
+  expect(getConsoleRequestContext()).toEqual({});
+  expect(window.location.pathname).toBe(path);
+  expect(navigate).not.toHaveBeenCalled();
+});

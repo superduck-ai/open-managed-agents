@@ -768,6 +768,7 @@ export type EventsTabProps = {
   hasFilter: boolean;
   hoveredEventId: string | null;
   inspector: ReactNode;
+  initiallyShowInspector?: boolean;
   inspectorOpen: boolean;
   isMultiAgent: boolean;
   lanes: SessionDetailLane[];

@@ -67,31 +67,37 @@ describe('SessionTraceWorkspaceLayout', () => {
     }
   });
 
-  test('shows the conversation on an initially narrow viewport and permits opening the inspector', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
-    const originalRect = HTMLElement.prototype.getBoundingClientRect;
-    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-      if (this.getAttribute('data-testid') === 'session-trace-layout-host') return layoutRect(600, 800);
-      return originalRect.call(this);
-    };
-    try {
-      render(<LayoutHarness />);
-      await waitFor(() => {
-        expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(false);
+  test.each([false, true])(
+    'honors an explicit inspector link (%s) on an initially narrow viewport',
+    async (requested) => {
+      resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+      const originalRect = HTMLElement.prototype.getBoundingClientRect;
+      HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+        if (this.getAttribute('data-testid') === 'session-trace-layout-host') return layoutRect(600, 800);
+        return originalRect.call(this);
+      };
+      try {
+        render(<LayoutHarness initiallyShowInspector={requested} />);
+        await waitFor(() => {
+          expect(document.querySelector('[data-layout-mode="overlay"]')).toBeTruthy();
+          expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(
+            requested,
+          );
+          expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
+            !requested,
+          );
+        });
+        expect(screen.getByTestId('primary-content')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
+        expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
         expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
-          true,
+          false,
         );
-      });
-      expect(screen.getByTestId('primary-content')).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
-      expect(document.querySelector('[data-session-trace-primary-viewport]')?.hasAttribute('inert')).toBe(true);
-      expect(document.querySelector('[data-session-trace-inspector-viewport]')?.classList.contains('hidden')).toBe(
-        false,
-      );
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = originalRect;
-    }
-  });
+      } finally {
+        HTMLElement.prototype.getBoundingClientRect = originalRect;
+      }
+    },
+  );
 
   test('hides the resize handle and inspector without unmounting primary content when closed', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
@@ -133,9 +139,11 @@ describe('SessionTraceWorkspaceLayout', () => {
 });
 
 function LayoutHarness({
+  initiallyShowInspector = false,
   inspectorOpen = true,
   primary = <div data-testid="primary-content">Primary</div>,
 }: {
+  initiallyShowInspector?: boolean;
   inspectorOpen?: boolean;
   primary?: ReactNode;
 }) {
@@ -144,6 +152,7 @@ function LayoutHarness({
     <div style={{ width: 1200, height: 800 }}>
       <button onClick={() => setCollapsed(false)}>Open inspector</button>
       <SessionTraceWorkspaceLayout
+        initiallyShowInspector={initiallyShowInspector}
         primary={primary}
         inspector={
           <>

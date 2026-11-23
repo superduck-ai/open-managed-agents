@@ -300,7 +300,7 @@ func assertPlatformSessionRuntime(t *testing.T, f platformResourceFixture, sessi
 			t.Fatalf("挂载资源内容错误：%s：状态 %d：%s", resource.path, response.StatusCode, content)
 		}
 	}
-	_, err = f.app.db.ResolveFilestoreTokenScope(t.Context(), scope.OrganizationUUID, f.login.UserUUID, f.login.WorkspaceUUID, scope.WorkspaceExternalID, scope.WorkspaceExternalID, scope.FilesystemExternalID)
+	_, err = f.app.db.ResolveFilestoreTokenScope(t.Context(), scope.OrganizationUUID, f.login.UserUUID, f.login.WorkspaceUUID, scope.WorkspaceExternalID, scope.WorkspaceExternalID, scope.FilesystemExternalID, "")
 	if !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("跨工作区令牌应拒绝：%v", err)
 	}

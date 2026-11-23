@@ -159,6 +159,19 @@
         </if>
         )
         AND w.archived_at IS NULL
+        <if test="sandboxUUID != ''">
+            AND EXISTS (
+            SELECT 1
+            FROM environment_sandboxes sandbox
+            JOIN environment_work work
+            ON work.uuid = sandbox.work_uuid
+            AND work.workspace_uuid = sandbox.workspace_uuid
+            WHERE sandbox.uuid = #{sandboxUUID}
+            AND sandbox.workspace_uuid = w.uuid
+            AND sandbox.state IN ('creating', 'running')
+            AND work.session_uuid = s.uuid
+            )
+        </if>
         ORDER BY (fs.external_id = #{filesystemID}) DESC
         LIMIT 1
     </select>

@@ -194,7 +194,7 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 7. ready 探测失败或 `20s` 内未出现 marker 均不会启动 Environment Manager，并会终止 Sandbox。
 8. 有 memory store 时 ready 后存在 `/mnt/memory/MEMORY.md`；无 store 时不创建 `/mnt/memory`。Memory mount 或 `MEMORY.md` 写入失败与固定盘失败一样 fail-closed。跨 Session 寿命见 `tests/environments_memory_sandbox_e2e_test.go`。
 
-Token 不含墙钟有效期，与所属 Session 同生命周期，长生命周期 Sandbox 无需续签；Session 终止、归档或删除后服务端拒绝该 token。
+Token 绑定当前 Sandbox 且不含墙钟有效期，长生命周期 Sandbox 无需续签；Sandbox 停止，或 Session 终止、归档、删除后服务端拒绝该 token。
 
 
 ## Git 资源准备

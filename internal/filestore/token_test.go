@@ -30,6 +30,10 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	wrongAudienceClaims["aud"] = []string{"session-ingress"}
 	expiredClaims := decodeFilestoreTokenPayload(t, validToken)
 	expiredClaims["exp"] = time.Now().Add(-time.Minute).Unix()
+	unboundWithoutExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
+	delete(unboundWithoutExpiryClaims, "exp")
+	unboundNullExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
+	unboundNullExpiryClaims["exp"] = nil
 	readonlyFalseClaims := decodeFilestoreTokenPayload(t, validToken)
 	readonlyFalseClaims["readonly"] = false
 	readonlyNullClaims := decodeFilestoreTokenPayload(t, validToken)
@@ -46,6 +50,8 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 		{name: "wrong issuer", token: signFilestoreTokenPayload(t, credentials, wrongIssuerClaims)},
 		{name: "wrong audience", token: signFilestoreTokenPayload(t, credentials, wrongAudienceClaims)},
 		{name: "expired", token: signFilestoreTokenPayload(t, credentials, expiredClaims)},
+		{name: "unbound without expiry", token: signFilestoreTokenPayload(t, credentials, unboundWithoutExpiryClaims)},
+		{name: "unbound with null expiry", token: signFilestoreTokenPayload(t, credentials, unboundNullExpiryClaims)},
 		{name: "readonly false", token: signFilestoreTokenPayload(t, credentials, readonlyFalseClaims)},
 		{name: "readonly null", token: signFilestoreTokenPayload(t, credentials, readonlyNullClaims)},
 		{name: "not a jwt", token: "not-a-jwt"},
@@ -66,22 +72,21 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	}
 }
 
-func TestTokenCredentialsAcceptLongLivedTokens(t *testing.T) {
+func TestTokenCredentialsAcceptSandboxBoundTokensWithoutExpiry(t *testing.T) {
 	t.Parallel()
 
 	credentials := newTokenCredentialsForTest(t)
 	credentials.now = func() time.Time { return time.Now().UTC().Add(-25 * time.Hour) }
-	longLivedToken := mustIssueFilestoreToken(t, credentials, filestoreTokenIdentityForTest())
-	legacyClaims := decodeFilestoreTokenPayload(t, longLivedToken)
-	legacyClaims["exp"] = time.Now().Add(time.Minute).Unix()
+	longLivedToken := mustIssueFilestoreToken(t, credentials, sandboxBoundTokenIdentityForTest())
 	credentials.now = time.Now
+	legacyToken := mustIssueFilestoreToken(t, credentials, filestoreTokenIdentityForTest())
 
 	for _, test := range []struct {
 		name  string
 		token string
 	}{
-		{name: "issued more than an hour ago without exp", token: longLivedToken},
-		{name: "legacy token with unexpired exp", token: signFilestoreTokenPayload(t, credentials, legacyClaims)},
+		{name: "sandbox bound token issued more than an hour ago", token: longLivedToken},
+		{name: "unbound token with unexpired exp", token: legacyToken},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -108,14 +113,19 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 		readonly     bool
 		wantReadonly bool
 		wantPresent  bool
+		sandboxBound bool
 	}{
 		{name: "read write token omits readonly"},
 		{name: "readonly token", readonly: true, wantReadonly: true, wantPresent: true},
+		{name: "sandbox bound token omits exp", sandboxBound: true},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			identity := filestoreTokenIdentityForTest()
+			if test.sandboxBound {
+				identity = sandboxBoundTokenIdentityForTest()
+			}
 			var rawToken string
 			if test.readonly {
 				rawToken = mustIssueReadonlyFilestoreToken(t, credentials, identity)
@@ -146,8 +156,13 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			if got := int64(payload["iat"].(float64)); got != issuedAt.Unix() {
 				t.Fatalf("iat = %d, want %d", got, issuedAt.Unix())
 			}
-			if exp, exists := payload["exp"]; exists {
-				t.Fatalf("filestore token unexpectedly contains exp: %#v", exp)
+			exp, hasExp := payload["exp"]
+			if test.sandboxBound {
+				if hasExp || payload["sandbox_uuid"] != identity.SandboxUUID {
+					t.Fatalf("sandbox bound claims exp=%#v sandbox_uuid=%#v", exp, payload["sandbox_uuid"])
+				}
+			} else if got, ok := exp.(float64); !ok || int64(got) != issuedAt.Add(unboundTokenTTL).Unix() {
+				t.Fatalf("exp = %#v, want %d", exp, issuedAt.Add(unboundTokenTTL).Unix())
 			}
 			if _, exists := payload["session_id"]; exists {
 				t.Fatalf("filestore token unexpectedly contains session ingress claims: %#v", payload)
@@ -160,7 +175,7 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			if !ok || len(taints) != 2 || taints[0] != "compliance" || taints[1] != "restricted" {
 				t.Fatalf("org_taints = %#v", payload["org_taints"])
 			}
-			wantClaimCount := 12
+			wantClaimCount := 13
 			if test.wantPresent {
 				wantClaimCount++
 			}
@@ -200,6 +215,12 @@ func filestoreTokenIdentityForTest() TokenIdentity {
 		OrgTaints:                 []string{"restricted", "compliance", "restricted"},
 		WorkspaceCMEKEnabled:      true,
 	}
+}
+
+func sandboxBoundTokenIdentityForTest() TokenIdentity {
+	identity := filestoreTokenIdentityForTest()
+	identity.SandboxUUID = "44444444-4444-4444-8444-444444444444"
+	return identity
 }
 
 func mustIssueReadonlyFilestoreToken(t *testing.T, credentials *TokenCredentials, identity TokenIdentity) string {

@@ -149,7 +149,7 @@ func TestFilestoreFilesystemMapperBuildsLifecycleQueries(t *testing.T) {
 func TestFilestoreRuntimeIdentitySQL(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: filestoreFilesystemMapperFindTokenScopeStatement,
-		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
+		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", "", ""),
 		wantID:    "FilestoreFilesystemMapper.FindTokenScope", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"organizationUUID", "accountUUID", "workspaceUUID", "workspaceTaggedID", "resolvedWorkspaceTaggedID", "filesystemID", "filesystemID"},
 		wantSQLFragments:  []string{"u.deleted_at IS NULL", "u.organization_uuid = o.uuid OR u.uuid = CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.runtime_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END", "s.uuid = fs.session_uuid", "s.organization_uuid = o.uuid", "s.workspace_uuid = w.uuid"},
@@ -163,9 +163,23 @@ func TestFilestoreRuntimeIdentitySQL(t *testing.T) {
 	})
 }
 
+func TestFilestoreTokenScopeSandboxBinding(t *testing.T) {
+	unbound := buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", "", "")
+	if strings.Contains(unbound.SQL, "environment_sandboxes") {
+		t.Fatalf("unbound token scope joins sandboxes: %s", unbound.SQL)
+	}
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: filestoreFilesystemMapperFindTokenScopeStatement,
+		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", "", "sandbox"),
+		wantID:    "FilestoreFilesystemMapper.FindTokenScope", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"organizationUUID", "accountUUID", "workspaceUUID", "workspaceTaggedID", "resolvedWorkspaceTaggedID", "filesystemID", "sandboxUUID", "filesystemID"},
+		wantSQLFragments:  []string{"sandbox.uuid = $7", "sandbox.workspace_uuid = w.uuid", "sandbox.state IN ('creating', 'running')", "work.session_uuid = s.uuid"},
+	})
+}
+
 func TestRuntimeIdentityMapperUUIDGuard(t *testing.T) {
 	queries := []yourbatis.BoundSQL{
-		buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
+		buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", "", ""),
 		buildFilestoreFilesystemMapperFindSessionTokenScope(yourbatis.DialectPostgres, "workspace", "session"),
 		buildCodeSessionMapperFindCredentialForIssue(yourbatis.DialectPostgres, "org", "workspace", "code"),
 	}

@@ -25,7 +25,7 @@ import (
 const (
 	filestoreTokenIssuer   = "open-managed-agents"
 	filestoreTokenAudience = "filestore"
-	filestoreTokenTTL      = time.Hour
+	unboundTokenTTL        = time.Hour
 )
 
 // TokenClaims 是 Filestore 专用 JWT 合同。它与 code-session ingress claims
@@ -45,7 +45,8 @@ type TokenClaims struct {
 	// 它只描述配置状态，不代表某次 S3 请求已经设置或执行了服务端加密。
 	WorkspaceCMEKEnabled bool `json:"workspace_cmek_enabled"`
 	// Readonly 为 nil 表示第一类读写 token；值为 true 时表示第二类只读 token。
-	Readonly *bool `json:"readonly,omitempty"`
+	Readonly    *bool  `json:"readonly,omitempty"`
+	SandboxUUID string `json:"sandbox_uuid,omitempty"`
 }
 
 // UnmarshalJSON 把可接受的 payload 收窄到已知合同，避免旧凭证或其他 JWT
@@ -59,7 +60,6 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		"iss",
 		"sub",
 		"aud",
-		"exp",
 		"iat",
 		"org_uuid",
 		"account_uuid",
@@ -70,14 +70,16 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		"org_taints",
 		"workspace_cmek_enabled",
 	}
-	allowed := make(map[string]struct{}, len(required)+1)
+	allowed := make(map[string]struct{}, len(required)+2)
 	for _, name := range required {
 		allowed[name] = struct{}{}
 		if _, exists := fields[name]; !exists {
 			return fmt.Errorf("filestore token is missing claim %q", name)
 		}
 	}
+	allowed["exp"] = struct{}{}
 	allowed["readonly"] = struct{}{}
+	allowed["sandbox_uuid"] = struct{}{}
 	for name := range fields {
 		if _, exists := allowed[name]; !exists {
 			return fmt.Errorf("filestore token contains unsupported claim %q", name)
@@ -90,6 +92,12 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 	var workspaceCMEKEnabled bool
 	if err := json.Unmarshal(fields["workspace_cmek_enabled"], &workspaceCMEKEnabled); err != nil || string(fields["workspace_cmek_enabled"]) == "null" {
 		return errors.New("filestore workspace_cmek_enabled claim must be a boolean")
+	}
+	if expJSON, exists := fields["exp"]; exists {
+		var exp float64
+		if err := json.Unmarshal(expJSON, &exp); err != nil || string(expJSON) == "null" {
+			return errors.New("filestore exp claim must be a number when present")
+		}
 	}
 	if readonlyJSON, exists := fields["readonly"]; exists {
 		var readonly bool
@@ -119,6 +127,7 @@ type TokenIdentity struct {
 	// OrgTaints 与 WorkspaceCMEKEnabled 来自可信数据库上下文，签入 JWT 后构成安全策略快照。
 	OrgTaints            []string
 	WorkspaceCMEKEnabled bool
+	SandboxUUID          string
 }
 
 // TokenCredentials 持有 Filestore JWT 的 Ed25519 签发与验签密钥。
@@ -214,11 +223,10 @@ func (c *TokenCredentials) issue(identity TokenIdentity, readonly *bool) (string
 	now := c.now().UTC()
 	claims := TokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    filestoreTokenIssuer,
-			Subject:   identity.Subject,
-			Audience:  jwt.ClaimStrings{filestoreTokenAudience},
-			ExpiresAt: jwt.NewNumericDate(now.Add(filestoreTokenTTL)),
-			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:   filestoreTokenIssuer,
+			Subject:  identity.Subject,
+			Audience: jwt.ClaimStrings{filestoreTokenAudience},
+			IssuedAt: jwt.NewNumericDate(now),
 		},
 		OrgUUID:                   identity.OrgUUID,
 		AccountUUID:               identity.AccountUUID,
@@ -229,6 +237,10 @@ func (c *TokenCredentials) issue(identity TokenIdentity, readonly *bool) (string
 		OrgTaints:                 identity.OrgTaints,
 		WorkspaceCMEKEnabled:      identity.WorkspaceCMEKEnabled,
 		Readonly:                  copyBool(readonly),
+		SandboxUUID:               identity.SandboxUUID,
+	}
+	if identity.SandboxUUID == "" {
+		claims.ExpiresAt = jwt.NewNumericDate(now.Add(unboundTokenTTL))
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	token.Header["kid"] = c.kid
@@ -248,7 +260,6 @@ func (c *TokenCredentials) Verify(rawToken string) (TokenClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
 		jwt.WithStrictDecoding(),
-		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),
 		jwt.WithIssuer(filestoreTokenIssuer),
 		jwt.WithAudience(filestoreTokenAudience),
@@ -308,6 +319,9 @@ func validateTokenClaims(claims TokenClaims) error {
 	}
 	if claims.Readonly != nil && !*claims.Readonly {
 		return errors.New("invalid filestore readonly claim")
+	}
+	if claims.SandboxUUID == "" && claims.ExpiresAt == nil {
+		return errors.New("filestore token without sandbox_uuid must carry exp")
 	}
 	return nil
 }

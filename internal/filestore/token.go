@@ -93,6 +93,12 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(fields["workspace_cmek_enabled"], &workspaceCMEKEnabled); err != nil || string(fields["workspace_cmek_enabled"]) == "null" {
 		return errors.New("filestore workspace_cmek_enabled claim must be a boolean")
 	}
+	if expJSON, exists := fields["exp"]; exists {
+		var exp float64
+		if err := json.Unmarshal(expJSON, &exp); err != nil || string(expJSON) == "null" {
+			return errors.New("filestore exp claim must be a number when present")
+		}
+	}
 	if readonlyJSON, exists := fields["readonly"]; exists {
 		var readonly bool
 		if err := json.Unmarshal(readonlyJSON, &readonly); err != nil || !readonly {

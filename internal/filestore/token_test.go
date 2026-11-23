@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,10 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	delete(unboundWithoutExpiryClaims, "exp")
 	unboundNullExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
 	unboundNullExpiryClaims["exp"] = nil
+	stringExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
+	stringExpiryClaims["exp"] = strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	boundNullExpiryClaims := decodeFilestoreTokenPayload(t, mustIssueFilestoreToken(t, credentials, sandboxBoundTokenIdentityForTest()))
+	boundNullExpiryClaims["exp"] = nil
 	readonlyFalseClaims := decodeFilestoreTokenPayload(t, validToken)
 	readonlyFalseClaims["readonly"] = false
 	readonlyNullClaims := decodeFilestoreTokenPayload(t, validToken)
@@ -52,6 +57,8 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 		{name: "expired", token: signFilestoreTokenPayload(t, credentials, expiredClaims)},
 		{name: "unbound without expiry", token: signFilestoreTokenPayload(t, credentials, unboundWithoutExpiryClaims)},
 		{name: "unbound with null expiry", token: signFilestoreTokenPayload(t, credentials, unboundNullExpiryClaims)},
+		{name: "string expiry", token: signFilestoreTokenPayload(t, credentials, stringExpiryClaims)},
+		{name: "sandbox bound with null expiry", token: signFilestoreTokenPayload(t, credentials, boundNullExpiryClaims)},
 		{name: "readonly false", token: signFilestoreTokenPayload(t, credentials, readonlyFalseClaims)},
 		{name: "readonly null", token: signFilestoreTokenPayload(t, credentials, readonlyNullClaims)},
 		{name: "not a jwt", token: "not-a-jwt"},

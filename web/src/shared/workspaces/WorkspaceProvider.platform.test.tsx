@@ -164,6 +164,9 @@ test('刷新恢复遇到临时网络或服务故障保留进入偏好并可重�
     expect(organizations.platformScope?.targetOrganizationUuid).toBe('target');
     expect(readPlatformScope(identity.uuid)?.targetOrganizationUuid).toBe('target');
     expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
+    await act(async () => expect(await organizations.retry()).toBe(false));
+    expect(organizations.error).toBeTruthy();
+    expect(organizations.platformScope?.targetOrganizationUuid).toBe('target');
     globalThis.fetch = fallbackFetch;
     await act(async () => {
       await organizations.retry();

@@ -171,6 +171,21 @@ test('同组织超管深链保持普通模式，刷新不进入平台模式', as
   expect(workspace.activeWorkspaceId).toBe('ws-home');
 });
 
+for (const id of ['default', 'ws-other']) {
+  test(`普通成员启动深链遇到 503，重试保留目标工作区和详情 URL ${id}`, async () => {
+    const path = `/workspaces/${id}/sessions/sesn-7?event=event-3#message`;
+    const { navigate } = mount(path, { admin: false });
+    const healthyFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => Response.json({}, { status: 503 })) as typeof fetch;
+    await waitFor(() => expect(organizations.error).toBeTruthy());
+    globalThis.fetch = healthyFetch;
+    await act(async () => expect(await organizations.retry()).toBe(true));
+    expect(workspace.activeWorkspaceId).toBe(id === 'default' ? 'ws-home' : id);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(`https://oma.duck.ai${path}`);
+  });
+}
+
 test('普通成员和 default 别名不调用平台解析接口', async () => {
   for (const [admin, id] of [
     [false, 'ws-home'],

@@ -163,7 +163,7 @@ test('cancels discovery with Escape, restores draft and focus in the provider fo
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Get available models' }));
 });
 
-test('custom provider name follows its ID until customized and clearing restores the default', async () => {
+test('custom provider name uses Provider ID as placeholder and fallback when left blank', async () => {
   const { save } = renderPreset();
   expect(screen.queryByText(/Choose a supplier to fill in/)).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Custom model API', exact: true }));
@@ -173,14 +173,17 @@ test('custom provider name follows its ID until customized and clearing restores
   expect(screen.getByLabelText('Model ID 1').getAttribute('placeholder')).toBe('kimi-k3');
   expect(screen.queryByText(/Paste a base URL or a full/)).toBeNull();
   fireEvent.change(id, { target: { value: 'my-provider' } });
-  expect(name).toHaveProperty('value', 'my-provider');
+  expect(name).toHaveProperty('value', '');
+  expect(name.getAttribute('placeholder')).toBe('my-provider');
   fireEvent.change(id, { target: { value: 'another-provider' } });
-  expect(name).toHaveProperty('value', 'another-provider');
+  expect(name).toHaveProperty('value', '');
+  expect(name.getAttribute('placeholder')).toBe('another-provider');
   fireEvent.change(name, { target: { value: 'Research models' } });
   fireEvent.change(id, { target: { value: 'research' } });
   expect(name).toHaveProperty('value', 'Research models');
   fireEvent.change(name, { target: { value: '' } });
-  expect(name).toHaveProperty('value', 'research');
+  expect(name).toHaveProperty('value', '');
+  expect(name.getAttribute('placeholder')).toBe('research');
   fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://example.test' } });
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));

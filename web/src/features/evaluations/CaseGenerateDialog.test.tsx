@@ -4,7 +4,9 @@ import '../../test/setup';
 import { I18nProvider } from '../../shared/i18n';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { defaultWorkspace } from '../../shared/workspaces/api';
+import { useState } from 'react';
 import { CaseGenerateDialog } from './CaseGenerateDialog';
+import { CasePlanEditor } from './CasePlanEditor';
 
 const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 
@@ -267,3 +269,23 @@ function draft(query: string, trace: string[] | null) {
     scenario: '查询订单',
   };
 }
+
+test('scenario count input stays empty when cleared and accepts a replacement number', () => {
+  function PlanHarness() {
+    const [scenarios, setScenarios] = useState([
+      { name: 'Order lookup', description: 'Basic lookup', persona: '', polarity: 'positive' as const, count: 5 },
+    ]);
+    return (
+      <I18nProvider initialLocale="en">
+        <CasePlanEditor scenarios={scenarios} onChange={setScenarios} disabled={false} />
+      </I18nProvider>
+    );
+  }
+  render(<PlanHarness />);
+  const count = screen.getByLabelText('Cases') as HTMLInputElement;
+  expect(count.value).toBe('5');
+  fireEvent.change(count, { target: { value: '' } });
+  expect(count.value).toBe('');
+  fireEvent.change(count, { target: { value: '12' } });
+  expect(count.value).toBe('12');
+});

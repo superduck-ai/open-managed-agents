@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { useI18n } from '../../shared/i18n';
@@ -69,6 +70,14 @@ function ScenarioCard({
   onRemove: () => void;
 }) {
   const { msg } = useI18n();
+  const [countDraft, setCountDraft] = useState<string | null>(null);
+  const committedCount = useRef(scenario.count);
+  useEffect(() => {
+    if (scenario.count !== committedCount.current) {
+      committedCount.current = scenario.count;
+      setCountDraft(null);
+    }
+  }, [scenario.count]);
   const polarityItems = [
     { value: 'positive', label: msg('evaluations.positive', 'Positive') },
     { value: 'negative', label: msg('evaluations.negative', 'Negative') },
@@ -105,9 +114,20 @@ function ScenarioCard({
           className="w-20 shrink-0"
           type="number"
           min={1}
-          value={String(scenario.count)}
+          value={countDraft ?? String(scenario.count)}
           disabled={disabled}
-          onChange={(event) => onChange({ count: Math.max(0, Math.floor(Number(event.target.value) || 0)) })}
+          onChange={(event) => {
+            const raw = event.target.value;
+            setCountDraft(raw);
+            const next = raw.trim() === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0));
+            committedCount.current = next;
+            onChange({ count: next });
+          }}
+          onBlur={() => {
+            if (countDraft !== null && countDraft.trim() !== '') {
+              setCountDraft(null);
+            }
+          }}
         />
         <Button
           type="button"

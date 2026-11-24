@@ -67,6 +67,7 @@ export function DeploymentScheduleFields({
   const { msg, locale } = useI18n();
   const id = useId();
   const [controls, setControls] = useState(() => cronToSchedule(values.cronExpression));
+  const [minuteInput, setMinuteInput] = useState(() => controls.time.split(':')[1] ?? '');
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -141,7 +142,10 @@ export function DeploymentScheduleFields({
             options={scheduleFrequencies.map((frequency) => ({ id: frequency, label: frequencyLabels[frequency] }))}
             onChange={(frequency) => {
               const selected = scheduleFrequencies.find((item) => item === frequency);
-              if (selected) changeControls({ frequency: selected });
+              if (selected) {
+                if (selected === 'hour') setMinuteInput(controls.time.split(':')[1] ?? '');
+                changeControls({ frequency: selected });
+              }
             }}
           />
           <TimezoneField value={values.timezone} onChange={(timezone) => onChange({ timezone })} />
@@ -173,12 +177,17 @@ export function DeploymentScheduleFields({
                   min={0}
                   max={59}
                   required
-                  value={controls.time.split(':')[1]}
-                  onChange={(event) =>
-                    changeControls({
-                      time: event.target.value === '' ? '' : `09:${event.target.value.padStart(2, '0')}`,
-                    })
-                  }
+                  value={minuteInput}
+                  onChange={(event) => {
+                    const raw = event.target.value;
+                    setMinuteInput(raw);
+                    if (/^\d{1,2}$/.test(raw) && Number(raw) <= 59) {
+                      const hour = controls.time.split(':')[0] || '09';
+                      changeControls({ time: `${hour}:${raw.padStart(2, '0')}` });
+                    } else {
+                      changeControls({ time: '' });
+                    }
+                  }}
                 />
               ) : (
                 <DeploymentTimePicker

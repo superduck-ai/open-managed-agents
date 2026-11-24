@@ -30,12 +30,11 @@ import (
 const maxEnvironmentBodySize = 4 << 20
 
 type Handler struct {
-	prebuilds    *Prebuilds
-	cfg          config.Config
-	db           *db.DB
-	webhooks     webhookEnqueuer
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	prebuilds *Prebuilds
+	cfg       config.Config
+	db        *db.DB
+	webhooks  webhookEnqueuer
+	router    chi.Router
 }
 
 type environmentResponse struct {
@@ -123,8 +122,8 @@ type workStatsResponse struct {
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, errorAdapter: httpapi.NewErrorAdapter(logger)}
-	wrap := h.errorAdapter.Wrap
+	h := &Handler{cfg: cfg, db: database}
+	wrap := httpapi.NewErrorAdapter(logger).Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
 	router.MethodNotAllowed(wrap(h.notFound))
@@ -151,10 +150,6 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, environmentsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

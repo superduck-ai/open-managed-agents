@@ -3,7 +3,7 @@ title: "Memory Stores"
 description: "Manage stores, memory content, version history, and redaction."
 ---
 
-Every Memory Stores request requires `?beta=true`.
+All Memory Stores endpoints accept requests with or without the `beta` query parameter and the `anthropic-beta` header.
 
 Store endpoints create/list at `/v1/memory_stores`, retrieve/update/delete at `/{id}`, and archive at `/{id}/archive`. Stores contain name, description, and string metadata.
 

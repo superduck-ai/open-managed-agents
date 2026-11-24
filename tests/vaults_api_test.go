@@ -65,19 +65,6 @@ func TestVaultsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("vaults-bucket"))
 	defer app.close()
 
-	t.Run("success missing beta header", func(t *testing.T) {
-		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults?beta=true", nil, defaultTestKey, false)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-	})
-
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults", nil, defaultTestKey, true)
-		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vaults API requires beta=true")
-	})
-
 	t.Run("failure invalid json", func(t *testing.T) {
 		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults?beta=true", strings.NewReader(`{"display_name":`), defaultTestKey, true)
 		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Invalid JSON body")
@@ -149,6 +136,31 @@ func TestVaultsAPI(t *testing.T) {
 			"auth":{"type":"mcp_oauth","refresh":{"refresh_token":"new-refresh-secret"}}
 		}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("success beta compatibility", func(t *testing.T) {
+		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults", strings.NewReader(`{"display_name":"vault-api-without-beta"}`), defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create vault without beta status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created vaultAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		if created.ID == "" {
+			t.Fatal("create vault returned empty id")
+		}
+		defer cleanupVaultRows(t, app, created.ID)
+
+		retrieved := retrieveVault(t, app, created.ID)
+		if retrieved.ID != created.ID || retrieved.DisplayName != "vault-api-without-beta" {
+			t.Fatalf("unexpected retrieved vault: %+v", retrieved)
+		}
+
+		resp = doVaultRequest(t, app, http.MethodGet, "/v1/vaults/"+created.ID+"/credentials?beta=false", nil, defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list vault credentials with beta=false status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
 	})
 
 	t.Run("success mcp oauth without expires_at", func(t *testing.T) {

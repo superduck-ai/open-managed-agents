@@ -52,3 +52,30 @@ test('searches timezone identifiers and changes only the timezone', async () => 
   fireEvent.click(await screen.findByRole('option', { name: 'Asia/Shanghai' }));
   expect(changes).toEqual([{ timezone: 'Asia/Shanghai' }]);
 });
+
+test('allows clearing and typing two-digit minutes in hourly schedule mode without padding mid-edit', async () => {
+  const { DeploymentScheduleFields } = await import('./deployment-schedule-fields');
+  const changes: Array<Record<string, unknown>> = [];
+  render(
+    <I18nProvider initialLocale="en">
+      <DeploymentScheduleFields
+        values={{
+          ...initialFormValues('deployments'),
+          triggerType: 'schedule',
+          cronExpression: '15 * * * *',
+          timezone: 'UTC',
+        }}
+        onChange={(patch) => changes.push(patch)}
+      />
+    </I18nProvider>,
+  );
+  const minute = screen.getByLabelText('At minute') as HTMLInputElement;
+  expect(minute.value).toBe('15');
+  fireEvent.change(minute, { target: { value: '' } });
+  expect(minute.value).toBe('');
+  fireEvent.change(minute, { target: { value: '5' } });
+  expect(minute.value).toBe('5');
+  fireEvent.change(minute, { target: { value: '53' } });
+  expect(minute.value).toBe('53');
+  expect(changes).toEqual([{ cronExpression: '' }, { cronExpression: '5 * * * *' }, { cronExpression: '53 * * * *' }]);
+});

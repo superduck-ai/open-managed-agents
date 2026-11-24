@@ -17,7 +17,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { ComponentProps, Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Button } from '@/shared/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible';
@@ -81,6 +81,52 @@ const thinkingTypeOptions = ['disabled', 'enabled', 'adaptive'] as const;
 
 function firstSliderValue(value: number | readonly number[]) {
   return Array.isArray(value) ? (value[0] ?? 0) : value;
+}
+
+function NumericInput({
+  value,
+  normalize,
+  onCommit,
+  ...props
+}: Omit<ComponentProps<typeof Input>, 'type' | 'value' | 'onChange' | 'onBlur'> & {
+  value: number;
+  normalize: (raw: string) => number;
+  onCommit: (next: number) => void;
+}) {
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const committedValue = useRef(value);
+
+  useEffect(() => {
+    if (value !== committedValue.current) {
+      committedValue.current = value;
+      setDraftText(null);
+    }
+  }, [value]);
+
+  return (
+    <Input
+      {...props}
+      type="number"
+      value={draftText ?? String(value)}
+      onChange={(event) => {
+        const raw = event.currentTarget.value;
+        setDraftText(raw);
+        if (raw.trim() === '') return;
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && normalize(raw) === parsed) {
+          committedValue.current = parsed;
+          onCommit(parsed);
+        }
+      }}
+      onBlur={() => {
+        if (draftText === null) return;
+        const normalized = normalize(draftText);
+        committedValue.current = normalized;
+        onCommit(normalized);
+        setDraftText(null);
+      }}
+    />
+  );
 }
 
 export function ModelDrawer({
@@ -259,14 +305,14 @@ export function ModelDrawer({
               <Info className="size-3.5" aria-hidden />
             </Button>
           </div>
-          <Input
-            type="number"
+          <NumericInput
+            aria-label={msg('workbench.maxTokens', 'Max tokens')}
             min={1}
             max={WORKBENCH_MAX_TOKENS}
             step={1}
             value={draft.max_tokens_to_sample}
-            onChange={(event) => {
-              const value = Math.max(1, Number(event.currentTarget.value) || 1);
+            normalize={(raw) => Math.max(1, Number(raw) || 1)}
+            onCommit={(value) => {
               setDraft((current) => ({
                 ...current,
                 max_tokens_to_sample: value,
@@ -335,14 +381,14 @@ export function ModelDrawer({
                   <Info className="size-3.5" aria-hidden />
                 </Button>
               </div>
-              <Input
-                type="number"
+              <NumericInput
+                aria-label={msg('workbench.budgetTokens', 'Budget tokens')}
                 min={MIN_THINKING_BUDGET_TOKENS}
                 max={MAX_THINKING_BUDGET_TOKENS}
                 step={1}
                 value={currentBudgetTokens}
-                onChange={(event) => {
-                  const value = clampThinkingBudgetTokens(event.currentTarget.value);
+                normalize={clampThinkingBudgetTokens}
+                onCommit={(value) => {
                   setDraft((current) => ({
                     ...current,
                     thinking: { ...current.thinking, type: 'enabled', budget_tokens: value },
@@ -873,13 +919,12 @@ export function ToolsDrawer({
             onChange={(checked) => setWebSearchTool((current) => ({ ...current, maxUsesEnabled: checked }))}
           />
           {webSearchTool.maxUsesEnabled ? (
-            <Input
+            <NumericInput
               aria-label={msg('workbench.webSearchMaxUses', 'Web search max uses')}
-              type="number"
               min={1}
               value={webSearchTool.maxUses}
-              onChange={(event) => {
-                const value = Math.max(1, Number(event.currentTarget.value) || 1);
+              normalize={(raw) => Math.max(1, Number(raw) || 1)}
+              onCommit={(value) => {
                 setWebSearchTool((current) => ({ ...current, maxUses: value }));
               }}
               className="bg-secondary"

@@ -50,10 +50,11 @@ describe('ConsoleShell', () => {
         .getByRole('link', { name: locale === 'zh-CN' ? '文档' : 'Documentation', exact: true })
         .getAttribute('href'),
     ).toBe(`https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/overview`);
-    const account = screen.getByRole('button', { name: 'test org_test' });
+    const subtitle = locale === 'zh-CN' ? '组织：org_test' : 'Org: org_test';
+    const account = screen.getByRole('button', { name: `test ${subtitle}` });
     expect(within(account).getByText('test')).toBeTruthy();
-    expect(within(account).getByText('org_test')).toBeTruthy();
-    expect(account.querySelector('.text-xs')?.textContent).toBe('org_test');
+    expect(within(account).getByText(subtitle)).toBeTruthy();
+    expect(account.querySelector('.text-xs')?.textContent).toBe(subtitle);
   });
 
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
@@ -483,7 +484,7 @@ describe('ConsoleShell', () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
     const account = screen.getByRole('button', { name: /test/i });
-    expect(within(account).getByText('org_test')).toBeTruthy();
+    expect(within(account).getByText('Org: org_test')).toBeTruthy();
     expect(within(account).queryByText('foo')).toBeNull();
   });
 
@@ -509,7 +510,7 @@ describe('ConsoleShell', () => {
     );
 
     const account = screen.getByRole('button', { name: /test/i });
-    expect(within(account).getByText('org_test')).toBeTruthy();
+    expect(within(account).getByText('Org: org_test')).toBeTruthy();
     expect(within(account).queryByText('org_other')).toBeNull();
   });
 

@@ -52,15 +52,15 @@ flowchart LR
 
 只有本次表单保存成功且完成关闭后，才额外查询已有模型列表；确认有可用模型且用户仍停留原设置地址时返回快速开始。空模型供应商、保存失败、取消、模型列表读取失败均不自动跳转，留在原模型页面；用户可通过侧栏返回。普通模型管理没有 returnTo 时保持原行为。返回目标只接受当前工作区规范快速开始路径，拒绝外站、其他工作区和其他模块地址。
 
-## 左下角账号区与平台返回入口
+## 左下角账号区与超管后台入口
 
-账号区保持原有 `SidebarMenuButton size="lg"` 的尺寸和圆角，仅菜单打开时使用 sidebar-accent 背景与前景色，不添加常驻背景或额外圆角类，左侧建筑图标，右侧两层文字及 ChevronDown。上层用户名沿用 display_name、full_name、邮箱前缀的优先级；下层显示当前组织名，优先有效 organizationAccess，再取当前 orgUuid 的真实 membership 名称，最后回退 orgUuid，不再展示角色或工作区名。长组织名截断并保留完整 title；用户名不随组织切换改变。
+账号区保持原有 `SidebarMenuButton size="lg"` 的尺寸和圆角，仅菜单打开时使用 sidebar-accent 背景与前景色，不添加常驻背景或额外圆角类，左侧建筑图标，右侧两层文字及 ChevronDown。上层用户名沿用 display_name、full_name、邮箱前缀的优先级；下层显示「组织：{组织名}」，优先有效 organizationAccess，再取当前 orgUuid 的真实 membership 名称，最后回退 orgUuid，不再展示角色或工作区名。名称截断时，悬浮或键盘聚焦整个账号按钮可查看完整组织名。账号菜单顶部也显示完整组织名并允许换行；用户名不随组织切换改变。
 
 平台管理员进入组织时，下层显示目标组织名，不显示平台标识或角色。组织名可收缩截断，折叠账号区保留建筑图标与用户名可访问名称。
 
-仅 platformScope 存在时，SidebarFooter 在账号区正上方显示独立的全宽圆角“返回超管后台”按钮，带 ArrowLeft 图标，与账号区宽度对齐；折叠时只显示图标，保留完整可访问名称与提示。点击先确认未保存内容，再调用 exitOrganization；成功后导航 `/platform-admin/organizations/{targetOrganizationUuid}`，目标缺失时回退 `/platform-admin`，失败不导航。清除平台与 Console scope 的合同见 [平台超级管理员设计](../platform-super-admin.md)。
+左下角账号菜单提供带 Shield 图标的「超管后台」入口，拥有 `platform:access` 的账号可见。有未保存的编辑时先确认离开。在平台组织访问状态下，选择该入口会调用 `exitOrganization`，退出成功后打开正在访问的组织详情。缺少目标组织或处于普通工作区时，打开后台首页。详见 [平台超级管理员设计](../platform-super-admin.md)。
 
-账号菜单内只保留带 Shield 图标、直接导航 `/platform-admin` 的“超管后台”一级入口，仍由 `platform:access` 控制可见性；不显示平台进入状态说明或返回项，也不增加弹出子菜单、折叠层级或额外分隔。中英文、明暗主题、窄屏、键盘操作和未保存内容确认均复用现有共享组件。
+中英文、明暗主题、窄屏、键盘操作和未保存内容确认均复用现有共享组件。
 
 ## 下线页面和兼容入口
 

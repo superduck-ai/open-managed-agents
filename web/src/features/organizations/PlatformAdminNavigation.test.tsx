@@ -25,14 +25,12 @@ function mount({
   target,
   permissions = ['platform:access'],
   locale = 'zh-CN',
-  theme = 'light',
   dirty = false,
   exitResult = true,
 }: {
   target?: string;
   permissions?: string[];
   locale?: Locale;
-  theme?: string;
   dirty?: boolean;
   exitResult?: boolean;
 } = {}) {
@@ -40,7 +38,6 @@ function mount({
   setTestViewport(1280, 900);
   Object.assign(globalThis, { scrollTo: () => {} });
   globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
-  document.documentElement.classList.toggle('dark', theme === 'dark');
   const account = { uuid: 'account', display_name: '用户名称', email_address: 'a@example.com', memberships: [] };
   const platformScope = target === undefined ? undefined : { accountUuid: 'account', targetOrganizationUuid: target };
   const exit = mock(async () => {
@@ -48,8 +45,7 @@ function mount({
     return exitResult;
   });
   const onNavigate = mock(async (path: string) => {
-    expect(path).toBe('/platform-admin');
-    await router.navigate({ to: '/platform-admin' });
+    await router.navigate({ href: path });
   });
   const root = createRootRoute();
   const home = createRoute({
@@ -123,81 +119,59 @@ async function openAccountMenu() {
   return screen.findByRole('menu');
 }
 
-test('退出失败不导航且保留返回入口', async () => {
+async function selectAdmin() {
+  const menu = await screen.findByRole('menu');
+  fireEvent.click(within(menu).getByRole('menuitem', { name: '超管后台', exact: true }));
+}
+
+test('退出失败保留当前页与菜单入口', async () => {
   const { router, exit } = mount({ target: 'target', exitResult: false });
-  fireEvent.click(await screen.findByRole('button', { name: '返回超管后台' }));
+  await openAccountMenu();
+  await selectAdmin();
   await waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
   expect(router.state.location.pathname).toBe('/');
-  expect(screen.getByRole('button', { name: '返回超管后台' })).toBeTruthy();
+  expect(screen.getByRole('menuitem', { name: '超管后台', exact: true })).toBeTruthy();
 });
 
-test('未保存内容先确认，取消保持当前组织，确认后才退出', async () => {
+test('未保存内容先确认，取消保留当前组织，确认后才退出', async () => {
   const { router, exit } = mount({ target: 'target', dirty: true });
-  fireEvent.click(await screen.findByRole('button', { name: '返回超管后台' }));
+  await openAccountMenu();
+  await selectAdmin();
   expect(await screen.findByRole('alertdialog')).toBeTruthy();
   expect(exit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
   expect(router.state.location.pathname).toBe('/');
-  fireEvent.click(screen.getByRole('button', { name: '返回超管后台' }));
+  if (!screen.queryByRole('menu')) await openAccountMenu();
+  await selectAdmin();
   fireEvent.click(screen.getByRole('button', { name: '放弃更改并切换' }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/platform-admin/organizations/target'));
   expect(exit).toHaveBeenCalledTimes(1);
 });
 
-for (const permissions of [[], ['platform:access']]) {
-  test(`未进入时无返回按钮，平台菜单按权限显示：${permissions.length}`, async () => {
-    mount({ permissions });
-    const menu = await openAccountMenu();
-    expect(screen.queryByRole('button', { name: '返回超管后台' })).toBeNull();
-    expect(within(menu).queryByRole('menuitem', { name: '超管后台', exact: true }) !== null).toBe(
-      permissions.length > 0,
-    );
-    expect(within(menu).queryByText('平台管理员')).toBeNull();
-    expect(within(menu).queryByText('返回超管后台')).toBeNull();
-  });
-}
+test('普通成员没有超管入口', async () => {
+  mount({ permissions: [] });
+  const menu = await openAccountMenu();
+  expect(within(menu).queryByRole('menuitem', { name: '超管后台' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '返回超管后台' })).toBeNull();
+});
 
-for (const locale of ['zh-CN', 'en'] as const) {
-  test(`账号菜单只保留直接打开平台后台的一级入口：${locale}`, async () => {
-    const { router, exit, onNavigate } = mount({ locale, target: 'target' });
-    const menu = await openAccountMenu();
-    const parent = within(menu).getByRole('menuitem', {
-      name: locale === 'zh-CN' ? '超管后台' : 'Super admin console',
-      exact: true,
-    });
-    expect(parent.getAttribute('aria-haspopup')).toBeNull();
-    expect(within(menu).queryByText(/平台管理员|Platform administrator/)).toBeNull();
-    expect(within(menu).queryByText(/返回超管后台|Return to super admin console/)).toBeNull();
-    fireEvent.click(parent);
-    await waitFor(() => expect(router.state.location.pathname).toBe('/platform-admin'));
-    expect(onNavigate).toHaveBeenCalledTimes(1);
-    expect(exit).not.toHaveBeenCalled();
-  });
-}
-
-for (const target of ['', 'target']) {
-  for (const theme of ['light', 'dark']) {
-    for (const locale of ['zh-CN', 'en'] as const) {
-      test(`返回按钮位于账号区上方且导航退出前目标：${target || '无'}，${locale}，${theme}`, async () => {
-        const { router, exit } = mount({ target, theme, locale });
-        const button = await screen.findByRole('button', {
-          name: locale === 'zh-CN' ? '返回超管后台' : 'Return to super admin console',
-        });
-        const footer = button.closest('[data-slot="sidebar-footer"]')!;
-        const account = within(footer as HTMLElement).getByRole('button', { name: /^用户名称/ });
-        expect(button.parentElement).toBe(footer);
-        expect(button.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-        expect(button.classList.contains('w-full')).toBe(true);
-        expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
-        expect(button.querySelector('span')?.classList.contains('truncate')).toBe(true);
-        fireEvent.click(button);
-        await waitFor(() =>
-          expect(router.state.location.pathname).toBe(
-            target ? `/platform-admin/organizations/${target}` : '/platform-admin',
-          ),
-        );
-        expect(exit).toHaveBeenCalledTimes(1);
+for (const target of [undefined, '', 'target']) {
+  for (const locale of ['zh-CN', 'en'] as const) {
+    test(`账号菜单的超管入口导航到正确位置 ${String(target)} ${locale}`, async () => {
+      const { router, exit } = mount({ target, locale });
+      const menu = await openAccountMenu();
+      expect(screen.queryByRole('button', { name: /返回超管后台|Return to super admin console/ })).toBeNull();
+      const item = within(menu).getByRole('menuitem', {
+        name: locale === 'zh-CN' ? '超管后台' : 'Super admin console',
+        exact: true,
       });
-    }
+      fireEvent.click(item);
+      await waitFor(() =>
+        expect(router.state.location.pathname).toBe(
+          target ? '/platform-admin/organizations/target' : '/platform-admin',
+        ),
+      );
+      expect(exit).toHaveBeenCalledTimes(target === undefined ? 0 : 1);
+    });
   }
 }

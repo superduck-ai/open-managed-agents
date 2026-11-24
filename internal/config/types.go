@@ -246,6 +246,7 @@ type E2BConfig struct {
 type EnvironmentRunnerConfig struct {
 	BrainSandboxPrewarm     bool                             `yaml:"brain_sandbox_prewarm"`
 	AgentMode               string                           `yaml:"agent_mode"`
+	CloudHarness            bool                             `yaml:"cloud_harness"`
 	SandboxMCPPort          int                              `yaml:"sandbox_mcp_port"`
 	SandboxMCPPath          string                           `yaml:"sandbox_mcp_path"`
 	Enabled                 bool                             `yaml:"enabled"`

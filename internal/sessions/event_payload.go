@@ -71,10 +71,6 @@ func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
 	return json.RawMessage(fallback)
 }
 
-func sessionEventPayload(event db.SessionEvent) json.RawMessage {
-	return sessionEventPayloadForResponse(event, "")
-}
-
 func (h *Handler) primaryOrphanToolUseIDsWithChildCopies(ctx context.Context, sessionID, threadID string, records []db.SessionEvent) (map[string]struct{}, error) {
 	if strings.TrimSpace(threadID) != "" || len(records) == 0 {
 		return nil, nil
@@ -173,20 +169,32 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 	}
 }
 
-func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
+func sessionEventPayloadForResponse(event db.SessionEvent, threadID string, useInputReceivedAt bool) json.RawMessage {
 	if threadID == "" && event.ThreadExternalID != nil {
 		threadID = *event.ThreadExternalID
 	}
-	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID)
+	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID, sessionInputReceivedAt(event.EventType, event.CreatedAt, useInputReceivedAt))
 }
 
-func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string) json.RawMessage {
+func sessionInputReceivedAt(eventType string, createdAt time.Time, enabled bool) time.Time {
+	if enabled && eventType == "user.message" {
+		return createdAt
+	}
+	return time.Time{}
+}
+
+func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string, receivedAt time.Time) json.RawMessage {
 	var payload map[string]any
 	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
 		return payloadRaw
 	}
 	_, changed := payload["created_at"]
 	delete(payload, "created_at")
+	if !receivedAt.IsZero() {
+		payload["received_at"] = formatEventTime(receivedAt)
+		changed = true
+	}
+
 	if payload["type"] == "agent.thinking" {
 		_, hasContent := payload["content"]
 		_, hasMessage := payload["message"]

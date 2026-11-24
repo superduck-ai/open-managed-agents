@@ -141,6 +141,9 @@ func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) 
 		block := c.block(o, "text", "text")
 		block.textBuffer.WriteString(delta.Content)
 		o.contentBytes += len(delta.Content)
+		if o.contentBytes <= 4*1024*1024 {
+			o.previewText(c.blockIndices["text"], delta.Content)
+		}
 	}
 	for _, tool := range delta.ToolCalls {
 		if tool.Index < 0 || tool.Index >= 1024 || (tool.Type != "" && tool.Type != "function") {

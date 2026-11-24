@@ -230,58 +230,62 @@ func expireSandboxToolCall(row *sandboxToolCallRow, now time.Time) {
 func (d *DB) CancelSandboxToolCall(ctx context.Context, scope SandboxToolCallScope) (SandboxToolCall, error) {
 	var result SandboxToolCall
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewSandboxToolCallMapper(executor)
-		sessionUUID, found, err := lockToolCallWorker(ctx, mapper, scope)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrWorkerEpochMismatch
-		}
-		now, err := mapper.Now(ctx)
-		if err != nil {
-			return err
-		}
-		tombstone := sandboxToolCallRow{
-			UUID:              uuid.NewString(),
-			OrganizationUUID:  scope.OrganizationUUID,
-			WorkspaceUUID:     scope.WorkspaceUUID,
-			CodeSessionUUID:   sessionUUID,
-			ExternalID:        scope.CallID,
-			ThreadID:          scope.ThreadID,
-			WorkerEpoch:       scope.WorkerEpoch,
-			ToolName:          "",
-			Input:             []byte("{}"),
-			State:             "cancelled",
-			DeadlineAt:        now,
-			CancelRequestedAt: &now,
-			FinishedAt:        &now,
-			CreatedAt:         now,
-			UpdatedAt:         now,
-		}
-		if err := mapper.Insert(ctx, tombstone); err != nil {
-			return err
-		}
-		row, found, err := mapper.Find(ctx, scope)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrNotFound
-		}
-		row, _, err = mapper.Lock(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, row.UUID)
-		if err != nil {
-			return err
-		}
-		stopSandboxToolCall(&row, "user", now)
-		row.UpdatedAt = now
-		if err := mapper.Update(ctx, row); err != nil {
-			return err
-		}
-		result = row.model()
-		return nil
+		var err error
+		result, err = cancelSandboxToolCallTx(ctx, NewSandboxToolCallMapper(executor), scope)
+		return err
 	})
 	return result, err
+}
+
+func cancelSandboxToolCallTx(ctx context.Context, mapper SandboxToolCallMapper, scope SandboxToolCallScope) (SandboxToolCall, error) {
+	sessionUUID, found, err := lockToolCallWorker(ctx, mapper, scope)
+	if err != nil {
+		return SandboxToolCall{}, err
+	}
+	if !found {
+		return SandboxToolCall{}, ErrWorkerEpochMismatch
+	}
+	now, err := mapper.Now(ctx)
+	if err != nil {
+		return SandboxToolCall{}, err
+	}
+	tombstone := sandboxToolCallRow{
+		UUID:              uuid.NewString(),
+		OrganizationUUID:  scope.OrganizationUUID,
+		WorkspaceUUID:     scope.WorkspaceUUID,
+		CodeSessionUUID:   sessionUUID,
+		ExternalID:        scope.CallID,
+		ThreadID:          scope.ThreadID,
+		WorkerEpoch:       scope.WorkerEpoch,
+		ToolName:          "",
+		Input:             []byte("{}"),
+		State:             "cancelled",
+		DeadlineAt:        now,
+		CancelRequestedAt: &now,
+		FinishedAt:        &now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := mapper.Insert(ctx, tombstone); err != nil {
+		return SandboxToolCall{}, err
+	}
+	row, found, err := mapper.Find(ctx, scope)
+	if err != nil {
+		return SandboxToolCall{}, err
+	}
+	if !found {
+		return SandboxToolCall{}, ErrNotFound
+	}
+	row, _, err = mapper.Lock(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, row.UUID)
+	if err != nil {
+		return SandboxToolCall{}, err
+	}
+	stopSandboxToolCall(&row, "user", now)
+	row.UpdatedAt = now
+	if err := mapper.Update(ctx, row); err != nil {
+		return SandboxToolCall{}, err
+	}
+	return row.model(), nil
 }
 
 type SandboxToolCallReport struct {

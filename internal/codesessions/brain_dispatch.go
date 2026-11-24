@@ -64,11 +64,15 @@ func leaseTimingsForTransport(transport string) db.WorkerLeaseTimings {
 }
 
 func usesBrainClaimTransport(codeSession db.CodeSession) bool {
+	return codeSessionWorkerTransport(codeSession) == brainWorkerTransport
+}
+
+func codeSessionWorkerTransport(codeSession db.CodeSession) string {
 	var metadata codeSessionTransportMetadata
 	if len(codeSession.Metadata) == 0 || json.Unmarshal(codeSession.Metadata, &metadata) != nil {
-		return false
+		return ""
 	}
-	return metadata.Config.WorkerTransport == brainWorkerTransport
+	return metadata.Config.WorkerTransport
 }
 
 func (s *Service) workerLeaseTimings(ctx context.Context, codeSessionID string) (db.WorkerLeaseTimings, error) {
@@ -142,7 +146,7 @@ func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block 
 
 func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (BrainClaim, bool, error) {
 	for range brainClaimExhaustedLimit {
-		modelToken, err := newOAuthCompatibleToken()
+		modelToken, err := NewModelAccessToken()
 		if err != nil {
 			return BrainClaim{}, false, err
 		}

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="HarnessStateMapper">
+    <select id="FindState" result="optional" resultType="harnessStateRow">
+        SELECT h.message_count, COALESCE(s.version, 0) AS version,
+            s.metadata, COALESCE(s.active_subscriptions, '{}') AS active_subscriptions,
+            COALESCE(s.pending_user_choices, '[]') AS pending_user_choices
+        FROM harness_thread_hierarchy h
+        LEFT JOIN harness_thread_state s
+          ON s.organization_uuid = h.organization_uuid AND s.workspace_uuid = h.workspace_uuid
+         AND s.session_uuid = h.session_uuid AND s.thread_uuid = h.thread_uuid
+        WHERE h.organization_uuid = #{key.Scope.OrganizationUUID} AND h.workspace_uuid = #{key.Scope.WorkspaceUUID}
+          AND h.session_uuid = #{key.Scope.SessionUUID} AND h.thread_uuid = #{key.UUID}
+    </select>
+    <insert id="SaveState" result="exec">
+        INSERT INTO harness_thread_state
+            (organization_uuid, workspace_uuid, session_uuid, thread_uuid, version,
+             metadata, active_subscriptions, pending_user_choices)
+        VALUES (#{key.Scope.OrganizationUUID}, #{key.Scope.WorkspaceUUID}, #{key.Scope.SessionUUID},
+                #{key.UUID}, #{state.Version},
+                #{state.Metadata,sensitive=true},
+                #{state.ActiveSubscriptions,sensitive=true}, #{state.PendingUserChoices,sensitive=true})
+        ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid)
+        DO UPDATE SET version = EXCLUDED.version,
+            metadata = EXCLUDED.metadata,
+            active_subscriptions = EXCLUDED.active_subscriptions, pending_user_choices = EXCLUDED.pending_user_choices
+    </insert>
+    <delete id="DeleteStates" result="exec">
+        DELETE FROM harness_thread_state
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+          AND session_uuid = #{scope.SessionUUID}
+    </delete>
+</mapper>

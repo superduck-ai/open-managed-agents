@@ -136,8 +136,9 @@ func insertSessionResourceWithLockedSessionTx(
 
 func sessionWriteParameters(session Session) sessionWriteParams {
 	return sessionWriteParams{
-		RuntimeUserUUID: nullableString(session.RuntimeUserUUID),
-		UUID:            session.UUID, ExternalID: session.ExternalID,
+		RuntimeUserUUID:  nullableString(session.RuntimeUserUUID),
+		ExecutionRuntime: session.ExecutionRuntime,
+		UUID:             session.UUID, ExternalID: session.ExternalID,
 		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
 		CreatedByAPIKeyUUID: nullableString(session.CreatedByAPIKeyUUID), EnvironmentUUID: session.EnvironmentUUID,
 		EnvironmentExternalID: session.EnvironmentExternalID, AgentUUID: session.AgentUUID,
@@ -231,7 +232,8 @@ func sessionPageParameters(params ListSessionsPageParams) sessionPageMapperParam
 
 func sessionEventPageParameters(params ListSessionEventsPageParams) sessionEventPageMapperParams {
 	return sessionEventPageMapperParams{
-		WorkspaceUUID: params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
+		UseInputReceivedAt: params.UseInputReceivedAt,
+		WorkspaceUUID:      params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
 		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly,
 		FetchLimit: params.Limit + 1, Cursor: params.Cursor, Descending: params.Order == "desc",
 		Types: params.Types, CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,
@@ -275,8 +277,9 @@ func (r sessionRow) session() Session {
 	return Session{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
-		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
-		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
+		RuntimeUserUUID:  stringFromNullable(r.RuntimeUserUUID),
+		ExecutionRuntime: r.ExecutionRuntime,
+		EnvironmentUUID:  r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),

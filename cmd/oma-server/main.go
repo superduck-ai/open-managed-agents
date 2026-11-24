@@ -28,6 +28,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/harnessworker"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
@@ -123,6 +124,14 @@ func run(bootstrap *slog.Logger) (err error) {
 		return fmt.Errorf("open nats client: %w", err)
 	}
 	defer drainNATS(natsConnection, logger)
+	var harnessInputSender codesessions.HarnessInputSenderFactory
+	if cfg.EnvironmentRunner.CloudHarness {
+		harnessQueue, err := harnessworker.Provision(ctx, natsConnection, cfg.NATS.WorkerEventStream.Replicas)
+		if err != nil {
+			return fmt.Errorf("configure harness task stream: %w", err)
+		}
+		harnessInputSender = harnessQueue.InputSender
+	}
 	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
@@ -182,6 +191,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	// 过期策略只存在一份实现。
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
+		WithHarnessInputSender(harnessInputSender).
 		WithWorkerEventState(workerEventAcks, objectStore).
 		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).
 		WithSessionPorts(sessionPortSettings)
@@ -283,6 +293,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		Redis:                  redisClient,
 		SessionEventBus:        sessionEventBus,
 		WorkerEventBroker:      workerEventBroker,
+		HarnessInputSender:     harnessInputSender,
 		TunnelBroker:           tunnelBroker,
 		TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
 		WorkerEventAcks:        workerEventAcks,

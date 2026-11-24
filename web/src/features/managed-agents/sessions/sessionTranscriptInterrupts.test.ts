@@ -74,6 +74,20 @@ describe('interrupted transcript', () => {
     expect(buildSessionEventEntries(events, 'debug')[0]).toMatchObject({ event: { id: 'stop' } });
   });
 
+  test('keeps a settled Harness message before its answer after refreshing interrupted history', () => {
+    const input = {
+      id: 'input',
+      type: 'user.message',
+      received_at: '2026-10-15T04:54:36Z',
+      processed_at: '2026-10-15T04:54:43.850Z',
+      content: 'Start',
+    };
+    const entries = transcript([input, start, thinking, stop, answer, end, idle]);
+    expect(entries[0]).toMatchObject({ event: { id: 'input' }, createdAtMs: Date.parse(input.received_at) });
+    expect(entries.findIndex((entry) => 'event' in entry && entry.event.id === 'answer')).toBeGreaterThan(0);
+    expect(entries.at(-1)).toMatchObject({ event: { id: 'stop' }, traceEntry: { state: 'stopped' } });
+  });
+
   test('keeps the stopped footer before an idle gap and the next user message', () => {
     const next = { id: 'next', type: 'user.message', processed_at: '2026-10-15T04:56:00Z', content: 'Continue' };
     const entries = transcript([start, thinking, stop, answer, end, idle, next]);

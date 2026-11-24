@@ -89,13 +89,13 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
 				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
 				"params.VaultIDs", "params.Status", "params.Budget", "params.Usage", "params.Stats",
-				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
+				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt", "params.ExecutionRuntime",
 			},
 			wantSensitiveArgumentNames: []string{
 				"params.AgentSnapshot", "params.Metadata", "params.VaultIDs", "params.Budget", "params.Usage",
 				"params.Stats", "params.OutcomeEvaluations",
 			},
-			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},
+			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id", "execution_runtime"},
 		},
 		{
 			statement: sessionMapperFindByUUIDStatement,
@@ -350,4 +350,14 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 	} {
 		assertMapperBuilderContract(t, contract)
 	}
+}
+
+func TestHarnessEventPageUsesInputReceivedAtForCursorAndOrdering(t *testing.T) {
+	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 2,
+		Cursor: &SessionEventPageCursor{ExternalID: "input"}, UseInputReceivedAt: true,
+	})
+	assertMapperSQLContains(t, bound, "AND ( CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
+	assertMapperSQLContains(t, bound, "SELECT CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
+	assertMapperSQLContains(t, bound, "ORDER BY CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
 }

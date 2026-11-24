@@ -48,7 +48,7 @@ func assertQueuedInputPublishesNullThenProcessedSSE(t *testing.T, kind string) {
 			if !accepted {
 				t.Fatal("same ID lifecycle version rejected")
 			}
-			writeSSE(recorder, event, thread)
+			writeSSE(recorder, event, thread, false)
 		default:
 			t.Fatal("fanout did not reach subscribed SSE connection")
 		}

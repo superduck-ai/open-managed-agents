@@ -5,7 +5,11 @@ import {
   type SessionEventListEntry,
 } from '../types';
 import { interruptedSessionModelRequestIds } from './sessionExecutionState';
-import { buildSessionEventEntries, sessionCanonicalDisplayEvent, sessionEventTimestamp } from './sessionTraceModel';
+import {
+  buildSessionEventEntries,
+  sessionCanonicalDisplayEvent,
+  sessionTranscriptEventTimestamp,
+} from './sessionTraceModel';
 
 export function buildSessionEntriesByLane(
   lanes: SessionDetailLane[],
@@ -16,7 +20,7 @@ export function buildSessionEntriesByLane(
 ) {
   const interruptionEvents = events
     .map(sessionCanonicalDisplayEvent)
-    .sort((left, right) => sessionEventTimestamp(left) - sessionEventTimestamp(right));
+    .sort((left, right) => sessionTranscriptEventTimestamp(left) - sessionTranscriptEventTimestamp(right));
   const interruptedModelRequestIds = interruptedSessionModelRequestIds(interruptionEvents);
   const entriesByLaneId = new Map<string, SessionEventListEntry[]>();
   lanes.forEach((lane) => {

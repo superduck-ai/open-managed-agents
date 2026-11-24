@@ -48,9 +48,17 @@ slot-info *args:
   ./scripts/generate-go.sh --cached
   go run ./cmd/dev-init slot-info {{ args }}
 
+# Open psql using the current worktree database and application schema.
+[positional-arguments]
+pg *args:
+  @bash ./scripts/pg.sh "$@"
+
 # Restart the Brain (oma-brain-dsh) in foreground using the bound environment when present.
 restart-brain:
   ./oma-brain-dsh/scripts/restart.sh
+
+restart-harness:
+  bash ./scripts/restart-harness.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.

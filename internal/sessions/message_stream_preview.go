@@ -33,7 +33,10 @@ func messageStreamPreview(batch codeSessionStreamFanout) (sessionStreamEvent, bo
 		}
 		id = payload.Event.ID
 	case previewEventDelta:
-		if payload.Delta.Type != "content_delta" || payload.Delta.Index != 0 || payload.Delta.Content.Type != "text" {
+		if payload.Delta.Type != "content_delta" || payload.Delta.Index < 0 || payload.Delta.Content.Type != "text" {
+			return sessionStreamEvent{}, false
+		}
+		if batch.ModelRequestID == "" && payload.Delta.Index != 0 {
 			return sessionStreamEvent{}, false
 		}
 	default:
@@ -43,6 +46,7 @@ func messageStreamPreview(batch codeSessionStreamFanout) (sessionStreamEvent, bo
 		return sessionStreamEvent{}, false
 	}
 	event := sessionStreamEvent{ExternalID: id, WorkspaceUUID: batch.WorkspaceUUID, SessionExternalID: batch.SessionExternalID, PrimaryThread: payload.ThreadID == "", EventType: payload.Type, Payload: batch.Payload, ProcessedAt: time.Now().UTC()}
+	event.ModelRequestID, event.PreviewSequence = batch.ModelRequestID, batch.PreviewSequence
 	if payload.ThreadID != "" {
 		event.ThreadExternalID = &payload.ThreadID
 	}

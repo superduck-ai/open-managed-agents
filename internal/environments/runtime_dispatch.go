@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func (r *Runner) finishManagedAgentRuntime(ctx context.Context, run *runnerRun, session db.Session, work db.EnvironmentWork, launch managedAgentRuntimeLaunch) error {
@@ -11,7 +12,7 @@ func (r *Runner) finishManagedAgentRuntime(ctx context.Context, run *runnerRun, 
 	if err := r.publishManagedAgentRuntime(ctx, session, work, launch); err != nil {
 		return err
 	}
-	if r.cfg.EnvironmentRunner.AgentMode != "brain" {
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime || r.cfg.EnvironmentRunner.AgentMode != "brain" {
 		return nil
 	}
 	dispatcher, ok := r.codeSessions.(interface {

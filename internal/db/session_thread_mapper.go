@@ -67,6 +67,7 @@ type SessionThreadMapper interface {
 	InsertIfAbsent(ctx context.Context, params sessionThreadWriteParams) (sessionThreadRow, bool, error)
 	FindPrimary(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionThreadRow, error)
 	FindPrimaryExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, bool, error)
+	FindByUUID(ctx context.Context, orgUUID, workspaceUUID, sessionUUID, threadUUID string) (sessionThreadRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (sessionThreadRow, error)
 	ListPage(ctx context.Context, params sessionThreadPageMapperParams) ([]sessionThreadRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionThreadRow, error)

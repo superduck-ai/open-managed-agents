@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="HarnessConversationMapper">
+    <sql id="scope">
+        organization_uuid = #{key.Scope.OrganizationUUID} AND workspace_uuid = #{key.Scope.WorkspaceUUID}
+        AND session_uuid = #{key.Scope.SessionUUID}
+    </sql>
+    <sql id="scopeValues">#{key.Scope.OrganizationUUID}, #{key.Scope.WorkspaceUUID}, #{key.Scope.SessionUUID}</sql>
+    <sql id="sessionScope">
+        organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+        AND session_uuid = #{scope.SessionUUID}
+    </sql>
+    <sql id="thread"> <include refid="scope"/> AND thread_uuid = #{key.UUID}</sql>
+    <sql id="threadColumns">
+        thread_uuid, root_thread_uuid, parent_thread_uuid, spawn_message_seq, spawn_tool_call_id, closed,
+        is_subscription_event, is_compaction, fresh_context, message_count
+    </sql>
+
+    <insert id="EnsureRoot" result="rows">
+        INSERT INTO harness_thread_hierarchy
+            (organization_uuid, workspace_uuid, session_uuid, thread_uuid, root_thread_uuid)
+        VALUES (<include refid="scopeValues"/>, #{key.UUID}, #{key.UUID})
+        ON CONFLICT (thread_uuid) DO NOTHING
+    </insert>
+    <select id="FindThread" result="optional" resultType="harnessConversationThread">
+        SELECT <include refid="threadColumns"/> FROM harness_thread_hierarchy WHERE <include refid="thread"/>
+    </select>
+    <select id="LockThread" resultType="harnessConversationThread">
+        SELECT <include refid="threadColumns"/> FROM harness_thread_hierarchy WHERE <include refid="thread"/> FOR UPDATE
+    </select>
+    <insert id="InsertThread" result="exec">
+        INSERT INTO harness_thread_hierarchy
+            (organization_uuid, workspace_uuid, session_uuid, thread_uuid, root_thread_uuid, parent_thread_uuid,
+             spawn_message_seq, spawn_tool_call_id, is_subscription_event, fresh_context)
+        VALUES (<include refid="scopeValues"/>, #{key.UUID}, #{thread.RootThreadUUID},
+                #{thread.ParentThreadUUID}, #{thread.SpawnMessageSeq}, #{thread.SpawnToolCallID}, #{thread.Subscription}, #{thread.Fresh})
+    </insert>
+    <update id="CloseThread" result="exec">
+        UPDATE harness_thread_hierarchy SET closed = true WHERE <include refid="thread"/>
+    </update>
+    <update id="MarkCompaction" result="exec">
+        UPDATE harness_thread_hierarchy SET is_compaction = true WHERE <include refid="thread"/>
+    </update>
+
+    <select id="LoadMessages" resultType="string">
+        SELECT message_data FROM harness_conversation_history WHERE <include refid="thread"/>
+        <if test="startFrom != nil">AND message_seq &gt; #{startFrom}</if>
+        <if test="upTo != nil">AND message_seq &lt;= #{upTo}</if>
+        ORDER BY message_seq
+    </select>
+    <select id="HasMessageID" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM harness_conversation_history WHERE <include refid="thread"/> AND message_id = #{messageID}
+        ) AS present
+    </select>
+    <select id="ListTurnMessages" resultType="string">
+        SELECT message_data FROM harness_conversation_history
+        WHERE <include refid="thread"/> AND turn_uuid = #{turnUUID}
+        ORDER BY message_seq
+    </select>
+    <insert id="AppendMessages" result="rows">
+        INSERT INTO harness_conversation_history
+            (organization_uuid, workspace_uuid, session_uuid, thread_uuid, turn_uuid, message_id, message_data, message_seq)
+        VALUES (<include refid="scopeValues"/>, #{key.UUID}, #{turnUUID}, #{messageID}, #{data,sensitive=true}, #{messageSeq})
+        ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid, message_id) DO NOTHING
+    </insert>
+    <update id="UpdateMessageCount" result="exec">
+        UPDATE harness_thread_hierarchy SET message_count = #{messageCount}
+        WHERE <include refid="thread"/>
+    </update>
+    <delete id="DiscardTurn" result="rows">
+        DELETE FROM harness_conversation_history WHERE <include refid="thread"/> AND turn_uuid = #{turnUUID}
+    </delete>
+
+    <insert id="SaveSummary" result="exec">
+        INSERT INTO harness_compaction_summaries
+            (organization_uuid, workspace_uuid, session_uuid, thread_uuid, up_to_seq, summary)
+        VALUES (<include refid="scopeValues"/>, #{key.UUID}, #{upToSeq}, #{summary,sensitive=true})
+        ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid, up_to_seq)
+        DO UPDATE SET summary = EXCLUDED.summary
+    </insert>
+    <select id="FindSummary" result="optional" resultType="harnessSummaryRow">
+        SELECT summary, up_to_seq FROM harness_compaction_summaries WHERE <include refid="thread"/>
+        <if test="upToSeq != nil">AND up_to_seq &lt;= #{upToSeq}</if>
+        ORDER BY up_to_seq DESC LIMIT 1
+    </select>
+
+    <delete id="DeleteHistory" result="exec">
+        DELETE FROM harness_conversation_history WHERE <include refid="sessionScope"/>
+    </delete>
+    <delete id="DeleteSummaries" result="exec">
+        DELETE FROM harness_compaction_summaries WHERE <include refid="sessionScope"/>
+    </delete>
+    <delete id="DeleteThreads" result="exec">
+        DELETE FROM harness_thread_hierarchy WHERE <include refid="sessionScope"/>
+    </delete>
+</mapper>

@@ -22,8 +22,11 @@ type sessionStreamEvent struct {
 	ThreadExternalID  *string         `json:"thread_id,omitempty"`
 	PrimaryThread     bool            `json:"primary_thread,omitempty"`
 	EventType         string          `json:"event_type"`
+	ModelRequestID    string          `json:"model_request_id,omitempty"`
+	PreviewSequence   uint64          `json:"preview_sequence,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 	ProcessedAt       time.Time       `json:"processed_at,omitempty"`
+	CreatedAt         time.Time       `json:"created_at,omitzero"`
 }
 
 type codeSessionStreamFanout struct {
@@ -31,6 +34,8 @@ type codeSessionStreamFanout struct {
 	SessionExternalID string          `json:"session_id"`
 	CodeSessionID     string          `json:"code_session_id"`
 	WorkerEpoch       int64           `json:"worker_epoch"`
+	ModelRequestID    string          `json:"model_request_id,omitempty"`
+	PreviewSequence   uint64          `json:"preview_sequence,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 }
 
@@ -71,6 +76,8 @@ func (h *Handler) PublishCodeSessionStreamEvent(ctx context.Context, route codes
 		SessionExternalID: route.SessionExternalID,
 		CodeSessionID:     route.CodeSessionID,
 		WorkerEpoch:       workerEpoch,
+		ModelRequestID:    route.ModelRequestID,
+		PreviewSequence:   route.PreviewSequence,
 		Payload:           streamPayload,
 	}
 	return h.publishFanout(ctx, route.SessionExternalID, sessionfanout.KindCodeSessionStream, payload)
@@ -140,5 +147,6 @@ func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
 		EventType:         event.EventType,
 		Payload:           event.Payload,
 		ProcessedAt:       event.ProcessedAt,
+		CreatedAt:         sessionInputReceivedAt(event.EventType, event.CreatedAt, true),
 	}
 }

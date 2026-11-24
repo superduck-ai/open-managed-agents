@@ -41,7 +41,8 @@ type chatEvent struct {
 		Thinking string `json:"thinking"`
 	} `json:"content"`
 	Event struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Type string `json:"type"`
 	} `json:"event"`
 	EventID string `json:"event_id"`
 	Error   struct {
@@ -53,8 +54,11 @@ type chatEvent struct {
 		Type string `json:"type"`
 	} `json:"stop_reason"`
 	Delta struct {
+		Type    string `json:"type"`
+		Index   *int   `json:"index"`
 		Content struct {
 			Text string `json:"text"`
+			Type string `json:"type"`
 		} `json:"content"`
 	} `json:"delta"`
 }
@@ -133,10 +137,18 @@ func connectChatStream(t *testing.T, ctx context.Context, f *liveSession) (<-cha
 
 func connectChatThreadStream(t *testing.T, ctx context.Context, f *liveSession, threadID string) (<-chan chatEvent, func()) {
 	t.Helper()
+	return connectChatScopedStream(t, ctx, f, threadID, "agent.message")
+}
+
+func connectChatScopedStream(t *testing.T, ctx context.Context, f *liveSession, threadID string, previews ...string) (<-chan chatEvent, func()) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
-	path := f.env.url + "/v1/sessions/" + f.session.ExternalID + "/events/stream?beta=true&event_deltas[]=agent.message"
+	path := f.env.url + "/v1/sessions/" + f.session.ExternalID + "/events/stream?beta=true"
 	if threadID != "" {
-		path = f.env.url + "/v1/sessions/" + f.session.ExternalID + "/threads/" + threadID + "/stream?beta=true&event_deltas[]=agent.message"
+		path = f.env.url + "/v1/sessions/" + f.session.ExternalID + "/threads/" + threadID + "/stream?beta=true"
+	}
+	for _, preview := range previews {
+		path += "&event_deltas[]=" + preview
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
 	requireOK(t, err)

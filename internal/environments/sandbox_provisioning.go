@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
@@ -30,7 +31,7 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 			return err
 		}
 	}
-	if cloudEnvironment(env) && r.cfg.EnvironmentRunner.BrainSandboxPrewarm {
+	if cloudEnvironment(env) && r.cfg.EnvironmentRunner.BrainSandboxPrewarm && preparation.Session.ExecutionRuntime != sessioncontract.CloudHarnessRuntime {
 		ctx = run.begin(ctx, "sandbox_prewarm")
 		code, found, loadErr := r.db.GetCodeSession(ctx, launch.CodeSessionID)
 		if loadErr != nil {

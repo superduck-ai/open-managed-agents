@@ -366,8 +366,8 @@ export function buildSessionEventEntries(
   }
   if (rawEvents.some((event) => event.type === 'user.interrupt')) {
     rawEvents.sort((left, right) => {
-      const leftAt = sessionEventTimestamp(left);
-      const rightAt = sessionEventTimestamp(right);
+      const leftAt = sessionTranscriptEventTimestamp(left);
+      const rightAt = sessionTranscriptEventTimestamp(right);
       if (leftAt && rightAt) return leftAt - rightAt;
       return Number(Boolean(rightAt)) - Number(Boolean(leftAt));
     });
@@ -670,7 +670,7 @@ export function h(
   const canonicalEvent = sessionCanonicalDisplayEvent(event);
   const family = sessionEventFamily(canonicalEvent);
   const type = displayEventType(canonicalEvent, family);
-  const createdAtMs = sessionEventTimestamp(canonicalEvent) || traceEntry?.createdAtMs || 0;
+  const createdAtMs = sessionTranscriptEventTimestamp(canonicalEvent) || traceEntry?.createdAtMs || 0;
   const processedAtMs = sessionEventProcessedTimestamp(canonicalEvent) || createdAtMs;
   const displayText = sessionEventIsThinking(canonicalEvent)
     ? sessionThinkingText(canonicalEvent)
@@ -1408,7 +1408,7 @@ export function sessionTraceEntryFromEvent(
   msg?: I18nMsg,
 ): SessionTraceEntry {
   const type = sessionEventType(event);
-  const createdAtMs = sessionEventTimestamp(event);
+  const createdAtMs = sessionTranscriptEventTimestamp(event);
   const displayText = sessionEventIsThinking(event)
     ? ''
     : sessionEventTranscriptText(event) ||
@@ -2550,6 +2550,11 @@ export function sessionEventKey(event: QuickstartSessionEvent) {
 
 export function sessionEventType(event: QuickstartSessionEvent) {
   return typeof event.type === 'string' && event.type ? event.type : 'event';
+}
+
+export function sessionTranscriptEventTimestamp(event: QuickstartSessionEvent) {
+  const receivedAt = event.type === 'user.message' ? sessionTimestampMs(event.received_at) : 0;
+  return receivedAt || sessionEventTimestamp(event);
 }
 
 export function sessionEventTimestamp(event: QuickstartSessionEvent) {

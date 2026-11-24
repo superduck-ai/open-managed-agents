@@ -71,6 +71,7 @@ type sessionRow struct {
 	Title                 *string                   `db:"title"`
 	Metadata              []byte                    `db:"metadata"`
 	RuntimeUserUUID       *string                   `db:"runtime_user_uuid"`
+	ExecutionRuntime      string                    `db:"execution_runtime"`
 	VaultIDs              sessionVaultIDs           `db:"vault_ids"`
 	Status                string                    `db:"status"`
 	Budget                []byte                    `db:"budget"`
@@ -87,6 +88,7 @@ type sessionRow struct {
 
 type sessionWriteParams struct {
 	RuntimeUserUUID       *string
+	ExecutionRuntime      string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string

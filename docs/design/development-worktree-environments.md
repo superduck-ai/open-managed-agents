@@ -92,16 +92,24 @@ just restart-brain
 shell，全部停止后关闭这些旧分屏。未知程序和其他 worktree 的分屏不会被中断
 或关闭。从服务分屏自身执行会被拒绝，应在独立控制分屏执行。
 
-随后新建 `OMA services` 标签页：后端位于左侧，Brain 和 Web 位于右侧上下分屏。
+随后新建 `OMA services` 标签页。后端位于左侧，执行服务和 Web 位于右侧上下分屏。
+Harness 模式会在后端下方增加 `harness-status` 分屏。
 每个新分屏最多等待 30 秒进入空闲 shell；初始化期间出现临时前台进程只等待，
-不发送中断，也不提前写入启动命令。脚本先等待后端输出监听成功，再启动 Brain，
-等待 Brain ready 后启动 Web，每次使用唯一就绪标记。各服务仍调用现有
-`restart-*` 入口，使用当前 worktree 的配置和进程归属检查。
+不发送中断，也不提前写入启动命令。脚本先等待后端输出监听成功，再读取生效的
+`environment_runner.cloud_harness` 配置。开启时调用 `just restart-harness` 并使用
+`oma-harness` 分屏，否则调用 `just restart-brain` 并使用 `oma-brain` 分屏。
+Harness 启动器在绑定环境中读取生成配置和当前 portless API alias。它构建一次，
+此后逐个启动 Worker。每个进程连接数据库并绑定 JetStream consumer 后输出就绪日志，再处理一条投递。
+脚本等执行服务就绪后启动 Web，每次使用唯一就绪标记。状态分屏在 Web 就绪后启动，
+每秒查询执行分屏。它用 Worker 日志显示当前阶段和最近一条输入经过的阶段，用启动器输出的退出记录
+显示进程 PID、退出原因和存活时长。空队列轮询退出时，面板继续保留最近一条实际输入及其结果。
+启动器停止或执行分屏消失时，监视进程退出。再次执行 `just restart` 时，状态分屏随本
+worktree 的旧分屏一起关闭。
 
 启动全部成功后才切换到服务标签页；失败时控制分屏显示服务名、panel ID、
 失败阶段及该分屏最近 30 行输出，停止后续启动并保留新分屏。脚本回归入口为
-`bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 验证等待、替换、拒绝误关及
-失败诊断，不操作开发者的真实分屏。
+`bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 验证等待、替换、拒绝误关、
+任务阶段、退出记录及失败诊断。
 
 三个服务就绪后，脚本汇总输出当前环境的 Web 与 API 完整 HTTP URL。
 交互终端使用 OSC 8 超链接，重定向输出或 `TERM=dumb` 时使用纯文本 URL。
@@ -116,11 +124,14 @@ shell，全部停止后关闭这些旧分屏。未知程序和其他 worktree �
 | `dev-init [FILE]`          | 默认使用 `.run/dev-init.yaml`，初始化配置、依赖资源、固定密钥和开发数据 |
 | `dev-init [FILE] --update` | 显式更新已登记资源的可修改配置                     |
 | `slot-info`                | 显示环境名称、访问地址、资源名称和初始化状态       |
+| `pg`                       | 用 `psql` 连接当前 worktree 的应用数据库          |
 | `restart-server`           | 使用当前环境配置重启后端                           |
 | `restart-web`              | 使用当前环境的前端端口和后端代理目标               |
 | `restart-brain`            | 使用当前环境的 API 地址和 Brain claim token        |
 
 日常重启只读取已准备好的配置，不同步开发数据、不轮换密钥，也不覆盖页面修改。未启用环境初始化的 worktree 保留现有运行方式。
+
+`just pg` 读取工作树的 `.run/generated/config.yaml`，未绑定时读取 `.run/config.yaml`。连接默认使用 `public` schema，配置里的 `search_path` 或连接 `options` 可以指定应用使用的其他 schema。额外参数原样交给 `psql`，例如 `just pg -c '\dt'`。只有这个命令需要本机安装 `psql`。
 
 ## 环境名称与归属
 
@@ -601,7 +612,7 @@ flowchart TD
 
 目标必须是同一 clone 登记的 checkout，允许主 checkout、锁定、有修改或未跟踪文件的 worktree。清理不读取或修改源码的 Git 状态。绑定文件和注册表必须同时指向目标路径且 env_id 一致，Docker 资源继续使用既有所有权标签校验。未绑定目标只有在注册表也没有该路径时才跳过 Compose 清理。
 
-服务识别结合已登记 API/Web 端口与 `ps` 命令，再用 `lsof` 核对 cwd，只接受目标根目录、`web/` 和 `oma-brain-dsh/`。命令匹配同时发现没有监听端口的 Brain、Go 启动器与 Vite。发送信号前再次核对命令与 cwd，避免停止其他 worktree 的进程。等待上限为 30 秒，不自动升级 SIGKILL；停止失败时不清理 Compose。不得并发运行初始化、重启与回收。
+服务识别结合已登记 API/Web 端口与 `ps` 命令，再用 `lsof` 核对 cwd，只接受目标根目录、`web/` 和 `oma-brain-dsh/`。命令匹配同时发现没有监听端口的 Brain、Harness 启动器与 Worker、Go 启动器与 Vite。发送信号前再次核对命令与 cwd，避免停止其他 worktree 的进程。等待上限为 30 秒，不自动升级 SIGKILL。停止失败时不清理 Compose。不得并发运行初始化、重启与回收。
 
 服务退出后复用 `dev-teardown` 的资源清理逻辑，启用全部 Compose profile。Compose 清理失败、有残留资源或无法检查残留时保留 alias、绑定、注册表和生成状态，允许重试；确认资源全部移除后删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
 

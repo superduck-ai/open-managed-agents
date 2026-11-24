@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
@@ -45,6 +46,7 @@ type Service struct {
 	attachmentHTTP         *http.Client
 	attachmentMaxBytes     int64
 	sessionPorts           *sessionports.Settings
+	harnessInputs          HarnessInputSenderFactory
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -161,6 +163,11 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	}
 	if codeSession.Status != "active" {
 		return nil
+	}
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", nil, func(_ db.CodeSession) error {
+			return s.publishHarnessInputs(ctx, session, events)
+		})
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	queued := false
@@ -682,8 +689,7 @@ func requestIDString(requestID *string) string {
 }
 
 func stablePublicEventID(codeSessionID, seed string) string {
-	sum := sha256.Sum256([]byte(codeSessionID + "\x00public\x00" + seed))
-	return "sevt_" + hex.EncodeToString(sum[:16])
+	return maevents.StablePublicEventID(codeSessionID, seed)
 }
 
 func derivedPrimarySessionEventID(codeSessionID, eventID, eventType string) string {

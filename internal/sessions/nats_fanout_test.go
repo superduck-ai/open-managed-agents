@@ -95,7 +95,7 @@ func TestNATSFanoutDeliversPreviewAndFinalAcrossInstances(t *testing.T) {
 					if !accepted || event.EventType != eventType {
 						t.Fatalf("event = %s, accepted = %t, want %s", event.EventType, accepted, eventType)
 					}
-					writeSSE(response, event, "thread-test")
+					writeSSE(response, event, "thread-test", false)
 				case <-time.After(3 * time.Second):
 					t.Fatalf("missing %s", eventType)
 				}

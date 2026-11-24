@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type StreamEvent = sessionStreamEvent
@@ -66,6 +67,7 @@ func (h *Handler) subscribeSessionThread(ctx context.Context, session db.Session
 }
 
 func (h *Handler) subscribeSession(ctx context.Context, session db.Session, connection *streamConnection, options StreamOptions) (*EventSubscription, error) {
+	connection.useInputReceivedAt = session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime
 	cursorID := options.AfterEventID
 	ctx, cancel := context.WithCancel(ctx)
 	id, deliveries := h.streams.subscribe(session.WorkspaceUUID, session.ExternalID)
@@ -148,10 +150,11 @@ func (s *EventSubscription) receive(ctx context.Context, heartbeat <-chan time.T
 				}
 				continue
 			}
-			if !s.inputBoundary.IsZero() && !event.ProcessedAt.IsZero() && event.ProcessedAt.Before(s.inputBoundary) {
+			orderTime := s.eventOrderTime(event)
+			if !s.inputBoundary.IsZero() && !orderTime.IsZero() && orderTime.Before(s.inputBoundary) {
 				continue
 			}
-			accepted := s.connection.accepts(event)
+			accepted := s.connection.acceptsLive(event)
 			if accepted {
 				return event, nil
 			}
@@ -202,10 +205,18 @@ func (s *EventSubscription) replayInput(ctx context.Context, anchor sessionStrea
 		return err
 	}
 	s.waitingInput = false
-	s.inputBoundary = anchor.ProcessedAt
+	s.inputBoundary = s.eventOrderTime(anchor)
 	s.replayed = false
 	s.connection.replayedEventIDs = nil
 	s.replay = append([]sessionStreamEvent{anchor}, replay...)
 	s.replayHistory = s.replay
 	return nil
+}
+
+func (s *EventSubscription) eventOrderTime(event sessionStreamEvent) time.Time {
+	receivedAt := sessionInputReceivedAt(event.EventType, event.CreatedAt, s.connection.useInputReceivedAt)
+	if !receivedAt.IsZero() {
+		return receivedAt
+	}
+	return event.ProcessedAt
 }

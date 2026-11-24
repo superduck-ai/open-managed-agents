@@ -97,9 +97,9 @@ herdr
 just restart
 ```
 
-首次运行会创建 `OMA services` 标签页：左侧为 oma-server，右上为 oma-brain，右下为 Web。后端监听成功后才启动 Brain，Brain ready 后再启动 Web。
+首次运行会创建 `OMA services` 标签页。左侧为 `oma-server`，右上为执行服务，右下为 Web。后端监听成功后，脚本读取生效配置并启动执行服务，等它就绪后再启动 Web。默认启动 `oma-brain`。在 `.run/config.yaml` 中设置 `environment_runner.cloud_harness: true` 后，执行分屏使用 `oma-harness`。启动器为每条 JetStream 投递启动一个 Worker。处理完成、等待外部输入或归还投递时，Worker 退出。左下的 `harness-status` 每秒刷新当前阶段、上一个 Worker 的退出原因和存活时长，以及最近一条输入经过的阶段。
 
-再次执行 `just restart` 会安全停止并关闭当前 Herdr workspace 中属于这个 worktree 的旧服务分屏，然后新建三个分屏。新分屏等待 shell 就绪后才发送启动命令；全部启动成功后切换到服务页，失败原因和最近输出显示在控制分屏。请保留 `oma-server`、`oma-brain`、`web` 分屏名称，并从单独的控制分屏执行重启，不要在三个服务分屏自身运行。
+再次执行 `just restart` 会安全停止并替换当前 Herdr workspace 中属于这个 worktree 的服务和状态分屏。新分屏等待 shell 就绪后才发送启动命令。全部启动成功后切换到服务页，失败原因和最近输出显示在控制分屏。请保留 `oma-server`、`oma-brain` 或 `oma-harness`、`harness-status` 和 `web` 分屏名称，并从单独的控制分屏执行重启。
 
 成功后控制分屏会汇总输出可点击地址，例如：
 

@@ -86,6 +86,14 @@ func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.Code
 	if record.SessionExternalID == "" {
 		return nil, nil
 	}
+	tools, err := s.currentRuntimeToolsets(ctx, record, threadID)
+	if err != nil {
+		return nil, err
+	}
+	return s.builtinTools().toolPolicies(tools), nil
+}
+
+func (s *Service) currentRuntimeToolsets(ctx context.Context, record db.CodeSession, threadID string) ([]toolPermissionToolset, error) {
 	var snapshot json.RawMessage
 	if threadID != "" {
 		thread, err := s.db.GetSessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID, threadID)
@@ -106,9 +114,5 @@ func (s *Service) currentRuntimeToolPolicies(ctx context.Context, record db.Code
 		}
 		snapshot = session.AgentSnapshot
 	}
-	tools, err := runtimeRootToolsets(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	return s.builtinTools().toolPolicies(tools), nil
+	return runtimeRootToolsets(snapshot)
 }

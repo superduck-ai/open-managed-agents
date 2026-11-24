@@ -55,6 +55,8 @@ type Principal struct {
 	AgentUUID               string
 	AgentExternalID         string
 	AgentVersion            int
+	ExecutionRuntime        string
+	WorkerEpoch             int64
 }
 
 func HashSecret(secret string) string {

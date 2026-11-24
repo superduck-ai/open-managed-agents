@@ -207,12 +207,21 @@ func TestRecycleUnboundWorktree(t *testing.T) {
 
 func TestRecycleServiceCommandOwnership(t *testing.T) {
 	root := "/fixture"
-	for _, command := range []string{"go run ./cmd/dev-init recycle --yes", "bash", "node other.js", "bun test", "go test ./..."} {
+	for _, command := range []string{
+		"go run ./cmd/dev-init recycle --yes", "bash", "node other.js", "bun test", "go test ./...",
+		"bash /other/scripts/restart-harness.sh", "/other/tmp/dev-harness/exe/oma-harness-worker",
+	} {
 		if serviceCommand(root, command) {
 			t.Fatalf("unexpected service: %s", command)
 		}
 	}
-	for _, command := range []string{"go run .", "go run ./cmd/oma-server", "bun dist/main.js", "bun run src/main.ts", "node /fixture/web/node_modules/.bin/vite --port 61000", "bun run dev -- --host 127.0.0.1", "/tmp/go-build123/b001/exe/open-managed-agents", "/tmp/go-build123/b001/exe/oma-server"} {
+	for _, command := range []string{
+		"go run .", "go run ./cmd/oma-server", "bun dist/main.js", "bun run src/main.ts",
+		"node /fixture/web/node_modules/.bin/vite --port 61000", "bun run dev -- --host 127.0.0.1",
+		"/tmp/go-build123/b001/exe/open-managed-agents", "/tmp/go-build123/b001/exe/oma-server",
+		"bash ./scripts/restart-harness.sh", "bash /fixture/scripts/restart-harness.sh",
+		"/fixture/tmp/dev-harness/exe/oma-harness-worker -api-url http://oma-fixture-api.localhost",
+	} {
 		if !serviceCommand(root, command) {
 			t.Fatalf("missing service: %s", command)
 		}

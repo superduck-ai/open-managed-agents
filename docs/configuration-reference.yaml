@@ -150,6 +150,8 @@ environment_runner:
     version: ""
   claude_path: /opt/claude-code/bin/claude
   agent_mode: ""
+  # Select the one-shot JetStream Harness runtime for new cloud sessions.
+  cloud_harness: false
   brain_sandbox_prewarm: false
   sandbox_mcp_port: 3001
   sandbox_mcp_path: /mcp

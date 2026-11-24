@@ -12,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func sessionInputRequest(key string, events []byte) (*db.SessionInputRequest, error) {
@@ -51,7 +52,7 @@ func (h *Handler) deliverSessionInputChanges(w http.ResponseWriter, r *http.Requ
 	data := make([]json.RawMessage, 0, len(changes.Events))
 	for _, event := range changes.Events {
 		if allowedPublicEventType(event.EventType) {
-			data = append(data, sessionEventPayload(event))
+			data = append(data, sessionEventPayloadForResponse(event, "", session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime))
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})

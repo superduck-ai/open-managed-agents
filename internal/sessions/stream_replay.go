@@ -24,7 +24,7 @@ func (h *Handler) loadStreamReplay(ctx context.Context, workspaceUUID, sessionID
 	}
 	params := db.ListSessionEventsPageParams{
 		WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID,
-		ThreadExternalID: connection.threadID, Limit: 1000, Order: "asc",
+		ThreadExternalID: connection.threadID, Limit: 1000, Order: "asc", UseInputReceivedAt: connection.useInputReceivedAt,
 		Cursor: &db.SessionEventPageCursor{ExternalID: cursorID},
 	}
 	var replay []sessionStreamEvent

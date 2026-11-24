@@ -45,11 +45,14 @@ func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
 	threadID           string
+	useInputReceivedAt bool
 	primaryThread      bool
 	streamDeltaTypes   map[string]struct{}
 	activePreviewIDs   map[string]struct{}
 	finishedPreviewIDs map[string]struct{}
 	replayedEventIDs   map[string]bool
+	liveModelRequestID string
+	previewSequence    uint64
 }
 
 func newStreamHub() *streamHub {
@@ -132,11 +135,20 @@ func (c *streamConnection) event(delivery streamDelivery) (sessionStreamEvent, b
 	switch delivery := delivery.(type) {
 	case streamResetDelivery:
 		clear(c.activePreviewIDs)
+		c.liveModelRequestID, c.previewSequence = "", 0
 		return sessionStreamEvent{}, false
 	case sessionEventDelivery:
-		return delivery.event, c.accepts(delivery.event)
+		return delivery.event, c.acceptsLive(delivery.event)
 	}
 	return sessionStreamEvent{}, false
+}
+
+func (c *streamConnection) acceptsLive(event sessionStreamEvent) bool {
+	if !c.accepts(event) {
+		return false
+	}
+	c.observeLiveModelRequest(event)
+	return true
 }
 
 func (c *streamConnection) accepts(event sessionStreamEvent) bool {
@@ -164,7 +176,7 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	if !maevents.IsStreamDelta(event.EventType) {
 		return false
 	}
-	if len(c.streamDeltaTypes) == 0 {
+	if len(c.streamDeltaTypes) == 0 || (event.ModelRequestID != "" && event.ModelRequestID != c.liveModelRequestID) {
 		return false
 	}
 	previewType, previewID := streamPreviewTarget(event)
@@ -184,11 +196,36 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		if _, active := c.activePreviewIDs[previewID]; active {
 			return false
 		}
+		if !c.acceptsPreviewSequence(event.PreviewSequence) {
+			return false
+		}
 		c.activePreviewIDs[previewID] = struct{}{}
 		return true
 	}
 	_, active := c.activePreviewIDs[previewID]
-	return active
+	return active && c.acceptsPreviewSequence(event.PreviewSequence)
+}
+
+func (c *streamConnection) observeLiveModelRequest(event sessionStreamEvent) {
+	if len(c.streamDeltaTypes) == 0 {
+		return
+	}
+	if event.EventType == "span.model_request_start" {
+		c.liveModelRequestID, c.previewSequence = event.ExternalID, 0
+	} else if event.EventType == "span.model_request_end" && event.ExternalID == c.liveModelRequestID+"_end" {
+		c.liveModelRequestID, c.previewSequence = "", 0
+	}
+}
+
+func (c *streamConnection) acceptsPreviewSequence(sequence uint64) bool {
+	if sequence == 0 {
+		return true
+	}
+	if sequence != c.previewSequence+1 {
+		return false
+	}
+	c.previewSequence = sequence
+	return true
 }
 
 // A request end retires only its own previews, including ones whose start arrives after the end.
@@ -272,7 +309,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		if err != nil {
 			return
 		}
-		writeSSE(w, event, subscription.threadID)
+		writeSSE(w, event, subscription.threadID, subscription.connection.useInputReceivedAt)
 		flusher.Flush()
 		if event.EventType == "session.deleted" {
 			return
@@ -297,7 +334,7 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 	return types, nil
 }
 
-func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
+func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string, useInputReceivedAt bool) {
 	isPreview := maevents.IsStreamDelta(event.EventType)
 	eventID := event.ExternalID
 	if isPreview {
@@ -313,7 +350,7 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
 		return
 	}
-	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID))
+	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID, sessionInputReceivedAt(event.EventType, event.CreatedAt, useInputReceivedAt)))
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

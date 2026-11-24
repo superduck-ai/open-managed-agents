@@ -169,6 +169,20 @@ func TestSandboxToolCallClaimsDistinguishPreparingAndRetiredSandboxes(t *testing
 	execClaimTest(t, ctx, database, `INSERT INTO environment_work(uuid,external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,session_uuid,state) SELECT $1,'work_tool_ready',organization_uuid,workspace_uuid,environment_uuid,environment_external_id,session_uuid,'active' FROM code_sessions WHERE external_id=$2`, work, codeID)
 	execClaimTest(t, ctx, database, `INSERT INTO environment_sandboxes(uuid,external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,work_uuid,work_external_id,provider,template,provider_sandbox_id,state) SELECT $1,'sandbox_tool_ready',organization_uuid,workspace_uuid,environment_uuid,environment_external_id,$2,'work_tool_ready','e2b','test','provider-tool-ready','creating' FROM code_sessions WHERE external_id=$3`, sandbox, work, codeID)
 	scope := SandboxToolCallScope{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, CodeSessionID: codeID, SandboxUUID: sandbox}
+	if err := store.ValidateCodeSessionSandbox(ctx, claimTestOrganization, claimTestWorkspace, codeID, sandbox); err != nil {
+		t.Fatalf("Brain sandbox credential before readiness: %v", err)
+	}
+	execClaimTest(t, ctx, database, `UPDATE code_sessions SET metadata = jsonb_set(metadata, '{config,worker_transport}', '"cloud_harness"') WHERE external_id=$1`, codeID)
+	if err := store.ValidateCodeSessionSandbox(ctx, claimTestOrganization, claimTestWorkspace, codeID, sandbox); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Harness transport without matching session runtime: %v", err)
+	}
+	execClaimTest(t, ctx, database, `UPDATE sessions SET execution_runtime='cloud_harness' WHERE external_id='sesn_claim_92'`)
+	if err := store.ValidateCodeSessionSandbox(ctx, claimTestOrganization, uuid.NewString(), codeID, sandbox); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign workspace received sandbox credential: %v", err)
+	}
+	if err := store.ValidateCodeSessionSandbox(ctx, claimTestOrganization, claimTestWorkspace, codeID, sandbox); err != nil {
+		t.Fatalf("Harness sandbox credential before readiness: %v", err)
+	}
 	readyAt := func() *time.Time {
 		var ready *time.Time
 		if err := database.QueryRowContext(ctx, `SELECT tool_call_ready_at FROM environment_sandboxes WHERE uuid=$1`, sandbox).Scan(&ready); err != nil {
@@ -178,6 +192,9 @@ func TestSandboxToolCallClaimsDistinguishPreparingAndRetiredSandboxes(t *testing
 	}
 
 	execClaimTest(t, ctx, database, `UPDATE environment_sandboxes SET state='failed' WHERE uuid=$1`, sandbox)
+	if err := store.ValidateCodeSessionSandbox(ctx, claimTestOrganization, claimTestWorkspace, codeID, sandbox); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("failed sandbox retained credential access: %v", err)
+	}
 	if _, err := store.ClaimSandboxToolCalls(ctx, scope, 1); !errors.Is(err, ErrToolCallSandboxRetired) {
 		t.Fatalf("failed sandbox claim: %v", err)
 	}

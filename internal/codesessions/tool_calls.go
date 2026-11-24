@@ -126,6 +126,10 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope.CallID = request.CallID
+	h.submitToolCall(w, r, scope, request, false)
+}
+
+func (h *Handler) submitToolCall(w http.ResponseWriter, r *http.Request, scope db.SandboxToolCallScope, request toolCallSubmission, requireAllow bool) {
 	if _, err := h.db.GetSandboxToolCall(r.Context(), scope); err == nil {
 		call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input})
 		if err == nil {
@@ -149,14 +153,12 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 	if thread == "root" {
 		thread = ""
 	}
-	policies, err := h.service.currentRuntimeToolPolicies(r.Context(), session, thread)
+	allowed, err := h.service.sandboxToolAllowed(r.Context(), session, thread, request.Tool, requireAllow)
 	if err != nil {
 		h.errorAdapter.Write(w, r, toolCallOperationError(err))
 		return
 	}
-	allowed := map[string]bool{"bash": true, "read": true, "write": true, "edit": true, "grep": true, "glob": true}
-	policy, known := policies[request.Tool]
-	if !allowed[request.Tool] || (policies != nil && (!known || policy == string(resolvedToolPermissionDeny))) {
+	if !allowed {
 		h.errorAdapter.Write(w, r, sandboxToolDenied())
 		return
 	}
@@ -179,6 +181,27 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 		h.notifyToolCall(call)
 	}
 	h.finishToolCall(w, r, call, err)
+}
+
+func isSandboxToolName(name string) bool {
+	switch name {
+	case "bash", "read", "write", "edit", "grep", "glob":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) sandboxToolAllowed(ctx context.Context, session db.CodeSession, thread, tool string, requireAllow bool) (bool, error) {
+	if requireAllow {
+		return s.harnessSandboxToolAllowed(ctx, session, thread, tool)
+	}
+	policies, err := s.currentRuntimeToolPolicies(ctx, session, thread)
+	if err != nil {
+		return false, err
+	}
+	policy, known := policies[tool]
+	return isSandboxToolName(tool) && (policies == nil || known && policy != string(resolvedToolPermissionDeny)), nil
 }
 
 func (h *Handler) finishToolCall(w http.ResponseWriter, r *http.Request, call db.SandboxToolCall, err error) {
@@ -215,6 +238,10 @@ func (h *Handler) handleToolCallWait(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	h.waitForToolCall(w, r, scope)
+}
+
+func (h *Handler) waitForToolCall(w http.ResponseWriter, r *http.Request, scope db.SandboxToolCallScope) {
 	call, err := h.db.GetSandboxToolCall(r.Context(), scope)
 	if err != nil {
 		h.finishToolCall(w, r, call, err)

@@ -213,6 +213,8 @@ func principalFromCodeSessionCredential(codeSession db.CodeSessionCredentialCont
 		AgentUUID:               codeSession.AgentUUID,
 		AgentExternalID:         codeSession.AgentExternalID,
 		AgentVersion:            codeSession.AgentVersion,
+		ExecutionRuntime:        codeSession.ExecutionRuntime,
+		WorkerEpoch:             codeSession.WorkerEpoch,
 	}
 }
 

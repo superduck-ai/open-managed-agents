@@ -8,6 +8,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
@@ -35,6 +36,9 @@ func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSessi
 	}()
 	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
 	defer cancel()
+	if codeSessionWorkerTransport(codeSession) == sessioncontract.CloudHarnessRuntime {
+		return s.activateHarnessSession(ctx, codeSession)
+	}
 	for {
 		err := s.activateSnapshot(ctx, codeSession)
 		if !errors.Is(err, errActivationSnapshotChanged) {
@@ -44,6 +48,34 @@ func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSessi
 			return err
 		}
 	}
+}
+
+func (s *Service) activateHarnessSession(ctx context.Context, codeSession db.CodeSession) error {
+	return s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+		session, err := tx.LockSessionForEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+		if err != nil {
+			return err
+		}
+		if session.ArchivedAt != nil || session.ExecutionRuntime != sessioncontract.CloudHarnessRuntime ||
+			session.OrganizationUUID != codeSession.OrganizationUUID || session.UUID != codeSession.SessionUUID {
+			return db.ErrInvalidState
+		}
+		if _, err := tx.LockInitializingCodeSession(ctx, codeSession.WorkspaceUUID, codeSession.UUID); err != nil {
+			return err
+		}
+		events, err := tx.ListSessionEventsForActivation(ctx, session)
+		if err != nil {
+			return err
+		}
+		if err := s.publishHarnessInputs(ctx, session, events); err != nil {
+			return err
+		}
+		activated, err := tx.ActivateCodeSession(ctx, codeSession.UUID, time.Now().UTC())
+		if err == nil && !activated {
+			return db.ErrInvalidState
+		}
+		return err
+	})
 }
 
 func loadActivationSnapshot(ctx context.Context, tx db.ManagedAgentActivationTx, codeSession db.CodeSession) (activationSnapshot, error) {

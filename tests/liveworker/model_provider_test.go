@@ -24,20 +24,7 @@ const isolatedProviderName = "isolated worker model metadata"
 
 func ensureIsolatedWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	t.Helper()
-	encoded, err := jsonv2.Marshal(map[string]any{"credentials": map[string]string{"method": "code", "code": "123456", "email_address": cfg.Bootstrap.UserEmail}})
-	requireOK(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url+"/api/auth/verify_magic_link", bytes.NewReader(encoded))
-	requireOK(t, err)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(request)
-	requireOK(t, err)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("isolated provider login: status=%d", response.StatusCode)
-	}
-	e.cookies = response.Cookies()
+	loginWorkerConsole(t, e, cfg)
 	providers := isolatedWorkerProviders(t, e)
 	ownerKey := e.url + isolatedProviderPath(e)
 	if len(providers) != 0 {
@@ -56,6 +43,24 @@ func ensureIsolatedWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 		defer isolatedProviderFixtures.Delete(ownerKey)
 		e.requestContext(context.Background(), t, http.MethodDelete, isolatedProviderPath(e)+"/"+created.ID, "", nil, http.StatusNoContent, e.cookies...)
 	})
+}
+
+func loginWorkerConsole(t *testing.T, e *liveEnv, cfg config.Config) {
+	t.Helper()
+	encoded, err := jsonv2.Marshal(map[string]any{"credentials": map[string]string{"method": "code", "code": "123456", "email_address": cfg.Bootstrap.UserEmail}})
+	requireOK(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url+"/api/auth/verify_magic_link", bytes.NewReader(encoded))
+	requireOK(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	requireOK(t, err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("isolated provider login: status=%d", response.StatusCode)
+	}
+	e.cookies = response.Cookies()
 }
 
 func configureIsolatedChatModel(t *testing.T, e *liveEnv, modelURL string) {

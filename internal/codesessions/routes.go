@@ -32,6 +32,11 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 		r.Post("/{call_id}/cancel", h.handleToolCallCancel)
 		r.Post("/{call_id}/oauth-credential", h.handleToolOAuthCredential)
 	})
+	router.Route("/ccr-sessions/{code_session_id}/harness/turns/{turn_uuid}/tools/{task_uuid}", func(r chi.Router) {
+		r.Post("/", h.handleHarnessToolSubmit)
+		r.Get("/", h.handleHarnessToolWait)
+		r.Post("/result", h.handleHarnessToolResult)
+	})
 	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
 	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)
 	router.Post("/ccr-sessions/{code_session_id}/port-url", h.handlePortURL)

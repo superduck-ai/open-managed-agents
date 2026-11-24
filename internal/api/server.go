@@ -135,6 +135,7 @@ type ServerDeps struct {
 	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
 	WorkerEventBroker      workerevents.Broker
+	HarnessInputSender     codesessions.HarnessInputSenderFactory
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
@@ -169,6 +170,7 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithSandboxProvisioner(deps.SandboxProvisioner).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
+		WithHarnessInputSender(deps.HarnessInputSender).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
 		WithBilling(billingCalculator).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
@@ -284,6 +286,7 @@ func NewServer(deps ServerDeps) *Server {
 	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler, evaluationHandler)
 	if deps.ToolCallContext != nil {
 		go s.codeSessions.RunToolCallMaintenance(deps.ToolCallContext)
+		go s.codeSessions.RunHarnessInputMaintenance(deps.ToolCallContext)
 	}
 	s.router = router
 	return s

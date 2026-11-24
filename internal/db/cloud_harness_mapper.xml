@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="CloudHarnessMapper">
+    <sql id="turnColumns">
+        t.execution_input_uuid AS uuid, t.organization_uuid, t.workspace_uuid, t.session_uuid,
+        t.execution_input_uuid AS input_event_uuid, t.execution->>'state' AS state,
+        CAST(t.execution->>'worker_epoch' AS bigint) AS worker_epoch,
+        CAST(t.execution->>'attempts' AS integer) AS attempts,
+        t.execution->>'task_uuid' AS task_uuid,
+        t.execution->>'tool_uuid' AS tool_uuid,
+        t.execution->>'task_kind' AS task_kind,
+        t.execution->>'subagent_thread_uuid' AS subagent_thread_uuid,
+        t.execution->>'delegation_tool_uuid' AS delegation_tool_uuid,
+        t.execution->>'resume_input_uuid' AS resume_input_uuid
+    </sql>
+    <sql id="scopedRef">
+        t.thread_uuid = t.session_uuid AND t.execution_input_uuid = #{ref.UUID}
+        AND t.organization_uuid = #{ref.OrganizationUUID}
+        AND t.workspace_uuid = #{ref.WorkspaceUUID} AND t.session_uuid = #{ref.SessionUUID}
+    </sql>
+    <sql id="scopedLease">
+        thread_uuid = session_uuid AND execution_input_uuid = #{lease.Ref.UUID}
+        AND organization_uuid = #{lease.Ref.OrganizationUUID}
+        AND workspace_uuid = #{lease.Ref.WorkspaceUUID} AND session_uuid = #{lease.Ref.SessionUUID}
+        AND CAST(execution->>'worker_epoch' AS bigint) = #{lease.Epoch}
+        AND execution->>'state' = 'running' AND CAST(execution->>'lease_until' AS timestamptz) &gt; NOW()
+    </sql>
+    <sql id="paramsLease">
+        thread_uuid = session_uuid AND execution_input_uuid = #{params.Lease.Ref.UUID}
+        AND organization_uuid = #{params.Lease.Ref.OrganizationUUID}
+        AND workspace_uuid = #{params.Lease.Ref.WorkspaceUUID} AND session_uuid = #{params.Lease.Ref.SessionUUID}
+        AND CAST(execution->>'worker_epoch' AS bigint) = #{params.Lease.Epoch}
+        AND execution->>'state' = 'running' AND CAST(execution->>'lease_until' AS timestamptz) &gt; NOW()
+    </sql>
+    <insert id="CreateForInput" result="exec">
+        INSERT INTO harness_thread_state AS state (
+            organization_uuid, workspace_uuid, session_uuid, thread_uuid, execution_input_uuid, execution)
+        SELECT e.organization_uuid, e.workspace_uuid, e.session_uuid, e.session_uuid, e.uuid,
+            jsonb_build_object('state', 'pending', 'worker_epoch', 0, 'attempts', 0, 'task_kind', '')
+        FROM session_events e
+        WHERE e.uuid = #{ref.UUID} AND e.organization_uuid = #{ref.OrganizationUUID}
+          AND e.workspace_uuid = #{ref.WorkspaceUUID} AND e.session_uuid = #{ref.SessionUUID}
+          AND e.event_type = 'user.message' AND e.processed_at IS NULL AND e.deleted_at IS NULL
+        ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid)
+        DO UPDATE SET execution_input_uuid = EXCLUDED.execution_input_uuid, execution = EXCLUDED.execution
+        WHERE state.execution_input_uuid IS DISTINCT FROM EXCLUDED.execution_input_uuid
+          AND (state.execution IS NULL OR state.execution->>'state' IN ('completed', 'failed', 'interrupted'))
+    </insert>
+
+    <select id="FindFirstPendingInput" result="optional" resultType="string">
+        SELECT uuid FROM session_events
+        WHERE organization_uuid = #{ref.OrganizationUUID} AND workspace_uuid = #{ref.WorkspaceUUID}
+          AND session_uuid = #{ref.SessionUUID} AND event_type = 'user.message'
+          AND processed_at IS NULL AND deleted_at IS NULL
+        ORDER BY id LIMIT 1
+    </select>
+
+    <update id="InterruptTurn" result="rows">
+        UPDATE harness_thread_state
+        SET execution =
+            CASE WHEN CAST(#{params.State} AS text) = 'interrupted'
+                THEN execution - 'wake_pending'
+                ELSE execution END
+            || jsonb_build_object(
+            'state', CAST(#{params.State} AS text), 'task_uuid', CAST(#{params.TaskUUID} AS text), 'tool_uuid', CAST(#{params.ToolUUID} AS text),
+            'task_kind', CAST(#{params.Kind} AS text), 'lease_until', NULL, 'model_started_at', NULL, 'attempts', 0,
+            'subagent_thread_uuid', NULL, 'delegation_tool_uuid', NULL)
+        WHERE thread_uuid = session_uuid AND execution_input_uuid = #{params.Ref.UUID}
+          AND organization_uuid = #{params.Ref.OrganizationUUID}
+          AND workspace_uuid = #{params.Ref.WorkspaceUUID} AND session_uuid = #{params.Ref.SessionUUID}
+          AND execution->>'state' IN ('pending', 'running', 'waiting_choice', 'waiting_tool')
+    </update>
+
+    <select id="Find" resultType="harnessTurnRow" result="optional">
+        SELECT <include refid="turnColumns"/>
+        FROM harness_thread_state t
+        WHERE <include refid="scopedRef"/>
+    </select>
+
+    <select id="Lock" resultType="harnessTurnRow" result="optional">
+        SELECT <include refid="turnColumns"/>
+        FROM harness_thread_state t
+        WHERE <include refid="scopedRef"/>
+        FOR UPDATE OF t
+    </select>
+
+    <select id="LockWaitingChoice" resultType="harnessTurnRow" result="optional">
+        SELECT <include refid="turnColumns"/> FROM harness_thread_state t
+        WHERE t.organization_uuid = #{ref.OrganizationUUID} AND t.workspace_uuid = #{ref.WorkspaceUUID}
+          AND t.session_uuid = #{ref.SessionUUID} AND t.thread_uuid = t.session_uuid
+          AND t.execution->>'state' = 'waiting_choice'
+        FOR UPDATE OF t
+    </select>
+
+    <select id="FindResumeWork" resultType="harnessTurnRow" result="optional">
+        SELECT <include refid="turnColumns"/> FROM harness_thread_state t
+        WHERE t.organization_uuid = #{ref.OrganizationUUID} AND t.workspace_uuid = #{ref.WorkspaceUUID}
+          AND t.session_uuid = #{ref.SessionUUID} AND t.thread_uuid = t.session_uuid
+          AND t.execution->>'resume_input_uuid' = #{ref.UUID}
+          AND t.execution->>'resume_input_kind' = #{kind}
+          AND t.execution->>'state' IN ('pending', 'running', 'waiting_tool')
+    </select>
+
+    <update id="ResumeChoice" result="rows">
+        UPDATE harness_thread_state t
+        SET execution = execution || jsonb_build_object(
+            'state', 'pending', 'task_kind', 'model', 'task_uuid', CAST(#{taskUUID} AS text),
+            'resume_input_uuid', CAST(#{taskUUID} AS text), 'resume_input_kind', 'choice_response', 'wake_pending', true)
+        WHERE <include refid="scopedRef"/> AND t.execution->>'state' = 'waiting_choice'
+    </update>
+
+    <update id="ParkTool" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || jsonb_build_object(
+            'state', 'waiting_tool', 'lease_until', NULL, 'resume_input_uuid', CAST(#{toolUUID} AS text),
+            'resume_input_kind', 'tool_result', 'wake_pending', true)
+        WHERE <include refid="paramsLease"/> AND execution->>'task_kind' = 'tool'
+          AND execution->>'tool_uuid' = #{toolUUID}
+    </update>
+
+    <select id="ListReadyInputs" resultType="harnessWakeRow">
+        SELECT t.execution_input_uuid AS uuid, t.organization_uuid, t.workspace_uuid, t.session_uuid,
+            t.execution->>'resume_input_uuid' AS resume_input_uuid,
+            t.execution->>'resume_input_kind' AS resume_input_kind
+        FROM harness_thread_state t
+        WHERE t.execution->>'wake_pending' = 'true'
+          AND (
+            t.execution->>'state' = 'pending'
+            OR (t.execution->>'state' = 'waiting_tool' AND EXISTS (
+                SELECT 1 FROM sandbox_tool_calls call
+                JOIN code_sessions cs ON cs.uuid = call.code_session_uuid AND cs.workspace_uuid = call.workspace_uuid
+                    AND cs.organization_uuid = call.organization_uuid
+                WHERE cs.session_uuid = t.session_uuid AND call.workspace_uuid = t.workspace_uuid
+                  AND call.organization_uuid = t.organization_uuid AND call.external_id = t.execution->>'resume_input_uuid'
+                  AND call.state IN ('succeeded', 'failed', 'cancelled', 'expired', 'lost')
+            ))
+          )
+        ORDER BY t.id LIMIT #{limit}
+    </select>
+
+    <update id="MarkInputPublished" result="exec">
+        UPDATE harness_thread_state t
+        SET execution = execution - 'wake_pending'
+        WHERE <include refid="scopedRef"/> AND t.execution->>'resume_input_uuid' = #{inputUUID}
+          AND t.execution->>'wake_pending' = 'true'
+    </update>
+
+    <select id="HasEarlierPendingInput" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events current
+            JOIN session_events earlier
+              ON earlier.organization_uuid = current.organization_uuid AND earlier.workspace_uuid = current.workspace_uuid
+             AND earlier.session_uuid = current.session_uuid AND earlier.id &lt; current.id
+             AND earlier.session_external_id = current.session_external_id
+            WHERE current.uuid = #{inputUUID} AND current.organization_uuid = #{ref.OrganizationUUID}
+              AND current.workspace_uuid = #{ref.WorkspaceUUID} AND current.session_uuid = #{ref.SessionUUID}
+              AND earlier.event_type = 'user.message' AND earlier.processed_at IS NULL AND earlier.deleted_at IS NULL
+        ) AS has_earlier_pending_input
+    </select>
+
+    <update id="GrantModelLease" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET oauth_access_token_hash = #{params.TokenHash,sensitive=true}, current_worker_epoch = current_worker_epoch + 1,
+            worker_lease_expires_at = #{params.LeaseUntil}, updated_at = NOW()
+        WHERE uuid = #{params.CodeSessionUUID} AND organization_uuid = #{params.Ref.OrganizationUUID}
+          AND workspace_uuid = #{params.Ref.WorkspaceUUID} AND session_uuid = #{params.Ref.SessionUUID}
+          AND status = 'active' AND deleted_at IS NULL
+          AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at &lt;= NOW())
+        RETURNING current_worker_epoch
+    </update>
+
+    <update id="Claim" result="rows">
+        UPDATE harness_thread_state
+        SET execution = (execution - 'wake_pending') || jsonb_build_object(
+            'state', 'running', 'worker_epoch', CAST(#{params.Lease.Epoch} AS bigint),
+            'lease_until', CAST(#{params.LeaseUntil} AS timestamptz), 'model_started_at', NULL,
+            'attempts', CAST(execution->>'attempts' AS integer) + 1)
+        WHERE thread_uuid = session_uuid AND execution_input_uuid = #{params.Lease.Ref.UUID}
+          AND organization_uuid = #{params.Lease.Ref.OrganizationUUID}
+          AND workspace_uuid = #{params.Lease.Ref.WorkspaceUUID} AND session_uuid = #{params.Lease.Ref.SessionUUID}
+          AND (execution->>'state' IN ('pending', 'waiting_tool') OR
+            (execution->>'state' = 'running' AND CAST(execution->>'lease_until' AS timestamptz) &lt;= NOW()))
+    </update>
+
+    <update id="RenewTurn" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || jsonb_build_object('lease_until', CAST(#{params.LeaseUntil} AS timestamptz))
+        WHERE <include refid="paramsLease"/>
+    </update>
+
+    <update id="RenewModelLease" result="rows">
+        UPDATE code_sessions SET worker_lease_expires_at = #{params.LeaseUntil}
+        WHERE uuid = #{params.Lease.CodeSessionUUID} AND organization_uuid = #{params.Lease.Ref.OrganizationUUID}
+          AND workspace_uuid = #{params.Lease.Ref.WorkspaceUUID} AND session_uuid = #{params.Lease.Ref.SessionUUID}
+          AND current_worker_epoch = #{params.Lease.Epoch} AND worker_lease_expires_at &gt; NOW()
+          AND status = 'active' AND deleted_at IS NULL
+    </update>
+
+    <update id="RevokeModelLease" result="exec">
+        UPDATE code_sessions SET worker_lease_expires_at = NULL
+        WHERE uuid = #{lease.CodeSessionUUID} AND organization_uuid = #{lease.Ref.OrganizationUUID}
+          AND workspace_uuid = #{lease.Ref.WorkspaceUUID} AND session_uuid = #{lease.Ref.SessionUUID}
+          AND current_worker_epoch = #{lease.Epoch}
+    </update>
+
+    <update id="ReleaseTurn" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || CAST('{"state":"pending","lease_until":null}' AS jsonb)
+        WHERE <include refid="scopedLease"/>
+    </update>
+
+    <update id="StartModel" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || jsonb_build_object('model_started_at', NOW())
+        WHERE <include refid="scopedLease"/>
+          AND execution->>'model_started_at' IS NULL AND execution->>'task_kind' &lt;&gt; 'tool'
+    </update>
+
+    <select id="LockModelLease" result="scalar" resultType="int64">
+        SELECT current_worker_epoch FROM code_sessions
+        WHERE uuid = #{lease.CodeSessionUUID} AND organization_uuid = #{lease.Ref.OrganizationUUID}
+          AND workspace_uuid = #{lease.Ref.WorkspaceUUID} AND session_uuid = #{lease.Ref.SessionUUID}
+          AND current_worker_epoch = #{lease.Epoch} AND worker_lease_expires_at &gt; NOW()
+          AND status = 'active' AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="Finish" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || jsonb_build_object(
+            'state', CAST(#{params.State} AS text), 'lease_until', NULL)
+        WHERE <include refid="paramsLease"/> AND execution->>'model_started_at' IS NOT NULL
+    </update>
+
+    <sql id="toolColumns">
+        tool_uuid AS uuid, CAST(message_data AS json)->'call'->>'id' AS call_id,
+        CAST(message_data AS json)->'call'->>'name' AS tool_name,
+        CAST(message_data AS json)->'call'->>'arguments' AS arguments,
+        tool_result_text AS result_text, tool_result_failed AS result_failed,
+        NULLIF(turn_uuid, execution_turn_uuid) AS delegation_tool_uuid
+    </sql>
+    <sql id="scopedTool">
+        organization_uuid = #{ref.OrganizationUUID} AND workspace_uuid = #{ref.WorkspaceUUID}
+        AND session_uuid = #{ref.SessionUUID} AND execution_turn_uuid = #{ref.UUID} AND tool_uuid IS NOT NULL
+    </sql>
+    <update id="AttachTool" result="rows">
+        UPDATE harness_conversation_history
+        SET execution_turn_uuid = #{params.TurnUUID}, tool_uuid = #{params.ToolUUID}
+        WHERE organization_uuid = #{params.Key.Scope.OrganizationUUID} AND workspace_uuid = #{params.Key.Scope.WorkspaceUUID}
+          AND session_uuid = #{params.Key.Scope.SessionUUID} AND thread_uuid = #{params.Key.UUID}
+          AND message_id = #{params.MessageID} AND tool_uuid IS NULL
+    </update>
+    <select id="FindTool" resultType="harnessToolRow" result="optional">
+        SELECT <include refid="toolColumns"/> FROM harness_conversation_history
+        WHERE <include refid="scopedTool"/> AND tool_uuid = #{toolUUID}
+    </select>
+    <select id="ListTools" resultType="harnessToolRow">
+        SELECT <include refid="toolColumns"/> FROM harness_conversation_history
+        WHERE <include refid="scopedTool"/> ORDER BY id
+    </select>
+    <select id="CountExecutionTools" result="scalar">
+        SELECT COUNT(*) FROM harness_conversation_history
+        WHERE <include refid="scopedTool"/>
+          <if test="delegationToolUUID != nil">AND turn_uuid = #{delegationToolUUID}</if>
+          <if test="delegationToolUUID == nil">AND turn_uuid = execution_turn_uuid</if>
+    </select>
+    <update id="FinishTool" result="rows">
+        UPDATE harness_conversation_history
+        SET tool_result_text = #{params.Text,sensitive=true}, tool_result_failed = #{params.Failed}
+        WHERE organization_uuid = #{params.Ref.OrganizationUUID} AND workspace_uuid = #{params.Ref.WorkspaceUUID}
+          AND session_uuid = #{params.Ref.SessionUUID} AND execution_turn_uuid = #{params.Ref.UUID}
+          AND tool_uuid = #{params.ToolUUID} AND tool_result_text IS NULL
+    </update>
+    <update id="AdvanceTask" result="rows">
+        UPDATE harness_thread_state
+        SET execution = execution || jsonb_build_object(
+            'state', CAST(#{params.State} AS text), 'task_uuid', CAST(#{params.TaskUUID} AS text),
+            'tool_uuid', CAST(#{params.ToolUUID} AS text), 'task_kind', CAST(#{params.Kind} AS text), 'lease_until', NULL,
+            'attempts', 0, 'subagent_thread_uuid', CAST(#{params.SubagentThreadUUID} AS text),
+            'delegation_tool_uuid', CAST(#{params.DelegationToolUUID} AS text))
+        WHERE <include refid="paramsLease"/>
+    </update>
+
+</mapper>

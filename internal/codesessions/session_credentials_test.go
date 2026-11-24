@@ -126,9 +126,9 @@ func TestSessionCredentialsClaimsAndLifecycle(t *testing.T) {
 		t.Fatalf("lifecycle-bound token failed verification after 24 hours: %v", err)
 	}
 
-	oauthToken, err := newOAuthCompatibleToken()
+	oauthToken, err := NewModelAccessToken()
 	if err != nil {
-		t.Fatalf("newOAuthCompatibleToken() error = %v", err)
+		t.Fatalf("NewModelAccessToken() error = %v", err)
 	}
 	if !strings.HasPrefix(oauthToken, oauthCompatibleTokenPrefix) || strings.Contains(oauthToken, ".") {
 		t.Fatalf("unexpected OAuth-compatible token format: %q", oauthToken)

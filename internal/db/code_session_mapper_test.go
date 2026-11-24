@@ -118,7 +118,11 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			bound:     buildCodeSessionMapperCountActiveSandbox(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "codeses_test", "sandbox-uuid"),
 			wantID:    "CodeSessionMapper.CountActiveSandbox", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "codeSessionExternalID", "sandboxUUID"},
-			wantSQLFragments:  []string{"SELECT COUNT(*)", "sandbox.uuid = $4", "sandbox.state IN ('creating', 'running')", "work.state = 'active'", "'{config,worker_transport}' = 'claim'"},
+			wantSQLFragments: []string{
+				"SELECT COUNT(*)", "sandbox.uuid = $4", "sandbox.state IN ('creating', 'running')", "work.state = 'active'",
+				"'{config,worker_transport}' = 'claim'", "s.execution_runtime = 'cloud_harness'",
+				"AND cs.metadata #>> '{config,worker_transport}' = 'cloud_harness'",
+			},
 		}},
 		{"network policy context", mapperBuilderContract{
 			statement: codeSessionMapperFindNetworkPolicyContextStatement,

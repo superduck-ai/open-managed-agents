@@ -19,6 +19,10 @@ DSH 新建子线程时，必须先发布并确认 session.thread_created，让�
 
 回归覆盖前端开关、受限空名单、配置 Raw 往返和旧引用兼容，以及 DSH 模型请求的工具清单、禁用提示词和直接委派拒绝。普通单测使用进程内后端；真实 Runner/模型执行需另行显式运行 verify-be。
 
+## Cloud Harness 执行
+
+Cloud Harness 使用同一份固定的 `subagents` 配置和 Session Thread 事件。父回合的 Worker 在同一输入内推进子线程。沙箱工具异步完成时，JetStream 投递工具结果引用以恢复当前执行。子线程提交最终报告后，Worker 继续父线程。初次委派支持独立上下文或按安全截止点继承，`send_message` 在同一子线程继续。任务顺序、权限和恢复规则见 [云端 Harness Worker](cloud-harness-worker.md#子-agent-委派)。
+
 ## 线程消息的归属与对端
 
 消息方向相对于承载该事件的线程流。`session_thread_id` 表示消息事件的所属线程，`to_session_thread_id` / `from_session_thread_id` 表示消息对端；不能用对端 ID 给消息事件分组。

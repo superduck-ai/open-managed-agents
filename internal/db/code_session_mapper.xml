@@ -48,7 +48,8 @@
         s.agent_uuid AS agent_uuid,
         s.agent_external_id,
         s.agent_version,
-        COALESCE(u.email, '') AS account_email
+        COALESCE(u.email, '') AS account_email,
+        s.execution_runtime AS execution_runtime, cs.current_worker_epoch AS worker_epoch
     </sql>
 
     <sql id="credentialJoins">
@@ -474,7 +475,13 @@
           AND cs.external_id = #{codeSessionExternalID}
           AND cs.status = 'active'
           AND cs.deleted_at IS NULL
-          AND cs.metadata #&gt;&gt; '{config,worker_transport}' = 'claim'
+          AND (
+              cs.metadata #&gt;&gt; '{config,worker_transport}' = 'claim'
+              OR (
+                  s.execution_runtime = 'cloud_harness'
+                  AND cs.metadata #&gt;&gt; '{config,worker_transport}' = 'cloud_harness'
+              )
+          )
           AND sandbox.uuid = #{sandboxUUID}
     </select>
 

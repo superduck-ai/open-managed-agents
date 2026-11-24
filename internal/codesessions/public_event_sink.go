@@ -13,6 +13,8 @@ type CodeSessionStreamRoute struct {
 	CodeSessionID     string
 	WorkspaceUUID     string
 	SessionExternalID string
+	ModelRequestID    string
+	PreviewSequence   uint64
 }
 
 // PublicEventSink 隔离 code-session 领域逻辑与公开 session 事件投递实现。

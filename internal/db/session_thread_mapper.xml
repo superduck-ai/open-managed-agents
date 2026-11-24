@@ -80,6 +80,13 @@
         LIMIT 1
     </select>
 
+    <select id="FindByUUID" resultType="sessionThreadRow">
+        SELECT <include refid="columns"/>
+        FROM session_threads
+        WHERE organization_uuid = #{orgUUID} AND workspace_uuid = #{workspaceUUID}
+          AND session_uuid = #{sessionUUID} AND uuid = #{threadUUID} AND deleted_at IS NULL
+    </select>
+
     <select id="FindByExternalID" resultType="sessionThreadRow">
         SELECT <include refid="columns"/>
         FROM session_threads

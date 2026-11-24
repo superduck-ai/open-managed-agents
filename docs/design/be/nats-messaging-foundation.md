@@ -7,6 +7,8 @@ preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一�
 和业务 service 不建立独立连接池。
 Brain 领取长轮询通过同一连接订阅 Core NATS `oma.brain.work.available`，派发时发布无数据通知唤醒各实例；通知可丢失，任务归属以 PostgreSQL 领取状态为准，不使用 JetStream stream（见 [Brain Worker 领取](brain-worker-claim.md)）。
 
+云端 Harness 使用 `OMA_HARNESS_TASKS` JetStream WorkQueue，主题为 `oma.harness.task.v1`，共享 durable pull consumer 为 `oma_harness`。版本 4 的新投递包含租户和会话范围、投递类型，以及用户文本、选择响应引用或异步工具结果引用。普通模型与工具步骤在处理同一输入的 Worker 中推进。沙箱结果留在 PostgreSQL，异步结果消息携带稳定的调用 UUID。发布者等待 PubAck，Worker 在回合结算或挂起后确认当前投递。详见 [云端 Harness Worker](cloud-harness-worker.md)。
+
 HTTP 退出时，组装层通过 `httpapi.WithStreamShutdown` 向请求传入进程退出通知。
 Session SSE 与 Worker SSE 在资源入口使用 `httpapi.StreamContext` 派生流 context，
 收到通知后结束订阅，执行原有断连清理；退出不会推进 Worker epoch，也不会删除仍活跃会话的 consumer。

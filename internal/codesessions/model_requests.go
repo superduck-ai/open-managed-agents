@@ -6,13 +6,17 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
@@ -25,6 +29,8 @@ type ModelRequest struct {
 	Model                string
 	codeSession          db.CodeSession
 	toolThreadID         string
+	harnessLease         *db.HarnessTurnLease
+	harnessPreview       harnessModelPreview
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -102,6 +108,14 @@ type modelRequestError struct {
 }
 
 func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID, codeSessionID, agentID, model string) (*ModelRequest, error) {
+	return s.beginModelRequest(ctx, workspaceID, sessionID, codeSessionID, agentID, model, nil)
+}
+
+func (s *Service) BeginHarnessModelRequest(ctx context.Context, lease db.HarnessTurnLease, sessionID, codeSessionID, model string) (*ModelRequest, error) {
+	return s.beginModelRequest(ctx, lease.Ref.WorkspaceUUID, sessionID, codeSessionID, "", model, &lease)
+}
+
+func (s *Service) beginModelRequest(ctx context.Context, workspaceID, sessionID, codeSessionID, agentID, model string, lease *db.HarnessTurnLease) (*ModelRequest, error) {
 	codeSession, err := s.db.GetCodeSessionBySessionExternalID(ctx, workspaceID, sessionID)
 	if err != nil {
 		return nil, err
@@ -109,11 +123,15 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if codeSession.ExternalID != codeSessionID || codeSession.Status != "active" || s.sink == nil {
 		return nil, db.ErrInvalidState
 	}
-	threadID, err := s.modelRequestThread(ctx, codeSession, agentID)
+	if lease != nil && (codeSession.UUID != lease.CodeSessionUUID || codeSession.CurrentWorkerEpoch != lease.Epoch ||
+		codeSession.OrganizationUUID != lease.Ref.OrganizationUUID || codeSession.SessionUUID != lease.Ref.SessionUUID) {
+		return nil, db.ErrWorkerEpochMismatch
+	}
+	threadID, child, err := s.resolveModelRequestThread(ctx, codeSession, agentID, lease)
 	if err != nil {
 		return nil, err
 	}
-	startID, err := ids.New("sevt_")
+	startID, err := modelRequestStartID(codeSessionID, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -121,27 +139,49 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
-	if agentID != "" {
+	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession, harnessLease: lease}
+	if agentID != "" || child {
 		request.toolThreadID = threadID
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: startID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil)
+	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: startID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 	return request, nil
 }
 
+func (s *Service) resolveModelRequestThread(ctx context.Context, code db.CodeSession, agentID string, lease *db.HarnessTurnLease) (string, bool, error) {
+	if lease != nil {
+		thread, err := s.db.HarnessSubagent(ctx, *lease)
+		if err != nil {
+			return "", false, err
+		}
+		if thread != nil {
+			return thread.ExternalID, true, nil
+		}
+	}
+	id, err := s.modelRequestThread(ctx, code, agentID)
+	return id, false, err
+}
+
+func modelRequestStartID(codeSessionID string, lease *db.HarnessTurnLease) (string, error) {
+	if lease == nil {
+		return ids.New("sevt_")
+	}
+	return maevents.HarnessModelRequestID(codeSessionID, lease.Ref.UUID, lease.Epoch), nil
+}
+
 func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
 	if request.SuppressPublicOutput || usesBrainClaimTransport(request.codeSession) {
 		return nil
 	}
-	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
-	preview := map[string]any{"type": "event_start", "event": map[string]string{"type": message.Type, "id": message.ID}}
-	if request.toolThreadID != "" {
-		preview["session_thread_id"] = request.toolThreadID
+	if request.harnessLease != nil {
+		s.publishHarnessThinking(ctx, request, messageID, index)
+		return nil
 	}
+	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
+	preview := modelPreviewStart{Type: "event_start", Event: modelPreviewTarget{Type: message.Type, ID: message.ID}, ThreadID: request.toolThreadID}
 	raw, err := jsonv2.Marshal(preview)
 	if err != nil {
 		return err
@@ -166,6 +206,36 @@ func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, pro
 }
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
+	var completion *harness.AssistantMessage
+	if request.harnessLease != nil {
+		if result.ErrorType == "" && len(result.ToolUses) > 0 {
+			tools, err := s.db.HarnessExecutionToolCount(ctx, *request.harnessLease)
+			if err != nil {
+				return err
+			}
+			if tools >= db.HarnessMaxToolCalls {
+				result.ErrorType = "invalid_response"
+			}
+		}
+		if result.ErrorType == "" && len(result.ToolUses) == 1 && result.ToolUses[0].Name == sessioncontract.HarnessAskUserQuestion {
+			policies, err := s.currentRuntimeToolsets(ctx, request.codeSession, "")
+			if err != nil {
+				return err
+			}
+			if resolveAgentToolPermission(policies, "ask_user_question") == resolvedToolPermissionDeny {
+				result.ErrorType = "invalid_response"
+			}
+		}
+		if request.toolThreadID != "" && slices.ContainsFunc(result.ToolUses, func(tool ModelRequestToolUse) bool {
+			return isHarnessDelegationTool(tool.Name) || isHarnessSubscriptionTool(tool.Name) || tool.Name == sessioncontract.HarnessAskUserQuestion
+		}) {
+			result.ErrorType = "invalid_response"
+		}
+		result = harnessTextResult(request, result)
+		if result.ErrorType == "" {
+			completion = harnessModelCompletion(result)
+		}
+	}
 	if request.SuppressPublicOutput {
 		result.Messages = nil
 		result.EventIDs = nil
@@ -194,7 +264,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		}
 	}
 	payloads = append(payloads, tools...)
-	return s.publishModelRequestEvent(ctx, request, event, payloads)
+	return s.publishModelRequestEvent(ctx, request, event, payloads, completion)
 }
 
 func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
@@ -213,14 +283,32 @@ func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
 	return rejected
 }
 
-func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage) error {
+func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage, completion *harness.AssistantMessage) error {
 	event.OwnerThreadID, event.Model = request.ThreadID, request.Model
 	event.RequestID = request.StartID
 	payload, err := jsonv2.Marshal(event)
 	if err != nil {
 		return err
 	}
+	if request.harnessLease != nil {
+		sink, ok := s.sink.(harnessModelEventSink)
+		if !ok {
+			return db.ErrInvalidState
+		}
+		phase := db.HarnessModelStart
+		if event.Type == "span.model_request_end" {
+			phase = db.HarnessModelEnd
+			if event.Error != nil {
+				phase = db.HarnessModelError
+			}
+		}
+		return sink.PublishHarnessModelEvents(ctx, request.codeSession, *request.harnessLease, phase, append(preceding, payload), completion)
+	}
 	return s.sink.PublishCodeSessionEvents(ctx, request.codeSession, append(preceding, payload))
+}
+
+type harnessModelEventSink interface {
+	PublishHarnessModelEvents(context.Context, db.CodeSession, db.HarnessTurnLease, db.HarnessModelPhase, []json.RawMessage, *harness.AssistantMessage) error
 }
 
 func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSession, agentID string) (string, error) {
@@ -306,4 +394,24 @@ func modelRequestBilling(calculator *billing.Calculator, model string, usage Mod
 		return nil
 	}
 	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
+}
+
+func harnessModelCompletion(result ModelRequestResult) *harness.AssistantMessage {
+	var completion harness.AssistantMessage
+	separator := "\n"
+	if len(result.ToolUses) == 1 {
+		call := result.ToolUses[0]
+		completion.Call = harness.ToolCall{ID: harness.ToolCallID(call.ID), Name: call.Name, Arguments: string(call.Input)}
+		separator = ""
+	}
+	var text []string
+	for _, message := range result.Messages {
+		for _, block := range message.Content {
+			if block.Text != nil {
+				text = append(text, *block.Text)
+			}
+		}
+	}
+	completion.Text = strings.Join(text, separator)
+	return &completion
 }

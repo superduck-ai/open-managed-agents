@@ -6,6 +6,7 @@ import (
 	"context"
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -15,16 +16,20 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type responseObservation struct {
 	chat            *chatObservation
 	firstTokenAt    time.Time
 	publishThinking func(string, int) bool
+	publishText     func(string, int, string)
 	thinkingStarted map[int]bool
 	onComplete      func()
 	request         *codesessions.ModelRequest
@@ -74,6 +79,18 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 	if principal.CodeSessionExternalID == "" {
 		return nil, nil
 	}
+	if principal.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		id, err := uuid.Parse(r.Header.Get(sessioncontract.HarnessTurnHeader))
+		if err != nil {
+			return nil, db.ErrWorkerEpochMismatch
+		}
+		lease := db.HarnessTurnLease{
+			Ref: db.HarnessTurnRef{UUID: id.String(), OrganizationUUID: principal.OrganizationUUID,
+				WorkspaceUUID: principal.WorkspaceUUID, SessionUUID: principal.PublicSessionUUID},
+			CodeSessionUUID: principal.CodeSessionUUID, Epoch: principal.WorkerEpoch,
+		}
+		return h.codeSessions.BeginHarnessModelRequest(r.Context(), lease, principal.PublicSessionExternalID, principal.CodeSessionExternalID, model)
+	}
 	return h.codeSessions.BeginModelRequest(r.Context(), principal.WorkspaceUUID, principal.PublicSessionExternalID,
 		principal.CodeSessionExternalID, strings.TrimSpace(r.Header.Get("X-Claude-Code-Agent-Id")), model)
 }
@@ -97,6 +114,9 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 				return false
 			}
 			return true
+		}
+		observation.publishText = func(messageID string, index int, text string) {
+			h.codeSessions.PublishHarnessModelText(r.Context(), request, messageID, index, text)
 		}
 		observation.onComplete = sync.OnceFunc(func() { h.finishModelRequest(r.Context(), observation) })
 		defer observation.onComplete()
@@ -154,7 +174,7 @@ func (h *Handler) finishModelRequest(ctx context.Context, observation *responseO
 	defer cancel()
 	for {
 		err := h.codeSessions.EndModelRequest(cleanup, observation.request, observation.result)
-		if err == nil {
+		if err == nil || errors.Is(err, db.ErrWorkerEpochMismatch) {
 			return
 		}
 		select {
@@ -224,6 +244,10 @@ func (o *responseObservation) observeFrame(data []byte) {
 	}
 	switch event.Type {
 	case "message_start":
+		if o.messageID != "" {
+			o.malformed = true
+			return
+		}
 		o.messageID = event.Message.ID
 		o.result.Usage = event.Message.Usage
 		o.blocks = make(map[int]*responseContentBlock)
@@ -244,6 +268,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 		block.Thinking = ""
 		o.blocks[event.Index] = &block
 		o.addEventID(event.Index, block.Type)
+		if block.Type == "text" {
+			o.previewText(event.Index, block.Text)
+		}
 		if (block.Type == "thinking" || block.Type == "redacted_thinking") && o.publishThinking != nil {
 			o.thinkingStarted[event.Index] = o.publishThinking(o.messageID, event.Index)
 		}
@@ -303,8 +330,17 @@ func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	}
 	if event.Delta.Type == "text_delta" {
 		block.textBuffer.WriteString(event.Delta.Text)
+		if block.Type == "text" {
+			o.previewText(event.Index, event.Delta.Text)
+		}
 	} else if event.Delta.Type == "input_json_delta" {
 		block.inputBuffer.WriteString(event.Delta.PartialJSON)
+	}
+}
+
+func (o *responseObservation) previewText(index int, text string) {
+	if o.publishText != nil && text != "" && o.result.ErrorType == "" && !o.malformed && !o.complete {
+		o.publishText(o.messageID, index, text)
 	}
 }
 

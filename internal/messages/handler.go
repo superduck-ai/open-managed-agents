@@ -17,28 +17,30 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 var requestHeadersToRemove = map[string]struct{}{
-	"X-Oma-Model-Purpose": {},
-	"Authorization":       {},
-	"Connection":          {},
-	"Cookie":              {},
-	"Host":                {},
-	"Keep-Alive":          {},
-	"Proxy-Authenticate":  {},
-	"Proxy-Authorization": {},
-	"Proxy-Connection":    {},
-	"Te":                  {},
-	"Traceparent":         {},
-	"Tracestate":          {},
-	"Trailer":             {},
-	"Transfer-Encoding":   {},
-	"Upgrade":             {},
-	"X-Api-Key":           {},
-	"X-Organization-Uuid": {},
-	"X-Workspace-Id":      {},
+	sessioncontract.HarnessTurnHeader: {},
+	"X-Oma-Model-Purpose":             {},
+	"Authorization":                   {},
+	"Connection":                      {},
+	"Cookie":                          {},
+	"Host":                            {},
+	"Keep-Alive":                      {},
+	"Proxy-Authenticate":              {},
+	"Proxy-Authorization":             {},
+	"Proxy-Connection":                {},
+	"Te":                              {},
+	"Traceparent":                     {},
+	"Tracestate":                      {},
+	"Trailer":                         {},
+	"Transfer-Encoding":               {},
+	"Upgrade":                         {},
+	"X-Api-Key":                       {},
+	"X-Organization-Uuid":             {},
+	"X-Workspace-Id":                  {},
 }
 
 // responseHeadersToRemove 防止把仅对上游连接有效的 hop-by-hop header 返回给客户端。

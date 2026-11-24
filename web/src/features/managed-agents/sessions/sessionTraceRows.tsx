@@ -178,7 +178,9 @@ function TranscriptMessageRow({
         <TranscriptSpeakerHeader
           label={entry.displayEvent.label}
           speaker={speaker}
-          processedAtMs={entry.processedAtMs}
+          processedAtMs={
+            entry.event.type === 'user.message' ? entry.createdAtMs || entry.processedAtMs : entry.processedAtMs
+          }
           relativeTime={entry.relativeTime}
           durationMs={speaker === 'agent' ? sessionTranscriptEntryDurationMs(entry) : undefined}
           selected={selected}

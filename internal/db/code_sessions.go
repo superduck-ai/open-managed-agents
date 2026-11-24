@@ -79,6 +79,8 @@ type CodeSessionCredentialContext struct {
 	AgentExternalID         string
 	AgentVersion            int
 	AccountEmail            string
+	ExecutionRuntime        string
+	WorkerEpoch             int64
 }
 
 // CodeSessionNetworkPolicyContext 是 upstream proxy 每次 CONNECT 授权所需的

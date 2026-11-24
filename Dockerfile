@@ -12,7 +12,7 @@
 ARG REGISTRY=docker.io/library
 
 # ---- Go 后端编译 ------------------------------------------------------------
-FROM ${REGISTRY}/golang:1.27.0 AS go-builder
+FROM ${REGISTRY}/golang:1.27.4 AS go-builder
 
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY}
@@ -23,6 +23,7 @@ RUN go mod download
 COPY . .
 RUN ./scripts/generate-go.sh
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-server ./cmd/oma-server
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-harness-worker ./cmd/oma-harness-worker
 
 # ---- 前端构建 (Bun) ---------------------------------------------------------
 FROM ${REGISTRY}/node:22 AS web-builder
@@ -42,6 +43,7 @@ RUN apt-get update -qq \
 
 # Go 后端
 COPY --from=go-builder /oma-server /usr/local/bin/oma-server
+COPY --from=go-builder /oma-harness-worker /usr/local/bin/oma-harness-worker
 
 # 前端产物（Caddy 通过 compose volume 挂载使用）
 COPY --from=web-builder /web/dist /web-dist

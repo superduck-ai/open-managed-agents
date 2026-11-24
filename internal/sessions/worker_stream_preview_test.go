@@ -288,7 +288,7 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 
-	writeSSE(recorder, event, "primary-thread")
+	writeSSE(recorder, event, "primary-thread", false)
 	if !strings.HasPrefix(recorder.Body.String(), "id: preview-event\nevent: event_start\n") {
 		t.Fatalf("preview SSE has the wrong frame ID: %s", recorder.Body.String())
 	}
@@ -331,7 +331,7 @@ func TestPreviewSSEFrameIDsMatchFinalContentBlocks(t *testing.T) {
 	wantIDs := []string{thinkingID, thinkingID, messageID, messageID, messageID, messageID}
 	recorder := httptest.NewRecorder()
 	for _, event := range events {
-		writeSSE(recorder, event, "primary-thread")
+		writeSSE(recorder, event, "primary-thread", false)
 	}
 	frames := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n\n")
 	if len(frames) != len(events) {
@@ -394,7 +394,7 @@ func TestPreviewSSEUsesTargetEventIDInFrameAndPayload(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, threadID := range []string{"primary-thread", "child-thread"} {
 				recorder := httptest.NewRecorder()
-				writeSSE(recorder, tc.event, threadID)
+				writeSSE(recorder, tc.event, threadID, false)
 				body := recorder.Body.String()
 				prefix := "id: " + tc.wantID + "\nevent: " + tc.event.EventType + "\ndata: "
 				if !strings.HasPrefix(body, prefix) || !strings.Contains(strings.TrimPrefix(body, prefix), tc.wantID) {
@@ -414,7 +414,7 @@ func TestPersistedSSEUsesEventID(t *testing.T) {
 	for _, threadID := range []string{"primary-thread", "child-thread"} {
 		t.Run(threadID, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			writeSSE(recorder, event, threadID)
+			writeSSE(recorder, event, threadID, false)
 			body := recorder.Body.String()
 			if !strings.HasPrefix(body, "id: sevt_test\nevent: agent.message\n") {
 				t.Fatalf("persisted SSE does not use the event id: %s", body)
@@ -442,7 +442,7 @@ func TestPersistedSSEDoesNotWriteInvalidEventID(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	writeSSE(recorder, event, "primary-thread")
+	writeSSE(recorder, event, "primary-thread", false)
 
 	if body := recorder.Body.String(); strings.Contains(body, "id: ") || strings.Contains(body, "retry: 0\n") {
 		t.Fatalf("invalid event id escaped into SSE fields: %s", body)
@@ -585,8 +585,8 @@ func TestStreamConnectionAcceptsLegacyDeltaWithoutPreviewID(t *testing.T) {
 		t.Fatal("legacy stream delta without preview ID was not accepted")
 	}
 	recorder := httptest.NewRecorder()
-	writeSSE(recorder, sessionStreamEvent{ExternalID: "sevt_previous", EventType: "agent.thinking", Payload: json.RawMessage(`{"type":"agent.thinking","id":"sevt_previous"}`)}, "thread-test")
-	writeSSE(recorder, event, "thread-test")
+	writeSSE(recorder, sessionStreamEvent{ExternalID: "sevt_previous", EventType: "agent.thinking", Payload: json.RawMessage(`{"type":"agent.thinking","id":"sevt_previous"}`)}, "thread-test", false)
+	writeSSE(recorder, event, "thread-test", false)
 	if !strings.Contains(recorder.Body.String(), "\n\nid:\nevent: event_delta\n") {
 		t.Fatalf("legacy delta must clear the previous SSE frame ID: %s", recorder.Body.String())
 	}

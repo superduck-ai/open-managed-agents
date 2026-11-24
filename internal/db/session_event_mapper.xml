@@ -130,6 +130,16 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
+    <sql id="pageEventTime">
+        <choose>
+            <when test="params.UseInputReceivedAt">
+                CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at
+                     ELSE COALESCE(session_events.processed_at, session_events.created_at) END
+            </when>
+            <otherwise>COALESCE(session_events.processed_at, session_events.created_at)</otherwise>
+        </choose>
+    </sql>
+
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -160,17 +170,17 @@
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (COALESCE(processed_at, created_at), id)
+                AND (<include refid="pageEventTime"/>, id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT COALESCE(processed_at, created_at), id FROM session_events
+                    SELECT <include refid="pageEventTime"/>, id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
                 )
             </if>
         </where>
-        ORDER BY COALESCE(session_events.processed_at, session_events.created_at)
+        ORDER BY <include refid="pageEventTime"/>
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>

@@ -51,7 +51,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	oauthAccessToken, err := newOAuthCompatibleToken()
+	oauthAccessToken, err := NewModelAccessToken()
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
@@ -124,7 +124,7 @@ func (s *Service) RecoverManagedAgentCodeSession(
 	ctx context.Context,
 	input ManagedAgentRecoverInput,
 ) (ManagedAgentCreateResult, error) {
-	oauthAccessToken, err := newOAuthCompatibleToken()
+	oauthAccessToken, err := NewModelAccessToken()
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}

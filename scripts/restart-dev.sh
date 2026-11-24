@@ -5,12 +5,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 START_TIMEOUT_MS="${HERDR_DEV_START_TIMEOUT_MS:-180000}"
 
 run_service() {
-  local recipe="$1" ready="$2" marker="$3" line
+  local recipe="$1" ready="$2" marker="$3" line announced=0
   cd "$REPO_ROOT"
   just "$recipe" 2>&1 | while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "$line"
-    if [[ "$line" == *"$ready"* ]]; then
+    if [[ "$announced" -eq 0 && "$line" == *"$ready"* ]]; then
       printf 'OMA_READY_%s\n' "$marker"
+      announced=1
     fi
   done
 }
@@ -18,7 +19,7 @@ run_service() {
 if [[ "${1:-}" == --service ]]; then
   [[ "$#" -eq 4 ]] || exit 2
   case "$2" in
-    restart-server|restart-brain|restart-web) run_service "$2" "$3" "$4" ;;
+    restart-server|restart-brain|restart-harness|restart-web) run_service "$2" "$3" "$4" ;;
     *) exit 2 ;;
   esac
   exit
@@ -55,7 +56,7 @@ find_service_panes() {
     const { result } = JSON.parse(await Bun.stdin.text());
     const root = process.argv[1];
     const owns = cwd => Bun.spawnSync(["git", "-C", cwd, "rev-parse", "--show-toplevel"]).stdout.toString().trim() === root;
-    const names = ["oma-server", "oma-brain", "web"];
+    const names = ["oma-server", "oma-brain", "oma-harness", "harness-status", "web"];
     for (const pane of result.panes) {
       const cwd = pane.foreground_cwd ?? pane.cwd;
       if (names.includes(pane.label) && cwd && owns(cwd)) {
@@ -83,9 +84,14 @@ pane_process_state() {
     const known = processes.some(p => {
       if (!p.cwd || Bun.spawnSync(["git", "-C", p.cwd, "rev-parse", "--show-toplevel"]).stdout.toString().trim() !== root) return false;
       const command = p.cmdline ?? p.argv?.join(" ") ?? "";
+      if (recipe === "harness-status") {
+        const script = root + "/scripts/harness-status.ts";
+        return (p.argv?.[0]?.split("/").at(-1) === "bun" && p.argv[1] === script) || command.startsWith("bun " + script + " ");
+      }
       if (command.includes(recipe)) return true;
       if (recipe === "restart-server") return /go run \.|\/exe\/(?:open-managed-agents|oma-server)(?: |$)/.test(command);
       if (recipe === "restart-brain") return /bun (?:dist\/main\.js|src\/main\.ts)/.test(command);
+      if (recipe === "restart-harness") return /\/exe\/oma-harness-worker(?: |$)/.test(command);
       return /(?:^|\/)vite(?: |$)/.test(command);
     });
     if (!known) {
@@ -143,23 +149,28 @@ service_failure() {
   herdr pane read "$pane" --source recent-unwrapped --lines 30 --raw >&2 || true
 }
 
-start_service() {
-  local pane="$1" name="$2" recipe="$3" ready="$4" command marker
+start_pane() {
+  local pane="$1" name="$2" recipe="$3" command="$4" ready="$5"
   if ! wait_new_shell "$pane" "$recipe"; then
     service_failure "$pane" "$name" "shell initialization failed"
     return 1
   fi
-  marker="$(bun -e 'console.log(crypto.randomUUID())')"
-  printf -v command 'bash %q --service %q %q %q' "$REPO_ROOT/scripts/restart-dev.sh" "$recipe" "$ready" "$marker"
   echo "Starting $name in $pane..."
   if ! herdr pane run "$pane" "$command" >/dev/null; then
     service_failure "$pane" "$name" "could not send the startup command"
     return 1
   fi
-  if ! herdr pane wait-output "$pane" --match "OMA_READY_$marker" --timeout "$START_TIMEOUT_MS" >/dev/null; then
+  if ! herdr pane wait-output "$pane" --match "$ready" --timeout "$START_TIMEOUT_MS" >/dev/null; then
     service_failure "$pane" "$name" "startup failed or timed out after ${START_TIMEOUT_MS}ms"
     return 1
   fi
+}
+
+start_service() {
+  local pane="$1" name="$2" recipe="$3" ready="$4" command marker
+  marker="$(bun -e 'console.log(crypto.randomUUID())')"
+  printf -v command 'bash %q --service %q %q %q' "$REPO_ROOT/scripts/restart-dev.sh" "$recipe" "$ready" "$marker"
+  start_pane "$pane" "$name" "$recipe" "$command" "OMA_READY_$marker"
 }
 
 print_url() {
@@ -197,6 +208,8 @@ while IFS='|' read -r OLD_PANE OLD_LABEL; do
   case "$OLD_LABEL" in
     oma-server) OLD_RECIPE=restart-server ;;
     oma-brain) OLD_RECIPE=restart-brain ;;
+    oma-harness) OLD_RECIPE=restart-harness ;;
+    harness-status) OLD_RECIPE=harness-status ;;
     web) OLD_RECIPE=restart-web ;;
   esac
   if ! stop_service "$OLD_PANE" "$OLD_RECIPE"; then
@@ -215,18 +228,32 @@ SERVICE_LAYOUT="$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$REP
   console.log(result.tab.tab_id + "|" + result.root_pane.pane_id);
 ')"
 IFS='|' read -r SERVICE_TAB SERVER_PANE <<< "$SERVICE_LAYOUT"
-BRAIN_PANE="$(herdr pane split "$SERVER_PANE" --direction right --cwd "$REPO_ROOT" --no-focus | pane_id)"
-WEB_PANE="$(herdr pane split "$BRAIN_PANE" --direction down --cwd "$REPO_ROOT" --no-focus | pane_id)"
+WORKER_PANE="$(herdr pane split "$SERVER_PANE" --direction right --cwd "$REPO_ROOT" --no-focus | pane_id)"
+WEB_PANE="$(herdr pane split "$WORKER_PANE" --direction down --cwd "$REPO_ROOT" --no-focus | pane_id)"
 
 herdr pane rename "$SERVER_PANE" oma-server >/dev/null
-herdr pane rename "$BRAIN_PANE" oma-brain >/dev/null
 herdr pane rename "$WEB_PANE" web >/dev/null
 
 start_service "$SERVER_PANE" oma-server restart-server "claude api server listening"
-start_service "$BRAIN_PANE" oma-brain restart-brain "oma-brain-dsh ready"
+WORKER_RECIPE="$(bash "$REPO_ROOT/scripts/restart-harness.sh" --recipe)"
+case "$WORKER_RECIPE" in
+  restart-brain) WORKER_NAME=oma-brain; WORKER_READY="oma-brain-dsh ready" ;;
+  restart-harness) WORKER_NAME=oma-harness; WORKER_READY="harness worker ready" ;;
+  *) exit 1 ;;
+esac
+herdr pane rename "$WORKER_PANE" "$WORKER_NAME" >/dev/null
+start_service "$WORKER_PANE" "$WORKER_NAME" "$WORKER_RECIPE" "$WORKER_READY"
 start_service "$WEB_PANE" web restart-web "Local:"
+
+STATUS_PANE=
+if [[ "$WORKER_RECIPE" == restart-harness ]]; then
+  STATUS_PANE="$(herdr pane split "$SERVER_PANE" --direction down --ratio 0.72 --cwd "$REPO_ROOT" --no-focus | pane_id)"
+  herdr pane rename "$STATUS_PANE" harness-status >/dev/null
+  printf -v STATUS_COMMAND 'bun %q %q %q' "$REPO_ROOT/scripts/harness-status.ts" "$WORKER_PANE" "$REPO_ROOT"
+  start_pane "$STATUS_PANE" harness-status harness-status "$STATUS_COMMAND" "Harness Worker status"
+fi
 
 herdr tab focus "$SERVICE_TAB" >/dev/null
 
-echo "OMA services ready: server=$SERVER_PANE brain=$BRAIN_PANE web=$WEB_PANE"
+echo "OMA services ready: server=$SERVER_PANE $WORKER_NAME=$WORKER_PANE web=$WEB_PANE${STATUS_PANE:+ harness-status=$STATUS_PANE}"
 print_access_urls

@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -36,7 +37,9 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
-	activeInputs := slices.DeleteFunc(slices.Clone(events), func(event SessionEvent) bool { return settledInterrupts[event.ExternalID] })
+	activeInputs := slices.DeleteFunc(slices.Clone(events), func(event SessionEvent) bool {
+		return settledInterrupts[event.ExternalID] || harnessInterruptEvent(session, event)
+	})
 	acceptedID, err := validateSessionInputBatch(primary, worker, activeInputs)
 	if err != nil {
 		return sessionEventBatchResult{}, err
@@ -46,19 +49,27 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	}
 	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	for _, event := range events {
-		settled := settledInterrupts[event.ExternalID] || idleSessionInterrupt(primary, worker, event)
-		var batch []SessionEvent
-		if event.ExternalID == acceptedID {
-			running := event
-			running.EventType = "session.status_running"
-			running.ExternalID = derivedStatusEventID(event.ExternalID, running.EventType)
-			running.Payload = nil
-			running.ProcessedAt = event.CreatedAt
-			batch, err = sessionStatusEventsTx(ctx, executor, session, primary, &worker, running)
-			batch = append(batch, event)
-		} else {
-			batch, err = sessionEventBatchTx(ctx, executor, session, primary, &worker, event)
+		if harnessInterruptEvent(session, event) {
+			stored, err := insertHarnessInterruptTx(ctx, executor, &session, primary, &worker, event)
+			if err != nil {
+				return sessionEventBatchResult{}, err
+			}
+			result.Events = append(result.Events, stored...)
+			for _, next := range stored {
+				trackPrimaryThreadStatus(&primary, next)
+				if status, ok := maevents.SessionStatus(next.EventType); ok {
+					session.Status = status
+				}
+			}
+			result.SettledInputEventIDs = append(result.SettledInputEventIDs, event.ExternalID)
+			continue
 		}
+		settled := settledInterrupts[event.ExternalID] || idleSessionInterrupt(primary, worker, event)
+		startsTurn := event.ExternalID == acceptedID
+		if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && event.EventType == "user.message" && primary.Status == "idle" {
+			startsTurn = true
+		}
+		batch, err := sessionClientEventBatchTx(ctx, executor, session, primary, &worker, event, startsTurn)
 		if err != nil {
 			return sessionEventBatchResult{}, err
 		}
@@ -86,6 +97,29 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	}
 	result.SessionTerminated = result.SessionTerminated && session.Status == "terminated"
 	return result, nil
+}
+
+func sessionClientEventBatchTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, event SessionEvent, startTurn bool) ([]SessionEvent, error) {
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		switch event.EventType {
+		case "user.message":
+			if err := acceptHarnessSubscriptionEventTx(ctx, executor, session, event); err != nil {
+				return nil, err
+			}
+		case "user.custom_tool_result":
+			return acceptHarnessChoiceTx(ctx, executor, session, primary, worker, event)
+		}
+	}
+	if !startTurn {
+		return sessionEventBatchTx(ctx, executor, session, primary, worker, event)
+	}
+	running := event
+	running.EventType = "session.status_running"
+	running.ExternalID = derivedStatusEventID(event.ExternalID, running.EventType)
+	running.Payload = nil
+	running.ProcessedAt = event.CreatedAt
+	batch, err := sessionStatusEventsTx(ctx, executor, session, primary, worker, running)
+	return append(batch, event), err
 }
 
 // History includes events seeded with a new Session and idempotent Worker reports.

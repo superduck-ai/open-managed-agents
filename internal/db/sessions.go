@@ -24,6 +24,7 @@ type Session struct {
 	CreatedByAPIKeyUUID string
 	// RuntimeUserUUID is server-owned execution identity, not resource ownership.
 	RuntimeUserUUID       string
+	ExecutionRuntime      string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string
@@ -194,18 +195,19 @@ type ListSessionsPageParams struct {
 }
 
 type ListSessionEventsPageParams struct {
-	WorkspaceUUID     string
-	SessionExternalID string
-	ThreadExternalID  string
-	PrimaryOnly       bool
-	Limit             int
-	Cursor            *SessionEventPageCursor
-	Order             string
-	Types             []string
-	CreatedAtGT       *time.Time
-	CreatedAtGTE      *time.Time
-	CreatedAtLT       *time.Time
-	CreatedAtLTE      *time.Time
+	UseInputReceivedAt bool
+	WorkspaceUUID      string
+	SessionExternalID  string
+	ThreadExternalID   string
+	PrimaryOnly        bool
+	Limit              int
+	Cursor             *SessionEventPageCursor
+	Order              string
+	Types              []string
+	CreatedAtGT        *time.Time
+	CreatedAtGTE       *time.Time
+	CreatedAtLT        *time.Time
+	CreatedAtLTE       *time.Time
 }
 
 type ListSessionThreadsPageParams struct {
@@ -508,7 +510,13 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID); txErr != nil {
 			return txErr
 		}
-		return d.retireSessionWorkersTx(ctx, executor, &removal)
+		if err := d.retireSessionWorkersTx(ctx, executor, &removal); err != nil {
+			return err
+		}
+		if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+			return deleteHarnessConversation(ctx, executor, session)
+		}
+		return nil
 	})
 	return removal, err
 }

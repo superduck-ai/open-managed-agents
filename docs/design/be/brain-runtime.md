@@ -4,6 +4,8 @@
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 
+新建云端 Session 可通过 `environment_runner.cloud_harness` 选用 [云端 Harness Worker](cloud-harness-worker.md)。它用 JetStream 投递文本回合，并沿用 OMA 的 Session API 和模型网关。
+
 ## DSH 版本与文档基准
 
 Brain 的直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.2-alpha.2`，Cordis 固定为 `4.0.6-alpha.1`，满足上游 `~4.0.6-alpha.1` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一发布版本；不能用 `latest`、`next` 或版本范围替代精确依赖。

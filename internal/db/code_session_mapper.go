@@ -128,6 +128,8 @@ type codeSessionCredentialContextRow struct {
 	AgentExternalID         string `db:"agent_external_id"`
 	AgentVersion            int    `db:"agent_version"`
 	AccountEmail            string `db:"account_email"`
+	ExecutionRuntime        string `db:"execution_runtime"`
+	WorkerEpoch             int64  `db:"worker_epoch"`
 }
 
 type codeSessionNetworkPolicyContextRow struct {
@@ -258,5 +260,7 @@ func (r codeSessionCredentialContextRow) context() CodeSessionCredentialContext 
 		AgentExternalID:         r.AgentExternalID,
 		AgentVersion:            r.AgentVersion,
 		AccountEmail:            r.AccountEmail,
+		ExecutionRuntime:        r.ExecutionRuntime,
+		WorkerEpoch:             r.WorkerEpoch,
 	}
 }

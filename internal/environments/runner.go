@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -234,10 +235,14 @@ func (r *Runner) runClaimedWork(ctx context.Context, run *runnerRun, work *db.En
 		}
 		return true, r.startExternalWorker(ctx, run, env, work)
 	}
+	external, err := r.useExternalCloudWorker(ctx, env, *work)
+	if err != nil {
+		return true, err
+	}
 	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID); err != nil {
 		return true, err
 	}
-	if r.cfg.EnvironmentRunner.AgentMode == "brain" && cloudEnvironment(env) {
+	if external {
 		err := r.startExternalWorker(ctx, run, env, work)
 		if err != nil {
 			r.failWorkBeforeSandbox(ctx, *work, err)
@@ -245,6 +250,17 @@ func (r *Runner) runClaimedWork(ctx context.Context, run *runnerRun, work *db.En
 		return true, err
 	}
 	return r.createEnvironmentSandbox(ctx, run, env, work, nil)
+}
+
+func (r *Runner) useExternalCloudWorker(ctx context.Context, env db.Environment, work db.EnvironmentWork) (bool, error) {
+	if !cloudEnvironment(env) {
+		return false, nil
+	}
+	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
+		return true, nil
+	}
+	session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
+	return found && session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime, err
 }
 
 func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, env db.Environment, work *db.EnvironmentWork, existingLaunch *managedAgentRuntimeLaunch) (bool, error) {
@@ -731,7 +747,9 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	runtimeResources.runtimeSkills = runtimeSkills
 	runtimeResources.environmentConfig = env.Config
-	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		runtimeResources.workerTransport = sessioncontract.CloudHarnessRuntime
+	} else if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "claim"
 	}
 	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills, r.cfg.Env)
@@ -835,6 +853,12 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	}
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
+	}
+	if preparation.Session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		return managedAgentRuntimeLaunch{
+			CodeSessionID: local.CodeSessionID, PublicSessionID: local.PublicSessionID,
+			SDKURLPath: local.SDKURLPath, Recovered: preparation.RecoveryCodeSessionID != "",
+		}, nil
 	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, local.SessionIngressToken, preparation.RuntimeSources)

@@ -67,6 +67,10 @@ func serviceDirectory(root, cwd string) bool {
 }
 
 func serviceCommand(root, command string) bool {
+	worker := filepath.Join(root, "tmp", "dev-harness", "exe", "oma-harness-worker")
+	if command == worker || strings.HasPrefix(command, worker+" ") {
+		return true
+	}
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return false
@@ -77,6 +81,8 @@ func serviceCommand(root, command string) bool {
 	}
 	arguments := strings.Join(fields[1:], " ")
 	switch executable {
+	case "bash":
+		return arguments == "./scripts/restart-harness.sh" || arguments == filepath.Join(root, "scripts", "restart-harness.sh")
 	case "go":
 		return arguments == "run ." || arguments == "run ./cmd/oma-server"
 	case "bun", "node":

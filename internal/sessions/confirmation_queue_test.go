@@ -17,7 +17,7 @@ func TestConfirmationQueuedUntilWorkerProcesses(t *testing.T) {
 		t.Fatal("confirmation falsely processed on HTTP receipt")
 	}
 	var queued map[string]any
-	if err = json.Unmarshal(sessionEventPayloadForResponse(event, "thread"), &queued); err != nil {
+	if err = json.Unmarshal(sessionEventPayloadForResponse(event, "thread", false), &queued); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok := queued["processed_at"]; !ok || v != nil {
@@ -25,7 +25,7 @@ func TestConfirmationQueuedUntilWorkerProcesses(t *testing.T) {
 	}
 	event.ProcessedAt = now
 	var processed map[string]any
-	if err = json.Unmarshal(sessionEventPayloadForResponse(event, "thread"), &processed); err != nil {
+	if err = json.Unmarshal(sessionEventPayloadForResponse(event, "thread", false), &processed); err != nil {
 		t.Fatal(err)
 	}
 	if processed["processed_at"] != formatEventTime(now) || processed["id"] != queued["id"] || processed["tool_use_id"] != "actual-use" || processed["result"] != "allow" {

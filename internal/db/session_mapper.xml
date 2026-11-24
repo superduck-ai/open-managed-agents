@@ -50,6 +50,7 @@ RETURNING <include refid="columns"/>
         title,
         metadata - '_oma_runtime_user_uuid' AS metadata,
         metadata->>'_oma_runtime_user_uuid' AS runtime_user_uuid,
+        execution_runtime,
         vault_ids,
         status,
         budget,
@@ -71,7 +72,7 @@ RETURNING <include refid="columns"/>
             environment_uuid, environment_external_id, agent_uuid, agent_external_id,
             agent_version, agent_snapshot, deployment_uuid, deployment_external_id,
             title, metadata, vault_ids, status, budget, usage, stats, outcome_evaluations,
-            created_at, updated_at
+            created_at, updated_at, execution_runtime
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID}, #{params.EnvironmentUUID}, #{params.EnvironmentExternalID},
@@ -82,7 +83,7 @@ RETURNING <include refid="columns"/>
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb), #{params.Status},
             CAST(#{params.Budget,sensitive=true} AS jsonb),
             CAST(#{params.Usage,sensitive=true} AS jsonb), CAST(#{params.Stats,sensitive=true} AS jsonb),
-            CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
+            CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}, #{params.ExecutionRuntime}
         )
         RETURNING <include refid="columns"/>
     </insert>

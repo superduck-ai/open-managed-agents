@@ -278,6 +278,17 @@ func normalizeInputEvent(
 	if err := validatePublicInputEvent(eventType, payload); err != nil {
 		return db.SessionEvent{}, nil, false, err
 	}
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && eventType == "user.message" {
+		var harnessPayload struct {
+			Metadata json.RawMessage `json:"metadata"`
+		}
+		if err := json.Unmarshal(raw, &harnessPayload); err != nil {
+			return db.SessionEvent{}, nil, false, err
+		}
+		if len(harnessPayload.Metadata) > 0 {
+			payload["metadata"] = harnessPayload.Metadata
+		}
+	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
 		return db.SessionEvent{}, nil, false, err
@@ -290,6 +301,7 @@ func normalizeInputEvent(
 		processedAt = time.Time{}
 	}
 	delete(payload, "created_at")
+	delete(payload, "received_at")
 	delete(payload, eventpayload.TraceContextKey)
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {

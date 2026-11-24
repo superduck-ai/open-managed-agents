@@ -281,7 +281,7 @@ func validateSessionCredentialClaims(claims SessionCredentialClaims, role string
 	return nil
 }
 
-func newOAuthCompatibleToken() (string, error) {
+func NewModelAccessToken() (string, error) {
 	// token 本身是高熵本地 bearer credential，数据库仅保存其 hash。
 	value, err := randomCredentialValue(32)
 	if err != nil {

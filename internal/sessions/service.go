@@ -21,6 +21,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
@@ -157,6 +158,7 @@ func (h *Handler) createFromBody(r *http.Request, principal auth.Principal, body
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
 			RuntimeUserUUID:       principal.RuntimeUserUUID(),
+			ExecutionRuntime:      h.executionRuntime(env),
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
 			AgentUUID:             agent.UUID,
@@ -628,7 +630,8 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 }
 
 func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) error {
-	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
+	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
+	if err != nil {
 		return err
 	}
 	limit, err := httpapi.ParseLimit(r, 1000)
@@ -659,19 +662,21 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
+	useInputReceivedAt := session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime
 	records, hasMore, err := h.eventPayloads.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
-		WorkspaceUUID:     workspaceUUIDFromRequest(r),
-		SessionExternalID: sessionID,
-		ThreadExternalID:  threadID,
-		PrimaryOnly:       threadID == "",
-		Limit:             limit,
-		Cursor:            cursor,
-		Order:             order,
-		Types:             parseRepeatedQuery(r, "types[]", "types"),
-		CreatedAtGT:       createdAtGT,
-		CreatedAtGTE:      createdAtGTE,
-		CreatedAtLT:       createdAtLT,
-		CreatedAtLTE:      createdAtLTE,
+		WorkspaceUUID:      session.WorkspaceUUID,
+		UseInputReceivedAt: useInputReceivedAt,
+		SessionExternalID:  sessionID,
+		ThreadExternalID:   threadID,
+		PrimaryOnly:        threadID == "",
+		Limit:              limit,
+		Cursor:             cursor,
+		Order:              order,
+		Types:              parseRepeatedQuery(r, "types[]", "types"),
+		CreatedAtGT:        createdAtGT,
+		CreatedAtGTE:       createdAtGTE,
+		CreatedAtLT:        createdAtLT,
+		CreatedAtLTE:       createdAtLTE,
 	})
 	if errors.Is(err, db.ErrInvalidCursor) {
 		return invalidRequest(err)
@@ -691,7 +696,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		if primaryToolProjectionHidden(record, hiddenPrimaryToolUseIDs) {
 			continue
 		}
-		data = append(data, sessionEventPayloadForResponse(record, threadID))
+		data = append(data, sessionEventPayloadForResponse(record, threadID, useInputReceivedAt))
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
@@ -771,6 +776,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 			outcomesChanged = true
 		}
 		events = append(events, event)
+	}
+	if err := validateHarnessInputs(session, events); err != nil {
+		return invalidRequest(err)
 	}
 	if err := h.validateMessageFileSources(r.Context(), session, events); err != nil {
 		return err

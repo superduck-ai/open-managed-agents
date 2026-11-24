@@ -144,7 +144,8 @@ func assertSDKToolHistory(t *testing.T, events []anthropic.BetaManagedAgentsSess
 			}
 			results++
 		case "user.tool_confirmation":
-			if event.ToolUseID != toolID || event.Result != string(decision) {
+			confirmation := event.AsUserToolConfirmation()
+			if confirmation.ToolUseID != toolID || string(confirmation.Result) != string(decision) {
 				t.Fatal("confirmation does not match requested decision")
 			}
 			confirmations++

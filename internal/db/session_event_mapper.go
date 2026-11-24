@@ -43,18 +43,19 @@ type sessionEventWriteParams struct {
 }
 
 type sessionEventPageMapperParams struct {
-	WorkspaceUUID     string
-	SessionExternalID string
-	ThreadExternalID  string
-	PrimaryOnly       bool
-	FetchLimit        int
-	Cursor            *SessionEventPageCursor
-	Descending        bool
-	Types             []string
-	CreatedAtGT       *time.Time
-	CreatedAtGTE      *time.Time
-	CreatedAtLT       *time.Time
-	CreatedAtLTE      *time.Time
+	UseInputReceivedAt bool
+	WorkspaceUUID      string
+	SessionExternalID  string
+	ThreadExternalID   string
+	PrimaryOnly        bool
+	FetchLimit         int
+	Cursor             *SessionEventPageCursor
+	Descending         bool
+	Types              []string
+	CreatedAtGT        *time.Time
+	CreatedAtGTE       *time.Time
+	CreatedAtLT        *time.Time
+	CreatedAtLTE       *time.Time
 }
 
 // SessionEventMapper contains queries whose primary table is session_events.

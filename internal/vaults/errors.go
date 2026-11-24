@@ -181,10 +181,6 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func vaultBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Vaults API requires beta=true", nil)
-}
-
 func routeNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }

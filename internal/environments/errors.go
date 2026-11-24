@@ -72,10 +72,6 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func environmentsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Environments API requires beta=true", nil)
-}
-
 func environmentRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }

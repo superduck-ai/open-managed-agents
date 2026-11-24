@@ -27,6 +27,8 @@ sequenceDiagram
 
 `internal/cloudharness` 定义 Infinity 风格的 `InputSender`、`ConversationStore`、`StateStore`、`AgentSystem.Step` 和纯状态转换函数 `Step`。Infinity 的 Lambda 从 SQS 读取输入，并在工具异步完成时接收工具结果输入。OMA 的 Worker 从 JetStream 每次领取一条输入，恢复线程后在进程内推进模型、同步工具和子线程。每次模型请求将本次输入合入已提交的历史后交给 Fantasy，成功结果统一由模型网关提交。模型凭证只在当前执行租约内有效，上游 API Key 由 OMA 网关持有。
 
+Worker 按平台规则、Environment、Agent 或 specialist 指令、工作目录与 Memory 目录的顺序组装 system 文本。每次模型请求另附当前时间提醒。规则按 Harness 的工具与线程能力调整，详见 [Agent 分层系统提示词](agent-system-prompt.md)。
+
 版本 4 的新投递包括用户文本、选择响应引用和沙箱工具结果引用。订阅回调使用用户输入格式。各类投递都带组织、工作区和会话范围。用户输入的 `Nats-Msg-Id` 使用公开事件 UUID，选择响应用 `choice_response:<event_uuid>`，异步工具完成用 `tool_result:<tool_uuid>`。
 
 Session 激活时持有 Session 与 Code Session 行锁，从已提交的历史读取未处理输入，取得所有 PubAck 后切换到 active。在激活前提交的输入由这条路径交付。active Session 的 Events API 在数据库提交后直接调用 `InputSender`。发布失败时返回 503，客户端使用相同的 `Idempotency-Key` 重试，服务端复用原事件 UUID。后端在提交后、PubAck 前退出也由客户端重试恢复。

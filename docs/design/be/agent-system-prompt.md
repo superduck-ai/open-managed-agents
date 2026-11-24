@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-  L0["L0 平台规则<br/>DSH 静态文本，随 DSH 版本变化"] --> L1
+  L0["L0 平台规则<br/>按执行端能力选择规则"] --> L1
   L1["L1 Environment<br/>Go 按 Environment 配置渲染"] --> L3
   L3["L3 Agent 指令 / 子 Agent specialist 指令"] --> L4
   L4["L4 会话<br/>工作目录、Memory 目录"]
@@ -16,16 +16,20 @@ flowchart TB
 
 | 层 | 来源 | 内容 |
 |---|---|---|
-| L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（开启时描述可用工具，关闭时明确禁止委派）、指令信任与优先级、收尾格式 |
+| L0 | DSH 的 `oma-brain-dsh/src/prompt/platform.ts` 和 Cloud Harness 的 `internal/codesessions/templates/harness_system.md.tpl` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（开启时描述可用工具，关闭时明确禁止委派）、指令信任与优先级、收尾格式 |
 | L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | 沙箱系统信息、uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
 | L4 | `cwd`、`memory_catalog_prompt` | 工作目录、Memory 目录 |
 
 DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/prompt/assemble.ts` 中按上表顺序用空行拼接。`dsh-system-prompt` 会把所有 section 拼成单一字符串，模型请求也以单个 `system` 字符串发送，因此缓存只能依赖前缀匹配：会话级数据必须位于 L3 之后，不能插入平台规则中间。
 
+Cloud Harness 的 Worker 按同一顺序渲染 Go `text/template`。模板编译进二进制，进程启动时解析，文案在 `internal/codesessions/templates/` 下维护。Worker 从 Code Session 的固定配置读取 Environment 和 Memory 文本，从 Code Session 读取工作目录。主线程使用 `system_prompt`，缺失时使用 `custom_system_prompt`。子线程使用固定的子 Agent 快照，inline 子线程可省略 specialist 指令。Fantasy 将渲染结果作为一个 system 文本块发送。
+
 ## Skill 目录与加载
 
 Skill 目录由同版本的 `dsh-skill` registry 与 `dsh-tool-skill` consumer 管理，不进入 system prompt。consumer 在 `agent/pre-step` 发布持久化 user-role `skill-catalog` 消息，只包含排序后的名称和描述，描述默认最多 500 字符。目录仅列出允许模型调用的 Skill；目录完整性、替换、恢复与压缩后重发沿用 DSH consumer。完整且为空的初始目录不生成消息。
+
+该目录和调用入口目前由 DSH 提供。Cloud Harness 的 system 文本同样省略 Skill 目录。
 
 `oma-brain-dsh/src/skills/` 在每个 Agent 的隔离服务范围内注册 OMA provider，并提供返回沙箱工作目录的 `workingDirectory.ensure` 适配器。provider 不访问宿主机文件系统。目录和加载通过带 ingress 凭据的内部 Session Skills 接口读取固定 File/Resource 快照；子 Agent 请求携带线程头，服务端检查线程归属、状态和 Agent snapshot。inline 线程继承父 Agent 的 Skill 引用，预定义线程使用自身引用。
 
@@ -34,6 +38,8 @@ Skill 目录由同版本的 `dsh-skill` registry 与 `dsh-tool-skill` consumer �
 `oma-brain-dsh/tests/skills.test.ts` 与 `skills-runtime.test.ts` 覆盖 YAML、调用策略、显式调用、目录与正文分离、主子 Agent 目录隔离、恢复与压缩后的目录重发，以及无需创建沙箱的加载；Go 普通单测覆盖 Agent 选择、越界目录拒绝和 File 快照读取。
 
 ## 时间上下文
+
+Cloud Harness 每次请求模型前读取 Worker 的时钟，用北京时间渲染 `harness_time_reminder.md.tpl`。模型请求在最新输入或工具结果之后携带一个单独的 `<system-reminder>` 文本块，工具结果仍排在其所在消息的第一块。提醒标记浏览器时区不可用，并在时区影响判断时请任务发起方澄清。该文本只随当次模型请求发送。
 
 Brain 在 `oma-brain-dsh/src/kernel.ts` 挂载与其他 DSH 包同版本的 `@deepseek-ai/dsh-time-context`。插件通过 `agent/pre-step` 在进入模型步骤前追加带 `time-context` 来源的持久化 user-role 消息，包含当前日期时间、时区和经过时长；不改写 L0–L4 的 system 前缀。默认最短刷新间隔为 10 分钟，间隔内复用已有读数，恢复会话后仍依据持久化状态判断是否刷新。主 Agent 与子 Agent 均经过该步骤入口，各自维护时间读数。
 
@@ -96,7 +102,7 @@ Agent 指令与平台规则的关系分两类：
 - `networking` 由 `networkpolicy.ParseConfig` 解析，非 cloud 或缺失时视为 unrestricted。limited 模式把可访问目标合成一句：`allow_package_managers` 对应 package registries，`allow_mcp_servers` 对应 configured MCP servers，`allowed_hosts` 最多列 50 项、超出部分写为 `and N more`；三者都为空时写明全部出站访问被阻断，避免出现“全部阻断”后又说“某些可达”的矛盾表述。配置非法时启动失败，与网络策略执行端一致地 fail closed。
 - `packages` 复用 `decodeEnvironmentPackages`，按 apt → cargo → gem → go → npm → pip 列出，每个包管理器最多 20 项。
 - 持久化说明与 [sandbox-lifecycle](sandbox-lifecycle.md) 一致：idle 时暂停，长时间 idle 后可能被替换；替换后保留 `/mnt/user-data`、`/mnt/session/uploads` 和已挂载的 Memory store。
-- Memory 目录不进入 L1，仍通过 `memory_catalog_prompt` 单独下发，由 DSH 放入 L4。
+- Memory 目录通过 `memory_catalog_prompt` 单独下发，由 DSH 和 Cloud Harness 放入 L4。
 - 文件查找按引用方式区分：`/uploads/...` 或用户声明的附件只查 uploads；带目录部分且在工作目录中存在的路径（如 `src/config.ts`）直接使用工作目录文件，读取、审查和修改一致；其他文件名或路径（包括裸文件名）保持先查 uploads、再查工作目录的顺序，避免用户只给文件名时漏掉附件。多个候选影响结果时询问任务发起方。修改附件时从 uploads 读取，把修改后的副本写入 outputs。
 
 ## 工具定义
@@ -121,6 +127,8 @@ DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_sy
 
 ## 测试
 
+- `internal/codesessions/harness_prompt_test.go` 覆盖 Harness 主子线程的层顺序、委派规则、旧字段回退和空指令省略。
+- `internal/harnessworker/text_test.go` 通过本地 HTTP 网关核对发送的 system 文本和时间提醒，验证续跑的工具结果排列在提醒之前。
 - `oma-brain-dsh/tests/prompt.test.ts`：层顺序、无子 Agent 时不出现委派说明、会话数据变化不影响 L3 之前的前缀、子 Agent 提示词不含委派工具。
 - `oma-brain-dsh/tests/worker-registration.test.ts`：`append_system_prompt` 与 `memory_catalog_prompt` 分别映射到 assignment。
 - `internal/environments/environment_prompt_test.go`：非法配置、默认 unrestricted、limited 网络与 packages 渲染、无白名单主机、长列表截断。

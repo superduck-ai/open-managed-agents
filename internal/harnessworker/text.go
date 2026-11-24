@@ -2,9 +2,9 @@ package harnessworker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
@@ -34,10 +34,6 @@ func (w *Worker) executeTextTurn(ctx context.Context, claim db.HarnessTurnClaim,
 			return err
 		}
 	}
-	model, err := w.model(ctx, claim, token, available)
-	if err != nil {
-		return err
-	}
 	conversation := w.database.HarnessConversation(claim.Lease)
 	threadID := input.Message.GroupID
 	history, _, _, err := conversation.LoadHistoryWithAncestors(ctx, threadID)
@@ -54,6 +50,10 @@ func (w *Worker) executeTextTurn(ctx context.Context, claim db.HarnessTurnClaim,
 			return fmt.Errorf("invalid harness model input %T", input.Message.Content)
 		}
 		history = append(history, message)
+	}
+	model, err := w.model(ctx, claim, token, available)
+	if err != nil {
+		return err
 	}
 	if _, err := model.Complete(ctx, history); err != nil {
 		return fmt.Errorf("harness text model step failed: %w", err)
@@ -85,13 +85,9 @@ func (w *Worker) modelInput(ctx context.Context, claim db.HarnessTurnClaim, deli
 }
 
 func (w *Worker) model(ctx context.Context, claim db.HarnessTurnClaim, token string, tools []fantasy.Tool) (*fantasyadapter.FantasyModel, error) {
-	var metadata struct {
-		Config struct {
-			SystemPrompt string `json:"system_prompt"`
-		} `json:"config"`
-	}
-	if err := json.Unmarshal(claim.CodeSession.Metadata, &metadata); err != nil {
-		return nil, errors.New("invalid harness session configuration")
+	modelID, prompt, err := codesessions.HarnessModelConfiguration(claim)
+	if err != nil {
+		return nil, err
 	}
 	provider, err := anthropic.New(
 		anthropic.WithBaseURL(w.apiURL), anthropic.WithAPIKey(token),
@@ -101,18 +97,18 @@ func (w *Worker) model(ctx context.Context, claim db.HarnessTurnClaim, token str
 	if err != nil {
 		return nil, errors.New("configure harness model provider")
 	}
-	modelID, prompt := claim.CodeSession.Model, metadata.Config.SystemPrompt
-	if claim.Subagent != nil {
-		modelID, prompt, err = codesessions.HarnessSubagentModel(*claim.Subagent, modelID)
-		if err != nil {
-			return nil, err
-		}
-	}
 	model, err := provider.LanguageModel(ctx, modelID)
 	if err != nil {
 		return nil, errors.New("configure harness session model")
 	}
-	return fantasyadapter.NewModel(model, tools).WithSystemPrompt(prompt).WithProviderOptions(fantasy.ProviderOptions{
-		anthropic.Name: &anthropic.ProviderOptions{DisableParallelToolUse: new(true)},
-	}), nil
+	reminder, err := codesessions.HarnessTimeReminder(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return fantasyadapter.NewModel(model, tools).
+		WithSystemPrompt(prompt).
+		WithRuntimeReminder(reminder).
+		WithProviderOptions(fantasy.ProviderOptions{
+			anthropic.Name: &anthropic.ProviderOptions{DisableParallelToolUse: new(true)},
+		}), nil
 }

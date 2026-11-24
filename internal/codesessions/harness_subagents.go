@@ -87,26 +87,6 @@ func harnessDelegationTools(config *RuntimeSubagentConfig) []sandboxtools.Defini
 	}
 }
 
-func HarnessSubagentModel(thread db.SessionThread, parentModel string) (string, string, error) {
-	var snapshot runtimeAgentSnapshot
-	if err := json.Unmarshal(thread.AgentSnapshot, &snapshot); err != nil {
-		return "", "", err
-	}
-	definition, err := runtimeSubagentDefinition(snapshot, builtinToolCatalog{})
-	if err != nil {
-		return "", "", err
-	}
-	model := definition.Model
-	if model == "" {
-		model = parentModel
-	}
-	prompt := "You are the subagent " + definition.Name + ". Complete the assigned task within its stated constraints. Report your findings, results, and blockers to the parent agent. Ask the parent for any needed information."
-	if definition.SystemPrompt != "" {
-		prompt += "\n\n" + definition.SystemPrompt
-	}
-	return model, prompt, nil
-}
-
 func (h *Handler) harnessDelegationOutcome(ctx context.Context, code db.CodeSession, lease db.HarnessTurnLease, tool db.HarnessTool) (sessioncontract.HarnessToolResult, bool, error) {
 	config, err := harnessSubagentConfig(code)
 	if err != nil {

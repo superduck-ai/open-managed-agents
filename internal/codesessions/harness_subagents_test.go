@@ -28,10 +28,6 @@ func TestHarnessSubagentToolPolicies(t *testing.T) {
 	if err != nil || len(tools) != 1 || tools[0].Name != "Read" {
 		t.Fatalf("child tools exceeded the intersection of parent and child tools: %+v, %v", tools, err)
 	}
-	model, prompt, err := HarnessSubagentModel(*claim.Subagent, "parent-model")
-	if err != nil || model != "specialist" || prompt == "" {
-		t.Fatalf("child used incorrect model configuration: %q, %q, %v", model, prompt, err)
-	}
 }
 
 func TestHarnessSubagentPresetValidation(t *testing.T) {

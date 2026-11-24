@@ -15,6 +15,7 @@ type FantasyModel struct {
 	model           fantasy.LanguageModel
 	tools           []fantasy.Tool
 	systemPrompt    string
+	runtimeReminder string
 	providerOptions fantasy.ProviderOptions
 }
 
@@ -28,6 +29,12 @@ func (m *FantasyModel) WithSystemPrompt(prompt string) *FantasyModel {
 	return &model
 }
 
+func (m *FantasyModel) WithRuntimeReminder(reminder string) *FantasyModel {
+	model := *m
+	model.runtimeReminder = reminder
+	return &model
+}
+
 func (m *FantasyModel) WithProviderOptions(options fantasy.ProviderOptions) *FantasyModel {
 	model := *m
 	model.providerOptions = options
@@ -35,7 +42,7 @@ func (m *FantasyModel) WithProviderOptions(options fantasy.ProviderOptions) *Fan
 }
 
 func (m *FantasyModel) Complete(ctx context.Context, history []harness.Message) (harness.ModelCompleted, error) {
-	prompt := make(fantasy.Prompt, 0, len(history)+1)
+	prompt := make(fantasy.Prompt, 0, len(history)+2)
 	if m.systemPrompt != "" {
 		prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleSystem, Content: []fantasy.MessagePart{fantasy.TextPart{Text: m.systemPrompt}}})
 	}
@@ -45,6 +52,9 @@ func (m *FantasyModel) Complete(ctx context.Context, history []harness.Message) 
 			return harness.ModelCompleted{}, err
 		}
 		prompt = append(prompt, converted)
+	}
+	if m.runtimeReminder != "" {
+		prompt = append(prompt, fantasy.NewUserMessage(m.runtimeReminder))
 	}
 	stream, err := m.model.Stream(ctx, fantasy.Call{Prompt: prompt, Tools: m.tools, MaxOutputTokens: new(int64(512)), ProviderOptions: m.providerOptions})
 	if err != nil {

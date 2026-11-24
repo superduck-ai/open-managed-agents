@@ -83,19 +83,6 @@ func TestMemoryStoresAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
 
-	t.Run("success missing beta header", func(t *testing.T) {
-		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores?beta=true", nil, defaultTestKey, false)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-	})
-
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-	})
-
 	t.Run("failure invalid store fields", func(t *testing.T) {
 		resp := doMemoryRequest(t, app, http.MethodPost, "/v1/memory_stores?beta=true", strings.NewReader(`{"name":""}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
@@ -117,6 +104,31 @@ func TestMemoryStoresAPI(t *testing.T) {
 		}
 		if foreignKeyCount != 0 {
 			t.Fatalf("memory foreign key count = %d, want 0", foreignKeyCount)
+		}
+	})
+
+	t.Run("success beta compatibility", func(t *testing.T) {
+		resp := doMemoryRequest(t, app, http.MethodPost, "/v1/memory_stores", strings.NewReader(`{"name":"memory-api-without-beta"}`), defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create memory store without beta status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created memoryStoreAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		if created.ID == "" {
+			t.Fatal("create memory store returned empty id")
+		}
+		defer deleteMemoryStore(t, app, created.ID)
+
+		retrieved := retrieveMemoryStore(t, app, created.ID, defaultTestKey)
+		if retrieved.ID != created.ID || retrieved.Name != "memory-api-without-beta" {
+			t.Fatalf("unexpected retrieved memory store: %+v", retrieved)
+		}
+
+		resp = doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores/"+created.ID+"/memories?beta=false", nil, defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list memories with beta=false status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 	})
 

@@ -3,7 +3,7 @@ title: "密钥库"
 description: "管理密钥库、加密凭据、轮换和 MCP OAuth 验证。"
 ---
 
-所有密钥库请求要求 `?beta=true`。
+所有密钥库端点均接受省略 `beta` 查询参数和 `anthropic-beta` 请求头的请求，旧客户端仍可发送这两个字段。
 
 ## 密钥库端点
 

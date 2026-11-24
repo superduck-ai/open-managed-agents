@@ -80,19 +80,6 @@ func TestEnvironmentsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environments-bucket"))
 	defer app.close()
 
-	t.Run("success missing beta header", func(t *testing.T) {
-		resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments?beta=true", nil, defaultTestKey, false)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-	})
-
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-	})
-
 	t.Run("failure invalid config type", func(t *testing.T) {
 		resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(`{"name":"bad","config":{"type":"unknown"}}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
@@ -108,6 +95,32 @@ func TestEnvironmentsAPI(t *testing.T) {
 		body := `{"name":"bad-package-credentials","config":{"type":"cloud","packages":{"pip":["pkg @ https://user:secret-token@example.test/private.whl"]}}}`
 		resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(body), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("success create without beta and retrieve with beta", func(t *testing.T) {
+		const name = "env-api-without-beta"
+		resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments", strings.NewReader(`{"name":"`+name+`"}`), defaultTestKey, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create environment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created environmentAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		if created.ID == "" || created.Name != name || created.Type != "environment" {
+			t.Fatalf("unexpected created environment: %+v", created)
+		}
+		defer cleanupEnvironmentRows(t, app.pool, created.ID)
+
+		resp = doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments/"+created.ID+"?beta=true", nil, defaultTestKey, true)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("retrieve environment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var retrieved environmentAPIResponse
+		decodeJSON(t, resp.Body, &retrieved)
+		if retrieved.ID != created.ID || retrieved.Name != name || retrieved.Type != created.Type {
+			t.Fatalf("unexpected retrieved environment: %+v", retrieved)
+		}
 	})
 
 	t.Run("success create update archive list delete and work lifecycle", func(t *testing.T) {

@@ -166,10 +166,6 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Memory Stores API requires beta=true"))
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

@@ -28,14 +28,13 @@ import (
 const maxVaultBodySize = 4 << 20
 
 type Handler struct {
-	cfg          config.Config
-	db           *db.DB
-	secretSvc    *secrets.Service
-	webhooks     webhookEnqueuer
-	logger       *slog.Logger
-	validator    *Injector
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	cfg       config.Config
+	db        *db.DB
+	secretSvc *secrets.Service
+	webhooks  webhookEnqueuer
+	logger    *slog.Logger
+	validator *Injector
+	router    chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -137,16 +136,15 @@ type validationHTTPResponse struct {
 func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{
-		cfg:          cfg,
-		db:           database,
-		secretSvc:    secretSvc,
-		webhooks:     webhookEvents,
-		logger:       logger,
-		validator:    NewInjector(database, secretSvc, logger).WithPlatformOAuthClients(cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEvents),
-		errorAdapter: httpapi.NewErrorAdapter(logger),
+		cfg:       cfg,
+		db:        database,
+		secretSvc: secretSvc,
+		webhooks:  webhookEvents,
+		logger:    logger,
+		validator: NewInjector(database, secretSvc, logger).WithPlatformOAuthClients(cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEvents),
 	}
 	router := chi.NewRouter()
-	wrap := h.errorAdapter.Wrap
+	wrap := httpapi.NewErrorAdapter(logger).Wrap
 	router.NotFound(wrap(h.notFound))
 	router.MethodNotAllowed(wrap(h.notFound))
 	router.Post("/", wrap(h.createVault))
@@ -171,10 +169,6 @@ func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, 
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, vaultBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

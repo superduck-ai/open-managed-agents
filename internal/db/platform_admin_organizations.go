@@ -6,6 +6,11 @@ import (
 	"errors"
 )
 
+func (d *DB) GetWorkspaceOrganization(ctx context.Context, externalID string) (string, error) {
+	org, err := NewPlatformAdminOrganizationMapper(d.mapperDB).FindWorkspaceOrganization(ctx, externalID)
+	return org, mapNoRows(err)
+}
+
 func (d *DB) ListPlatformAdminOrganizations(ctx context.Context, query PlatformAdminPageQuery) ([]PlatformAdminOrganization, error) {
 	return NewPlatformAdminOrganizationMapper(d.mapperDB).List(ctx, query)
 }

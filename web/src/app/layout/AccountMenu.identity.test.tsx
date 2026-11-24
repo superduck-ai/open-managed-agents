@@ -59,15 +59,15 @@ for (const [value, name] of [
 ] as const) {
   test(`账号上层保持用户名优先级：${name}`, () => {
     mount(value);
-    const trigger = screen.getByRole('button', { name: `${name} 成员组织` });
+    const trigger = screen.getByRole('button', { name: `${name} 组织：成员组织` });
     expect(trigger.querySelector('.text-sm')?.textContent).toBe(name);
-    expect(trigger.querySelector('.text-xs')?.textContent).toBe('成员组织');
+    expect(trigger.querySelector('.text-xs')?.textContent).toBe('组织：成员组织');
     expect(trigger.getAttribute('data-size')).toBe('lg');
     expect(trigger.classList.contains('rounded-xl')).toBe(false);
     expect(trigger.classList.contains('bg-sidebar-accent')).toBe(false);
     expect(trigger.classList.contains('text-sidebar-accent-foreground')).toBe(false);
-    expect(trigger.classList.contains('data-[popup-open]:bg-sidebar-accent')).toBe(true);
-    expect(trigger.classList.contains('data-[popup-open]:text-sidebar-accent-foreground')).toBe(true);
+    expect(trigger.classList.contains('aria-expanded:bg-sidebar-accent')).toBe(true);
+    expect(trigger.classList.contains('aria-expanded:text-sidebar-accent-foreground')).toBe(true);
     expect(within(trigger).queryByText('管理员', { exact: true })).toBeNull();
     expect(trigger.textContent).not.toContain('默认');
     expect(within(trigger).queryByText('平台管理员')).toBeNull();
@@ -82,13 +82,13 @@ test('下层优先有效组织名，空名称回退当前成员组织名，未�
     workspace_role: 'workspace_admin',
   };
   mount(account, access);
-  expect(screen.getByRole('button', { name: '显示名称 有效组织' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '显示名称 组织：有效组织' })).toBeTruthy();
   cleanup();
   mount(account, { ...access, organization: { uuid: 'current', name: '' } });
-  expect(screen.getByRole('button', { name: '显示名称 成员组织' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '显示名称 组织：成员组织' })).toBeTruthy();
   cleanup();
   mount({ ...account, memberships: [{ organization: { uuid: 'current' }, role: 'user' }] });
-  expect(screen.getByRole('button', { name: '显示名称 current' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '显示名称 组织：current' })).toBeTruthy();
 });
 
 test('平台进入时显示目标组织名且不显示平台标识，账号菜单不显示状态或返回项', () => {
@@ -98,15 +98,15 @@ test('平台进入时显示目标组织名且不显示平台标识，账号菜�
     organization_role: 'admin',
     workspace_role: 'workspace_admin',
   });
-  const trigger = screen.getByRole('button', { name: '显示名称 很长的目标组织名称' });
-  const name = within(trigger).getByText('很长的目标组织名称');
+  const trigger = screen.getByRole('button', { name: '显示名称 组织：很长的目标组织名称' });
+  const name = within(trigger).getByText('组织：很长的目标组织名称');
   expect(name.classList.contains('truncate')).toBe(true);
-  expect(name.getAttribute('title')).toBe('很长的目标组织名称');
   expect(within(trigger).queryByText('平台管理员')).toBeNull();
   expect(trigger.querySelector('.text-sm')?.textContent).toBe('显示名称');
   expect(trigger.textContent).not.toContain('默认');
   expect(within(trigger).queryByText('管理员', { exact: true })).toBeNull();
   fireEvent.click(trigger);
   const menu = screen.getByRole('menu');
+  expect(within(menu).getByText('当前组织：很长的目标组织名称')).toBeTruthy();
   expect(within(menu).queryByText(/平台管理员|返回平台管理/)).toBeNull();
 });

@@ -52,6 +52,8 @@
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",
+  "account.currentOrganization": "Current organization: {name}",
+  "account.organizationShort": "Org: {name}",
   "account.organizationSettings": "Organization settings",
   "account.role.workspace_admin": "Admin",
   "account.role.workspace_user": "User",
@@ -3353,7 +3355,6 @@
   "invitations.delivery.notConfigured": "Notification delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations.",
   "platformScope.enter": "Enter organization console",
   "platformScope.failed": "Organization access failed. Please retry.",
-  "platformScope.exit": "Return to super admin console",
   "platformAdmin.addMember": "Add member",
   "platformAdmin.account": "Account",
   "platformAdmin.add": "Add",
@@ -4127,5 +4128,8 @@
   "managedAgents.identities.channelUnbound": "Unbound",
   "managedAgents.identities.channelExpired": "Binding expired",
   "managedAgents.channels.statusConnecting": "Connecting",
-  "managedAgents.channels.statusNoticeConnecting": "Establishing channel connection"
+  "managedAgents.channels.statusNoticeConnecting": "Establishing channel connection",
+  "workspace.linkAccessDenied": "You do not have access to this workspace.",
+  "workspace.linkUnavailable": "This workspace does not exist or is archived.",
+  "workspace.scopeLoadFailed": "Could not load the organization. Please try again."
 }

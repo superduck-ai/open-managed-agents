@@ -37,6 +37,9 @@ export function clearPlatformScope() {
   }
 }
 
-export function isPlatformOrganizationAccess(access: OrganizationAccess | null | undefined, organizationUuid: string) {
+export function isPlatformOrganizationAccess(
+  access: OrganizationAccess | null | undefined,
+  organizationUuid: string,
+): access is OrganizationAccess {
   return access?.organization.uuid === organizationUuid && access.source === 'platform_admin';
 }

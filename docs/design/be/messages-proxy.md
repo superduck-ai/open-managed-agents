@@ -136,6 +136,8 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 `GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容是当前组织全部 Provider 的完整模型 ID `{slug}/{upstream_model_id}`；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
+`GET /v1/models/{model_id}` 返回与列表元素相同结构的单个模型对象。完整模型 ID 自身包含 `/`，路由使用通配符匹配 `/v1/models/` 之后的全部路径；请求路径带转义时解码一次，兼容 SDK 将 `/` 编码为 `%2F`。`model_id` 与 Messages 使用同一解析规则：可以是完整 ID `{slug}/{upstream_model_id}`，也可以是仅在一个 Provider 中存在的上游模型 ID，响应 `id` 始终为完整 ID。未知模型返回 `404 not_found_error` 与消息 `model: {model_id}`；上游模型 ID 被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可选的完整 ID；缺少凭证、未配置 Provider 和配置读取失败与列表接口一致。
+
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
 ## 鉴权与权限
@@ -231,7 +233,8 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - `tests/liveworker/chat_upstream_errors_test.go`：公开 Runner 通过 environment-manager 的真实 OAuth FD 启动 Worker，两种持续上游 401 在 90 秒内产生 `session.error`、以 `retries_exhausted` 自然 idle 并清空队列，不生成助手回复；
 - `tests/session_worker_error_status_test.go`：失败结果不提前结束 Session、API 错误消息不公开、失败 idle 原因和重复报告幂等，以及下一轮成功恢复 `end_turn`；
 - `tests/llm_providers_api_test.go`：组织 Provider CRUD 与工作区兼容入口、slug 默认值/冲突/不可变、并发 slug 唯一、同名模型按 slug 解析、空模型转换、Key 加密、模型发现与同步；
-- `tests/models_api_test.go`：`GET /v1/models` 返回完整模型 ID，并区分空 Provider 列表与空模型列表；
+- `internal/models/handler_test.go`：单模型查询的完整 ID、唯一上游 ID、`%2F` 编码、含 `/` 的上游 ID、未知模型 404 与重名模型 400；
+- `tests/models_api_test.go`：`GET /v1/models` 返回完整模型 ID，并区分空 Provider 列表与空模型列表；`GET /v1/models/{model_id}` 经真实路由与鉴权返回完整模型 ID 或 404；
 - `tests/platform_proxy_directory_api_test.go`：管理后台原有独立路径的 JSON 与 SSE 转发；
 - `internal/environments/environment_manager_test.go`：沙箱 payload 不含上游 key 或 Claude 凭证环境变量，api base URL 和 lifecycle-bound token auth 正确，启动 payload 会被删除；
 - `tests/environments_runner_cloud_test.go`：真实 runner 组装出的 runtime payload 使用 session-scoped token，并在 initialize 事件中携带 Agent system prompt 与 OMA append system prompt；

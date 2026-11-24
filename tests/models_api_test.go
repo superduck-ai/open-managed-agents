@@ -45,6 +45,26 @@ func TestModelsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("failure retrieve unknown model", func(t *testing.T) {
+		resp := app.do(t, http.MethodGet, "/v1/models/default/missing-model", nil, defaultTestKey, false, "")
+		assertError(t, resp, http.StatusNotFound, "not_found_error")
+	})
+
+	t.Run("success retrieve model", func(t *testing.T) {
+		for _, path := range []string{"/v1/models/default/kimi-k2.5", "/v1/models/kimi-k2.5", "/v1/models/default%2Fkimi-k2.5"} {
+			resp := app.do(t, http.MethodGet, path, nil, defaultTestKey, false, "")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s status = %d, want 200: %s", path, resp.StatusCode, readAll(t, resp.Body))
+			}
+			var body map[string]any
+			decodeJSON(t, resp.Body, &body)
+			resp.Body.Close()
+			if body["type"] != "model" || body["id"] != "default/kimi-k2.5" {
+				t.Fatalf("%s model = %#v", path, body)
+			}
+		}
+	})
+
 	t.Run("failure workspace has no provider", func(t *testing.T) {
 		clearTestLLMProviders(t, app)
 		resp := app.do(t, http.MethodGet, "/v1/models", nil, defaultTestKey, false, "")

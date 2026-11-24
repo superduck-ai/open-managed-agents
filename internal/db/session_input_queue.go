@@ -69,7 +69,22 @@ func (d *DB) ProcessSessionInputsForWorker(ctx context.Context, codeSession Code
 				return err
 			}
 			if applied {
-				events = append(events, row.event())
+				event := row.event()
+				if event.EventType == "user.interrupt" {
+					primary, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
+					if err != nil {
+						return err
+					}
+					threadID, err := interruptThreadID(event.Payload)
+					if err != nil {
+						return err
+					}
+					worker.WorkerExternalMetadata, err = clearInterruptedThreadToolsTx(ctx, executor, session, primary.ExternalID, worker.ExternalID, worker.WorkerExternalMetadata, threadID)
+					if err != nil {
+						return err
+					}
+				}
+				events = append(events, event)
 			}
 		}
 		if len(events) > 0 {

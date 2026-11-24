@@ -267,7 +267,7 @@ approval channel. No additional worker lease is claimed.
 
 The primary agent receives four local tools:
 
-- `subagent` creates a child and returns its DSH UUID before the report arrives.
+- `subagent` creates a child and returns its public thread ID (`sthr_` followed by 32 hexadecimal characters) before the report arrives. Existing children retain their original IDs.
 - `send_message` steers a running child or continues an idle child using `agent_id` and `message`.
 - `list_agents` lists retained children.
 - `interrupt_agent` stops a child using `agent_id`.

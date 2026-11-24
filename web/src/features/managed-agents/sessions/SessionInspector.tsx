@@ -861,7 +861,7 @@ function InspectorEventsPanel({
                 };
                 return item.type === 'turn' ? (
                   <div
-                    key={item.id}
+                    key={item.rows[0].id}
                     data-inspector-turn-group={item.id}
                     className="-mx-1 my-1.5 rounded-md border-[0.5px] border-foreground/20 p-[3.5px]"
                   >

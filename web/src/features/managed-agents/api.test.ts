@@ -4,6 +4,8 @@ import { setAnthropicClientForTest } from '@/shared/api/anthropic';
 import { type SessionDetailEventCache } from './types';
 import {
   addSessionFileResource,
+  interruptSession,
+  sessionEventWithResponseThread,
   postSessionToolConfirmation,
   listMemoryStoreOptions,
   listSessionFileOptions,
@@ -37,6 +39,18 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('preserves the interrupt target independently of which thread stream carries its receipt', async () => {
+    let body: unknown;
+    globalThis.fetch = (async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    await interruptSession('sesn_test', 'workspace_test', 'sthr_primary');
+    expect(body).toEqual({ events: [{ type: 'user.interrupt', session_thread_id: 'sthr_primary' }] });
+    const global = { id: 'receipt', type: 'user.interrupt', processed_at: null };
+    expect(sessionEventWithResponseThread(global, 'sthr_child')).toEqual(global);
+  });
+
   test('sends structured question answers inside the standard custom tool result content', async () => {
     let sent: Record<string, unknown> = {};
     globalThis.fetch = (async (_input, init) => {
@@ -723,6 +737,19 @@ describe('managed agents API', () => {
       'sevt_new',
     ]);
     expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_new']);
+  });
+
+  test('interleaves a queued child event by creation time while retaining the order within the primary stream', () => {
+    const cache = new QueryClient();
+    const events = [
+      { id: 'first', type: 'agent.message', processed_at: '2026-11-20T06:34:35Z' },
+      { id: 'second', type: 'agent.message', processed_at: '2026-11-20T06:34:32Z' },
+    ];
+    const queued = { id: 'queued', type: 'user.message', processed_at: null, created_at: '2026-11-20T06:34:34Z' };
+    for (const event of events) mergeSessionStreamFrame(cache, 'workspace', 'session', '', event);
+    mergeSessionStreamFrame(cache, 'workspace', 'session', 'child', queued);
+
+    expect(sessionDetailScopeEvents(cache, 'workspace', 'session', ['', 'child'])).toEqual([queued, ...events]);
   });
 
   test('preserves a same-timestamp user turn before its agent error', () => {

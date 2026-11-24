@@ -146,6 +146,68 @@ function delegates(): import("../src/json.ts").Payload[] {
   return [toolEvents()[0]!, ...blocks, ...toolEvents().slice(4)];
 }
 
+test("a replacement worker cancels running child tools before publishing a persisted session cancellation", async () => {
+  const backend = new Backend();
+  backend.hangTool = true;
+  let delegated = false;
+  backend.onModel = async (request) => {
+    const system = modelSystemText(request);
+    if (system.includes("# Subagent rules")) return toolEvents("sleep", system.includes("subagent alpha.") ? "alpha" : "beta");
+    if (delegated) return textEvents("Waiting for my children");
+    delegated = true;
+    return delegates();
+  };
+  await backend.ready;
+  const worker = spawn(process.execPath, ["tests/crash-worker.ts"], {
+    env: { ...process.env, TEST_API_URL: backend.url, TEST_ASSIGNMENT: JSON.stringify(backend.a) },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = once(worker, "exit");
+  backend.onApproval = async request => {
+    worker.stdin!.write(JSON.stringify({ type: "control_response", response: {
+      subtype: "success", request_id: request.request_id, response: { behavior: "allow" },
+    } }) + "\n");
+  };
+  const ctx = new Context();
+  let resumed: CcrSession | undefined;
+  try {
+    await eventually(() => backend.executions.length === 2 && [...backend.privateLog.values()]
+      .some(payload => payload.type === "dsh_log" && payload.data.type === "turn/end"
+        && !backend.privateAgentIds.has(payload.uuid)));
+    backend.workerMetadata.interrupt_input_id = "crash_input";
+    backend.workerMetadata.interrupt_event_id = "stop-event";
+    worker.kill("SIGKILL");
+    await exited;
+    const requests = backend.requests.length;
+    const cancelled: string[] = [];
+    backend.onCancel = async params => { cancelled.push(params.requestId); };
+    backend.a.worker_epoch++;
+    const api = new OmaApi(backend.url);
+    await mountOma(ctx, api);
+    resumed = createOmaSession(ctx, api, backend.a);
+    await resumed.open();
+    expect(cancelled.sort()).toEqual(["alpha", "beta"]);
+    expect(backend.requests).toHaveLength(requests);
+    const idles = backend.timeline.filter(event => event.type === "session.thread_status_idle");
+    expect(idles.map(event => event.stop_reason)).toEqual([{ type: "end_turn" }, { type: "end_turn" }]);
+    const ack = backend.timeline.findIndex(event => event.type === "input.ack" && event.inputId === "stop-event");
+    expect(ack).toBeGreaterThan(-1);
+    expect(backend.timeline.findIndex(event => event.type === "session.thread_status_idle")).toBeGreaterThan(ack);
+    const end = backend.publicLog.get("crash_input_result")!;
+    expect(end).toEqual({ type: "result", uuid: "crash_input_result", subtype: "success", is_error: false });
+    expect(backend.timeline.findIndex(event => event.uuid === end.uuid))
+      .toBeGreaterThan(backend.timeline.findLastIndex(event => event.type === "session.thread_status_idle"));
+    await resumed.receive("new-input", { content: "A fresh task" });
+    expect(backend.requests).toHaveLength(requests + 1);
+  } finally {
+    worker.kill("SIGKILL");
+    await exited;
+    await resumed?.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+  }
+});
+
 for (const duringDispatch of [true, false]) {
   test(`SIGKILL with DSH parallel children ${duringDispatch ? "repairs an unknown call alongside a confirmed sibling" : "repairs approval waits without replay and allows a fresh input"}`, async () => {
     const backend = new Backend();

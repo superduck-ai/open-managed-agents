@@ -25,6 +25,7 @@ func (h *Handler) loadStreamReplay(ctx context.Context, workspaceUUID, sessionID
 	params := db.ListSessionEventsPageParams{
 		WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID,
 		ThreadExternalID: connection.threadID, Limit: 1000, Order: "asc",
+		PublicThreadIdle: true, PrimaryOnly: connection.sessionStream,
 		Cursor: &db.SessionEventPageCursor{ExternalID: cursorID},
 	}
 	var replay []sessionStreamEvent
@@ -38,7 +39,7 @@ func (h *Handler) loadStreamReplay(ctx context.Context, workspaceUUID, sessionID
 			return nil, internalError("Could not replay session events", err)
 		}
 		for _, record := range records {
-			if record.EventType == "user.message" && record.ProcessedAt.IsZero() {
+			if (record.EventType == "user.message" || record.EventType == "user.interrupt") && record.ProcessedAt.IsZero() {
 				continue
 			}
 			if maevents.IsPublicSessionHistoryEvent(record.EventType) && !primaryToolProjectionHidden(record, hidden) {

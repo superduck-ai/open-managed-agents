@@ -29,14 +29,19 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
-	if err := rejectPausedSessionInput(ctx, executor, session, primary, events); err != nil {
-		return sessionEventBatchResult{}, err
-	}
 	settledInterrupts, err := settledThreadInterruptsTx(ctx, executor, session, primary, worker, events)
 	if err != nil {
 		return sessionEventBatchResult{}, err
 	}
+	if err := bindSessionInterruptsTx(ctx, executor, session, primary, &worker, events, settledInterrupts); err != nil {
+		return sessionEventBatchResult{}, err
+	}
 	activeInputs := slices.DeleteFunc(slices.Clone(events), func(event SessionEvent) bool { return settledInterrupts[event.ExternalID] })
+	if len(activeInputs) > 0 && !activeInputs[0].boundInterrupt {
+		if err := rejectPausedSessionInput(ctx, executor, session, primary, activeInputs); err != nil {
+			return sessionEventBatchResult{}, err
+		}
+	}
 	acceptedID, err := validateSessionInputBatch(primary, worker, activeInputs)
 	if err != nil {
 		return sessionEventBatchResult{}, err
@@ -46,7 +51,10 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	}
 	result := sessionEventBatchResult{Events: make([]SessionEvent, 0, len(events)+2)}
 	for _, event := range events {
-		settled := settledInterrupts[event.ExternalID] || idleSessionInterrupt(primary, worker, event)
+		settled := settledInterrupts[event.ExternalID]
+		if settled {
+			event.ProcessedAt = event.CreatedAt
+		}
 		var batch []SessionEvent
 		if event.ExternalID == acceptedID {
 			running := event
@@ -147,6 +155,11 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 		if !errors.Is(mapNoRows(err), ErrNotFound) {
 			return sessionEventBatchResult{}, err
 		}
+		applied, err := applyInterruptsAtCompletionTx(ctx, executor, session, primary, &worker, &event)
+		if err != nil {
+			return sessionEventBatchResult{}, err
+		}
+		result.Events = append(result.Events, applied...)
 		batch, err := sessionEventBatchTx(ctx, executor, session, primary, &worker, event)
 		if err != nil {
 			return sessionEventBatchResult{}, err
@@ -203,27 +216,36 @@ func sessionInterruptAccepted(primary SessionThread, worker codeSessionInputStat
 	return primary.Status == "running" || worker.WorkerStatus == "running" || worker.WorkerStatus == "requires_action" || idleSessionInterrupt(primary, worker, event)
 }
 
+func validateMessageAdmission(primary SessionThread, event SessionEvent, paused bool) error {
+	if paused {
+		return ErrSessionInputPaused
+	}
+	if (primary.Status != "idle" && primary.Status != "running" && primary.Status != "rescheduling") ||
+		(event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID) {
+		return ErrSessionInputConflict
+	}
+	return nil
+}
+
 func validateSessionInputBatch(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
 	pending, err := pendingSessionInputTools(primary, worker, events)
 	if err != nil {
 		return "", err
 	}
 	acceptedID := ""
+	redirect := false
 	for _, event := range events {
 		switch event.EventType {
 		case "user.message":
-			if worker.WorkerStatus == "requires_action" || len(pending) > 0 {
-				return "", ErrSessionInputPaused
+			if err := validateMessageAdmission(primary, event, !redirect && (worker.WorkerStatus == "requires_action" || len(pending) > 0)); err != nil {
+				return "", err
 			}
-			if (primary.Status != "idle" && primary.Status != "running" && primary.Status != "rescheduling") ||
-				(event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID) {
-				return "", ErrSessionInputConflict
-			}
-			if acceptedID == "" && primary.Status == "idle" {
+			if acceptedID == "" && primary.Status == "idle" && !redirect {
 				acceptedID = event.ExternalID
 			}
 		case "user.interrupt":
-			if !sessionInterruptAccepted(primary, worker, event) {
+			redirect = event.boundInterrupt
+			if !event.boundInterrupt && !sessionInterruptAccepted(primary, worker, event) {
 				return "", ErrSessionInputConflict
 			}
 		case "user.tool_confirmation", "user.custom_tool_result":

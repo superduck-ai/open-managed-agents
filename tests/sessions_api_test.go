@@ -868,12 +868,12 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 		eventUUID[15] = byte(eventCount - i)
 		eventIDs = append(eventIDs, eventID)
 		events = append(events, db.SessionEvent{
-			UUID:        eventUUID.String(),
-			ExternalID:  eventID,
-			EventType:   "user.interrupt",
-			Payload:     json.RawMessage(`{"type":"user.interrupt","id":` + quoteJSON(eventID) + `}`),
-			ProcessedAt: createdAt,
-			CreatedAt:   createdAt,
+			UUID:       eventUUID.String(),
+			ExternalID: eventID,
+			EventType:  "user.interrupt",
+			Payload:    json.RawMessage(`{"type":"user.interrupt","id":` + quoteJSON(eventID) + `}`),
+
+			CreatedAt: createdAt,
 		})
 	}
 	if _, err := app.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -33,8 +34,9 @@ func (h *Handler) deliverSessionInputChanges(w http.ResponseWriter, r *http.Requ
 	if !changes.Replayed {
 		h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
 		recordAcceptedSessionEvents(r.Context(), changes.Events)
-		h.publishSessionEvents(r.Context(), changes.Events)
-		h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, changes.Events)
+		visible := slices.DeleteFunc(slices.Clone(changes.Events), func(e db.SessionEvent) bool { return e.EventType == "user.interrupt" && e.ProcessedAt.IsZero() })
+		h.publishSessionEvents(r.Context(), visible)
+		h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, visible)
 	}
 	if !changes.InputHandoffCompleted {
 		if err := queueSessionInputChanges(r.Context(), session, changes, h.codeSessions.QueuePublicSessionEvents); err != nil {

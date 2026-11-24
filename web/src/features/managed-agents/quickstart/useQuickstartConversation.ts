@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import {
-  interruptQuickstartSession,
+  interruptSession,
   postQuickstartSessionMessage,
   postSessionToolConfirmation,
   retrieveSessionDetailSession,
@@ -188,7 +188,7 @@ export function useQuickstartConversation(
     setSending(true);
     setError(null);
     try {
-      await interruptQuickstartSession(sessionID, workspaceID);
+      await interruptSession(sessionID, workspaceID);
       if (mounted.current) await session.refetch();
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));

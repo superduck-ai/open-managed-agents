@@ -1652,7 +1652,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const createdEvents = incomingEvents.map((event, index) => ({
         ...event,
         id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
-        processed_at: new Date().toISOString(),
+        processed_at: event.type === 'user.interrupt' ? null : new Date().toISOString(),
       }));
       (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
       return jsonResponse({ data: createdEvents });

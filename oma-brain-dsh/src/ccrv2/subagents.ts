@@ -119,13 +119,15 @@ export class CcrSubagentBridge implements SubagentBridge {
       case "idle": {
         const completed = this.recoveredCompletions.get(thread.id) ?? event.completed;
         this.recoveredCompletions.delete(thread.id);
-        fields = { type: "session.thread_status_idle", stop_reason: { type: this.session.consumeInterruptedApproval(thread.id) || completed ? "end_turn" : "interrupted" } }; break;
+        const interruptedApproval = this.session.consumeInterruptedApproval(thread.id);
+        const stopped = this.session.consumeStoppedThread(thread.id);
+        const stopReason = completed || stopped || interruptedApproval ? "end_turn" : "interrupted";
+        fields = { type: "session.thread_status_idle", stop_reason: { type: stopReason } }; break;
       }
       case "message-sent":
         fields = { type: "agent.thread_message_sent", to_session_thread_id: thread.id,
           to_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
       case "report-received":
-        this.session.wakeParentFromChildReport();
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }

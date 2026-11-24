@@ -5,6 +5,7 @@ package tests
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -108,6 +109,59 @@ func TestSessionContractUsageIsAtomicAndIdempotent(t *testing.T) {
 	publish(`{"type":"session.status_idle","id":"sevt_parent_done","stop_reason":{"type":"end_turn"}}`)
 	if status := retrieveSession(t, app, worker.SessionExternalID, defaultTestKey).Status; status != "idle" {
 		t.Fatalf("all threads idle: %s", status)
+	}
+}
+
+func TestSessionThreadIdleSharedAcrossHistories(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("thread-idle"))
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	primary, found, err := app.db.GetPrimarySessionThreadExternalID(t.Context(), worker.WorkspaceUUID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("primary thread: found=%t err=%v", found, err)
+	}
+	children := []string{"sthr_child_a", "sthr_child_b"}
+	status := func(threadID, state, id string) {
+		t.Helper()
+		event := fmt.Sprintf(`{"type":"session.thread_status_%s","id":%q,"uuid":%q,"session_thread_id":%q}`, state, id, id, threadID)
+		postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, event))
+	}
+	threadIDs := append([]string{primary}, children...)
+	for i, id := range threadIDs {
+		status(id, "running", fmt.Sprintf("sevt_running_%d", i))
+	}
+	for i, id := range threadIDs {
+		status(id, "idle", fmt.Sprintf("sevt_idle_%d", i))
+		status(id, "idle", fmt.Sprintf("sevt_repeated_%d", i))
+	}
+	status(children[0], "running", "sevt_next_running")
+	status(children[0], "idle", "sevt_next_idle")
+	ids := func(page sessionEventPageAPIResponse, threadID string) []string {
+		t.Helper()
+		var result []string
+		for _, raw := range page.Data {
+			if sessionEventStringField(t, raw, "type") == "session.thread_status_idle" {
+				if threadID != "" && sessionEventStringField(t, raw, "session_thread_id") != threadID {
+					t.Fatalf("unexpected thread in %s: %s", threadID, raw)
+				}
+				result = append(result, sessionEventStringField(t, raw, "id"))
+			}
+		}
+		return result
+	}
+	all := listSessionEvents(t, app, sessionID, "types[]=session.thread_status_idle&order=asc", defaultTestKey)
+	if got := ids(all, ""); !slices.Equal(got, []string{"sevt_idle_0", "sevt_idle_1", "sevt_idle_2", "sevt_next_idle"}) {
+		t.Fatalf("session thread idle IDs: %v", got)
+	}
+	for i, id := range threadIDs {
+		want := []string{fmt.Sprintf("sevt_idle_%d", i)}
+		if id == children[0] {
+			want = append(want, "sevt_next_idle")
+		}
+		got := ids(listThreadEvents(t, app, sessionID, id, defaultTestKey), id)
+		if !slices.Equal(got, want) {
+			t.Fatalf("thread %s idle IDs: got %v, want %v", id, got, want)
+		}
 	}
 }
 

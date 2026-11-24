@@ -40,7 +40,11 @@ import {
   sessionSubagentThreadId,
 } from './sessionTraceModel';
 
-import { latestSessionIdlePresentationState, sessionExecutionStateLabel } from './sessionExecutionState';
+import {
+  latestSessionIdlePresentationState,
+  sessionInterruptState,
+  sessionExecutionStateLabel,
+} from './sessionExecutionState';
 
 export function buildSessionDetailSummary(
   session: SessionApiResponse,
@@ -52,8 +56,9 @@ export function buildSessionDetailSummary(
   const title = session.title || session.id;
   const idleState =
     session.status === 'idle' && !session.archived_at ? latestSessionIdlePresentationState(events) : undefined;
-  const statusLabel = idleState
-    ? sessionExecutionStateLabel(idleState, msg)
+  const state = session.archived_at ? undefined : (sessionInterruptState(events) ?? idleState);
+  const statusLabel = state
+    ? sessionExecutionStateLabel(state, msg)
     : localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);

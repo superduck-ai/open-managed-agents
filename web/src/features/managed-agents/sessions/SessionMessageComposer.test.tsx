@@ -150,7 +150,7 @@ describe('SessionMessageComposer', () => {
     await waitFor(() => expect(input.value).toBe(''));
   });
 
-  test('keeps Stop as a non-submit action and interrupts once', async () => {
+  test('requests session cancellation once without submitting a message', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
     let resolveRequest: ((response: Response) => void) | undefined;
     const fetchMock = mock(
@@ -160,9 +160,9 @@ describe('SessionMessageComposer', () => {
         }),
     );
     globalThis.fetch = fetchMock as typeof fetch;
-    const onEventsChanged = mock(() => {});
+    const onInterruptAccepted = mock(() => {});
 
-    renderComposer({ live: true, onEventsChanged });
+    renderComposer({ live: true, onInterruptAccepted });
 
     const stop = screen.getByRole('button', { name: 'Stop session' });
     expect(stop.getAttribute('type')).toBe('button');
@@ -170,15 +170,24 @@ describe('SessionMessageComposer', () => {
     fireEvent.click(stop);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
-      events: Array<{ type: string }>;
-    };
-    expect(body.events[0]?.type).toBe('user.interrupt');
-    resolveRequest?.(jsonResponse({}));
-    await waitFor(() => expect(onEventsChanged).toHaveBeenCalledTimes(1));
+    const [path, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(path).toBe('/v1/sessions/session-test/events?beta=true');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(String(options.body))).toEqual({ events: [{ type: 'user.interrupt' }] });
+    expect(new Headers(options.headers).get('x-workspace-id')).toBe('default');
     expect(screen.getByRole('button', { name: 'Stopping session' }).hasAttribute('disabled')).toBe(true);
-    fireEvent.click(stop);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const marker = { id: 'stop', type: 'user.interrupt', processed_at: null };
+    resolveRequest?.(Response.json({ data: [marker] }));
+    await waitFor(() => expect(onInterruptAccepted).toHaveBeenCalledWith([marker]));
+  });
+
+  test('restores the pending cancellation on reload even after the main thread goes idle', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
+    renderComposer({ stopping: true });
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Next turn' } });
+    expect(screen.getByRole('button', { name: 'Stopping session' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
   });
 
   test('allows retry when the interrupt request fails', async () => {
@@ -217,7 +226,7 @@ function renderComposer(overrides: Partial<Parameters<typeof SessionMessageCompo
         disabled={false}
         live={false}
         onError={() => {}}
-        onEventsChanged={() => {}}
+        onInterruptAccepted={() => {}}
         onMessageSent={() => {}}
         sessionId="session-test"
         workspaceId="default"

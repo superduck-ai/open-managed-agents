@@ -225,7 +225,30 @@ DSH 对沙箱 MCP 先尝试 `server/discover` 协商 2026-07-28，旧版服务�
 
 result 复用既有事件 ID 去重、epoch 校验和队列过滤；普通成功结束在有待处理输入时不使公开 Session idle。主线程失败后的子线程结束不能覆盖会话的失败 stop reason。回归覆盖 result 与 worker idle 的各种到达顺序、重复 result、重新注册、迟到状态、中断后同会话继续，以及子线程失败原因保留。
 
-公开 `user.interrupt` 经后端转换为 CCRv2 `control_request/interrupt`；执行端的两种中断入口都记录取消意图。主动中断保留内部取消处理，公开 `session.status_idle.stop_reason.type` 按 CMA 契约使用 `end_turn`，允许同会话继续；保留 `user.interrupt`，不生成 `Turn cancelled` 消息。这表示当前 Agent 回合已中断，不承诺远端进程已清理完成。
+### 通过 Claude SDK 中断会话
+
+主对话的停止按钮调用 Claude SDK 的 `beta.sessions.events.send`，向 `POST /v1/sessions/{session_id}/events` 提交 `{"events":[{"type":"user.interrupt"}]}`。省略 `session_thread_id` 时，中断当前会话所有未归档的普通 Agent 线程。指定线程时只中断该线程；显式传主线程 ID 只停止主线程。已因 `end_turn` 或 `budget_reached` 空闲的子线程保持空闲；指定已终止线程返回 400。本文描述普通多 Agent 对话。[Claude Session threads](https://platform.claude.com/docs/en/managed-agents/session-threads#interrupt-a-session-thread)
+
+`200` 回执的 `data` 数组包含本次输入事件。每个中断有独立的服务端事件 ID。待执行中断的 `processed_at` 为 null。执行端应用中断后，SSE 与历史使用同一 ID 和处理时间。公开回执、SSE 和历史均保留调用方选择的目标范围。事件在数据库中的归属线程只用于存储和查找。[Claude Session event stream](https://platform.claude.com/docs/en/managed-agents/events-and-streaming#interrupt-the-agent)
+
+```mermaid
+sequenceDiagram
+    participant UI as Claude SDK
+    participant API as OMA API
+    participant B as Brain
+    participant S as 沙箱
+    UI->>API: events.send(user.interrupt)
+    API-->>UI: 200，事件 ID，processed_at 为 null
+    API->>B: 中断执行中的本轮输入
+    B->>API: 确认已应用中断
+    API-->>UI: user.interrupt，原 ID 和处理时间
+    B->>S: 取消正在执行的工具
+    S-->>B: 工具结果
+    B->>API: 工具结果和线程结束
+    API-->>UI: session.status_idle，end_turn
+```
+
+Brain 用内部输入 ID 将整会话中断绑定到当前轮次，抑制被中断子任务的完成通知唤醒父任务。正在执行的工具收尾后，受影响的线程发出 `session.thread_status_idle`，普通中断的 `stop_reason.type` 为 `end_turn`。没有其他运行中的线程时，会话发出 `session.status_idle`。线程状态事件携带 `session_thread_id`，会话级状态事件省略该字段。同一次子线程 idle 在会话流和该子线程流中使用相同的事件 ID，按 ID 合并时只出现一次。主线程已经结束时保留其原有结果。控制台结合中断事件和会话级 idle 展示「已停止」，下一条消息可在同一会话继续。
 
 内置工具通过提交、长轮询等待与显式取消接口执行。连接中断后按原身份重连。用户取消等待沙箱确认，保留部分输出或实际结果。Worker shutdown 保留未完成调用供新 owner 查询。外部 MCP 继续使用官方客户端与 HTTP transport。
 
@@ -405,7 +428,7 @@ New self-hosted session Work items with attached Memory Stores carry a URL-safe 
 
 - `ccrv2/runtime-diagnostics.ts` 把通用 `model-retry` / `input-failed` 事实和原生 Session/Event 映射成现有 Worker 日志字段。根会话与子 Agent 分别使用自己的 session ID；错误正文、模型响应及输入内容不进入运行日志，日志 sink 失败不改变执行结果。
 - `ccrv2/tool-transport.ts` 解析 OMA 网关未转发响应和连接失败。runtime 仅接收 `ToolNotForwardedError` 这个执行事实，不解析 HTTP Response。
-- `ccrv2/subagents.ts` 直接接收 DSH 生成的 UUID，把预定义 Agent 快照映射到公开线程创建事件。传给 runtime 的子 Agent 配置只包含名称、说明、提示词、模型和工具；恢复从原生 subagent descriptor 重建线程，并查询后端确认线程状态。
+- `ccrv2/subagents.ts` 沿用 DSH 创建或恢复时的子线程 ID，把预定义 Agent 快照映射到公开线程创建事件。传给 runtime 的子 Agent 配置只包含名称、说明、提示词、模型和工具；恢复从原生 subagent descriptor 重建线程，并查询后端确认线程状态。
 - `oma-sandbox/output.ts` 在沙箱 MCP 边界投影成功 Bash 的结构化 stdout；失败、stderr、截断或不一致元数据保留完整诊断文本。runtime 只做通用 MCP 文本提取。投影不修改原始响应；格式异常仍交给工具结果校验，避免被误判成远端执行结果未知。
 - 已有 MCP 连接与鉴权通知由 CCRv2 回调构造公开 `session.error`。runtime 保留发现失败的事实回调，以等待适配层完成处理，不构造协议字段。
 

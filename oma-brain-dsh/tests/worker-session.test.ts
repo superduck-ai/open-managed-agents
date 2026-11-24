@@ -49,7 +49,7 @@ test("production admission uses native interrupted-turn recovery before acceptin
   }
 });
 
-async function recoveringWorker(callId: string, extraCallIds: string[] = [], onCancel?: (calls: number) => Promise<void>) {
+async function recoveringWorker(callId: string, extraCallIds: string[] = [], onCancel?: (calls: number) => Promise<void>, previousStop?: string) {
   const b = new Backend();
   await b.ready;
   const first = new Context();
@@ -57,6 +57,8 @@ async function recoveringWorker(callId: string, extraCallIds: string[] = [], onC
   await mountOma(first, firstApi);
   const original = createOmaSession(first, firstApi, b.a);
   await original.open();
+  if (previousStop) await original.receive(previousStop, { type: "control_request", request_id: previousStop,
+    session_thread_id: original.id, request: { subtype: "interrupt" } });
   await seedInterruptedTool(original, `${callId}-input`, callId);
   for (const extra of extraCallIds) {
     original.agent.session.append("assistant/message", {
@@ -141,6 +143,33 @@ test("user interrupt during recovery cancels the unfinished call and keeps its p
     await eventually(() => f.b.processed.includes("interrupt-during-recovery"));
     expect(f.restored.abort.signal.aborted).toBe(false);
     expect(f.b.executions).toHaveLength(0);
+  } finally { await f.cleanup(); }
+});
+
+test("redelivery of a prior thread interrupt cannot cancel the next turn during worker recovery", async () => {
+  const f = await recoveringWorker("next-call", [], undefined, "previous-stop");
+  try {
+    f.b.deliver("previous-stop", { type: "control_request", request_id: "previous-stop", session_thread_id: f.restored.id,
+      request: { subtype: "interrupt" } });
+    await eventually(() => f.b.timeline.some(event => event.type === "input.delivery" && event.inputId === "previous-stop" && event.status === "received"));
+    f.call.state = "succeeded";
+    f.call.result = { content: [{ type: "text", text: "next call completed" }] };
+    await f.opening;
+    expect(f.cancels()).toBe(0);
+    expect(JSON.stringify(f.toolResults())).toContain("next call completed");
+  } finally { await f.cleanup(); }
+});
+
+test("a turn-bound interrupt bypasses an unrelated control waiting on recovery", async () => {
+  const f = await recoveringWorker("blocked-control");
+  try {
+    f.b.deliver("orphan-approval", { type: "control_response", response: { subtype: "success", request_id: "old-tool" } });
+    f.b.deliver("public-stop", { type: "control_request", request_id: "public-stop", request: { subtype: "interrupt", input_id: "blocked-control-input" } });
+    await f.opening;
+    expect(f.cancels()).toBe(1);
+    const ack = f.b.timeline.findIndex(event => event.type === "input.ack" && event.inputId === "public-stop");
+    expect(ack).toBeGreaterThan(-1);
+    expect(f.b.timeline.findIndex(event => event.uuid === "blocked-control-input_result")).toBeGreaterThan(ack);
   } finally { await f.cleanup(); }
 });
 

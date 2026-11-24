@@ -177,7 +177,8 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 	}
 	_, changed := payload["created_at"]
 	delete(payload, "created_at")
-	if payload["type"] == "agent.thinking" {
+	eventType, _ := payload["type"].(string)
+	if eventType == "agent.thinking" {
 		_, hasContent := payload["content"]
 		_, hasMessage := payload["message"]
 		if hasContent || hasMessage {
@@ -186,7 +187,23 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 			changed = true
 		}
 	}
-	if payload["type"] == "user.message" || payload["type"] == "user.tool_confirmation" {
+	if strings.HasPrefix(eventType, "session.thread_status_") {
+		_, isMirror := payload["original_event_id"]
+		delete(payload, "original_event_id")
+		changed = changed || isMirror
+	}
+	if strings.HasPrefix(eventType, "session.status_") {
+		_, hasThread := payload["session_thread_id"]
+		delete(payload, "session_thread_id")
+		changed = changed || hasThread
+		threadID = ""
+	}
+	if eventType == "user.interrupt" {
+		delete(payload, "_interrupt_input_id")
+		delete(payload, "cancel_input_id")
+		threadID = ""
+	}
+	if eventType == "user.message" || eventType == "user.tool_confirmation" || eventType == "user.interrupt" {
 		if processedAt.IsZero() {
 			payload["processed_at"] = nil
 		} else {
@@ -196,7 +213,7 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 	} else {
 		changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	}
-	threadMessage := payload["type"] == "agent.thread_message_sent" || payload["type"] == "agent.thread_message_received"
+	threadMessage := eventType == "agent.thread_message_sent" || eventType == "agent.thread_message_received"
 	if threadID != "" && (threadMessage || !hasSessionThreadOwnerField(payload)) && payload["session_thread_id"] != threadID {
 		payload["session_thread_id"] = threadID
 		changed = true

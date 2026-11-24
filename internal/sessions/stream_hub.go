@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -46,6 +47,7 @@ func (streamResetDelivery) implStreamDelivery()  {}
 type streamConnection struct {
 	threadID           string
 	primaryThread      bool
+	sessionStream      bool
 	streamDeltaTypes   map[string]struct{}
 	activePreviewIDs   map[string]struct{}
 	finishedPreviewIDs map[string]struct{}
@@ -145,7 +147,7 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
 		if processed, replayed := c.replayedEventIDs[event.ExternalID]; replayed {
-			mutableInput := event.EventType == "user.message" || event.EventType == "user.tool_confirmation"
+			mutableInput := event.EventType == "user.message" || event.EventType == "user.tool_confirmation" || event.EventType == "user.interrupt"
 			if !mutableInput || processed || event.ProcessedAt.IsZero() {
 				return false
 			}
@@ -210,6 +212,21 @@ func previewsFinishedBy(event sessionStreamEvent) []string {
 }
 
 func (c *streamConnection) matches(event sessionStreamEvent) bool {
+	if event.EventType == "session.thread_status_idle" {
+		var idle struct {
+			ThreadID        string `json:"session_thread_id"`
+			OriginalEventID string `json:"original_event_id"`
+		}
+		if jsonv2.Unmarshal(event.Payload, &idle) != nil || idle.OriginalEventID != "" {
+			return false
+		}
+		if c.sessionStream {
+			return true
+		}
+		if idle.ThreadID != "" {
+			return idle.ThreadID == c.threadID
+		}
+	}
 	if event.PrimaryThread {
 		return c.primaryThread
 	}
@@ -312,6 +329,9 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 	if isPreview {
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
 		return
+	}
+	if event.EventType == "session.thread_status_idle" && event.ThreadExternalID != nil {
+		threadID = *event.ThreadExternalID
 	}
 	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID))
 }

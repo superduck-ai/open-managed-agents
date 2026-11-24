@@ -115,7 +115,7 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   const f = await fixture();
   subagentScripts(f.b, [call("subagent", { description: "researcher", prompt: ["Inspect files", "Find a fact"].filter(Boolean).join("\n") }, "delegate"), textEvents("parent synthesis")], [toolEvents("pwd", "child_bash"), textEvents("child report")]);
   f.b.onApproval = async (payload) => {
-    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toMatch(/^[0-9a-f-]{36}$/);
+    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toMatch(/^sthr_[0-9a-f]{32}$/);
     await f.session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
     } });
@@ -161,6 +161,29 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   expect(restored.session.subagents.threads).toHaveLength(1);
 });
 
+test("an explicitly assigned UUID child keeps its history and identity after restart", async () => {
+  const f = await fixture();
+  const legacyId = SessionId(crypto.randomUUID());
+  f.b.modelScript = [textEvents("Saved child answer")];
+  const child = await f.ctx.subagents.startActivation({
+    childId: legacyId, provider: `oma-spawn:${f.session.id}`, label: "legacy",
+    request: { parent: f.session.agent, prompt: [{ type: "text", text: "Remember my answer" }] },
+    signal: f.session.abort.signal, delivery: "caller",
+  });
+  expect(child.childId).toBe(legacyId);
+  await child.result;
+  await f.session.subagents.settleEvents();
+  await f.close();
+  cleanups.pop();
+  const restored = await fixture(f.b);
+  expect(restored.session.subagents.threads.map(thread => thread.id)).toEqual([legacyId]);
+  subagentScripts(f.b, [call("send_message", { agent_id: legacyId, message: "Continue" }, "continue"), textEvents("Done")], [textEvents("Continued")]);
+  await restored.session.receive("followup", { content: "Continue the existing child" });
+  const request = f.b.requests.findLast(request => modelSystemText(request).includes("# Subagent rules"))!;
+  expect(JSON.stringify(request.messages)).toContain("Saved child answer");
+  expect(restored.session.subagents.threads.map(thread => thread.id)).toEqual([legacyId]);
+});
+
 test("predefined specialist uses its own prompt, model and restricted tools", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
@@ -182,7 +205,7 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
   expect(f.session.runtime.config.subagents?.agents).toEqual([{
     name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
   }]);
-  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^sthr_[0-9a-f]{32}$/);
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
   const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
@@ -228,6 +251,147 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
     expect(f.b.executions).toHaveLength(0);
     expect(thread.status).toBe("idle");
   } finally { f.session.stop(); await settled; }
+});
+
+function stopTurn(inputId: string) {
+  return { type: "control_request", request_id: `stop-${inputId}`, request: { subtype: "interrupt", input_id: inputId } };
+}
+
+test.each(["working", "finished"])("cancelling a %s parent with a live child settles the whole input once", async (parent) => {
+  const f = await fixture();
+  const lastParentStep = parent === "finished" ? textEvents("Waiting for child") : toolEvents("pwd", "parent_tool");
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: "Run the child tool" }, "delegate"), lastParentStep],
+    [toolEvents("pwd", "child_tool")]);
+  const releaseAck = Promise.withResolvers<void>();
+  const acknowledging = Promise.withResolvers<void>();
+  const acknowledge = f.session.backend.acknowledge.bind(f.session.backend);
+  f.session.backend.acknowledge = async (id, eventId, signal) => {
+    if (eventId === "stop-control") { acknowledging.resolve(); await releaseAck.promise; }
+    await acknowledge(id, eventId, signal);
+  };
+  const turn = f.session.receive("first", { content: "Delegate" });
+  try {
+    await eventually(() => [...f.session.approvals.values()].some(approval => approval.details.tool_use_id === "child_tool")
+      && (parent === "finished" ? f.session.agent.status === "idle" : f.session.approvals.size === 2));
+    const requests = f.b.requests.length;
+    const stop = f.session.receive("stop-control", stopTurn("first"));
+    await acknowledging.promise;
+    await eventually(() => f.session.approvals.size === 0);
+    expect(f.b.timeline.some(event => event.type === "session.thread_status_idle" || event.uuid === "first_result")).toBe(false);
+    releaseAck.resolve();
+    await stop;
+    await turn;
+    const terminal = { type: "result", uuid: "first_result", subtype: "success", is_error: false };
+    const ack = f.b.timeline.findIndex(event => event.type === "input.ack" && event.inputId === "stop-control");
+    expect(ack).toBeGreaterThan(-1);
+    expect(f.b.timeline.findIndex(event => event.type === "session.thread_status_idle")).toBeGreaterThan(ack);
+    expect(f.b.timeline.findIndex(event => event.uuid === "first_result")).toBeGreaterThan(ack);
+    expect(f.b.publicLog.get("first_result")).toEqual(terminal);
+    expect([...f.b.publicLog.values()].filter(event => event.type === "session.thread_status_idle").map(event => event.stop_reason)).toEqual([{ type: "end_turn" }]);
+    expect(f.session.approvals.size).toBe(0);
+    expect(f.b.executions).toHaveLength(0);
+    expect(f.b.requests).toHaveLength(requests);
+    expect(f.session.agent.inbox.nextTurn).toHaveLength(0);
+    expect(f.session.agent.inbox.nextStep).toHaveLength(0);
+    await f.close();
+    cleanups.pop();
+    const restored = await fixture(f.b);
+    expect(f.b.publicLog.get("first_result")).toEqual(terminal);
+    f.b.onModel = undefined;
+    f.b.modelScript = [toolEvents("pwd", "new_tool"), textEvents("RESUMED")];
+    const resumed = restored.session.receive("second", { content: "Run my new task" });
+    await eventually(() => restored.session.approvals.size === 1);
+    await restored.session.receive("stale-control", stopTurn("first"));
+    expect(restored.session.approvals.size).toBe(1);
+    await restored.session.control({ type: "control_response", response: {
+      subtype: "success", request_id: [...restored.session.approvals.keys()][0], response: { behavior: "allow" },
+    } });
+    await resumed;
+    expect(f.b.requests).toHaveLength(requests + 2);
+    expect(f.b.executions).toHaveLength(1);
+    expect(f.b.publicLog.get("second_result")).toMatchObject({ subtype: "success" });
+    expect(f.b.publicLog.get("second_result")).not.toHaveProperty("stop_reason");
+  } finally { releaseAck.resolve(); if (!f.session.abort.signal.aborted) f.session.stop(); await turn; }
+});
+
+test("cancellation joins a child being attached and permits delegation on the next input", async () => {
+  const f = await fixture();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const context = f.session.runtime.config.threadMcpContext!;
+  f.session.runtime.config.threadMcpContext = async id => {
+    entered.resolve();
+    await release.promise;
+    return context(id);
+  };
+  subagentScripts(f.b, [call("subagent", { description: "first-child", prompt: "Read" }, "old-delegate")], []);
+  const turn = f.session.receive("first", { content: "Delegate" });
+  try {
+    await entered.promise;
+    expect(f.session.subagents.threads).toHaveLength(1);
+    await f.session.receive("stop-during-attach", stopTurn("first"));
+    release.resolve();
+    await turn;
+    expect(f.b.requests).toHaveLength(1);
+    expect(f.b.executions).toHaveLength(0);
+    expect(f.session.subagents.threads[0]!.status).not.toBe("running");
+    expect(f.b.publicLog.get("first_result")).toMatchObject({ subtype: "success", is_error: false });
+    subagentScripts(f.b, [call("subagent", { description: "next-child", prompt: "Read" }, "new-delegate"), textEvents("Done")], [textEvents("New report")]);
+    await f.session.receive("second", { content: "Delegate again" });
+    expect(f.session.subagents.threads.map(thread => thread.name)).toEqual(["first-child", "next-child"]);
+    expect(f.b.publicLog.get("second_result")).toMatchObject({ subtype: "success" });
+    expect([...f.b.publicLog.values()].some(event => event.type === "agent.thread_message_received" && event.from_agent_name === "next-child")).toBe(true);
+  } finally { release.resolve(); f.session.stop(); await turn; }
+});
+
+test("whole-turn cancellation closes both open model streams after their text deltas", async () => {
+  const f = await fixture();
+  let created = false;
+  const closed = new Set<string>();
+  f.b.onModel = async (request, signal) => {
+    const owner = modelSystemText(request).includes("# Subagent rules") ? "child" : "parent";
+    if (owner === "parent" && !created) {
+      created = true;
+      return call("subagent", { description: "child", prompt: "Stream your answer" }, "delegate");
+    }
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal.addEventListener("abort", () => { closed.add(owner); controller.close(); }, { once: true });
+        for (const event of textEvents(owner).slice(0, 3))
+          controller.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+      },
+    });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  };
+  const turn = f.session.receive("streaming", { content: "Start both streams" });
+  try {
+    const deltas = () => f.b.timeline.filter(event => event.type === "event_delta");
+    await eventually(() => deltas().some(event => event.session_thread_id)
+      && deltas().some(event => !event.session_thread_id && JSON.stringify(event).includes("parent")));
+    await f.session.receive("stop-streams", stopTurn("streaming"));
+    await turn;
+    await eventually(() => closed.size === 2);
+    expect(f.b.requests).toHaveLength(3);
+    expect(f.b.publicLog.get("streaming_result")).toMatchObject({ subtype: "success", is_error: false });
+  } finally { f.session.stop(); await turn; }
+});
+
+test("a targeted cancellation that arrives before the input survives redelivery", async () => {
+  const b = new Backend();
+  b.workerMetadata.interrupt_input_id = "queued";
+  b.workerMetadata.interrupt_event_id = "early-control";
+  const f = await fixture(b);
+  await f.session.receive("early-control", stopTurn("queued"));
+  await f.session.receive("queued", { content: "This input was already cancelled" });
+  expect(b.requests).toHaveLength(0);
+  expect(b.publicLog.get("queued_result")).toMatchObject({ subtype: "success", is_error: false });
+  await f.close();
+  cleanups.pop();
+  const restored = await fixture(b);
+  await restored.session.receive("queued", { content: "Redelivery after restart" });
+  await restored.session.receive("next", { content: "A fresh input" });
+  expect(b.requests).toHaveLength(1);
+  expect(b.publicLog.get("next_result")).toMatchObject({ subtype: "success" });
 });
 
 test("a child read approved during drain still executes and persists its result", async () => {

@@ -47,6 +47,7 @@ type sessionEventPageMapperParams struct {
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
+	PublicThreadIdle  bool
 	FetchLimit        int
 	Cursor            *SessionEventPageCursor
 	Descending        bool
@@ -68,6 +69,9 @@ type SessionEventMapper interface {
 	MarkInputProcessed(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string, processedAt time.Time) (sessionEventRow, bool, error)
 	HasInputBlockingIdle(ctx context.Context, workspaceUUID, sessionExternalID, threadID string, at time.Time) (bool, error)
 	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
+	ListCompletingInterrupts(ctx context.Context, workspaceUUID, sessionExternalID, threadID, inputID string, unboundOnly bool, at time.Time) ([]sessionEventRow, error)
+	HasPendingInterrupts(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (bool, error)
+	FindCancelableInputID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, error)
 	FindLatestTurnStart(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
 	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)

@@ -206,6 +206,7 @@ export class DshSubagents {
         if (!thread || thread.status === "terminated") throw new Error("Unknown or archived subagent thread");
         await this.bridge.validateThread?.(thread.id, exec.signal, true);
       }
+      exec.signal.throwIfAborted();
       const args = exec.arguments as { agent_preset?: string; prompt?: unknown };
       const result = exec.name === "subagent" && args.agent_preset === undefined && typeof args.prompt === "string"
         ? await this.inlineSystems.run(args.prompt, () => next()) : await next();

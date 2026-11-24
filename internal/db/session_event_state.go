@@ -183,9 +183,11 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 		}
 		return reason, true, nil
 	}
-	pending, err := mapper.HasInputBlockingIdle(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID, source.ProcessedAt)
-	if err != nil || pending {
-		return nil, false, err
+	if !source.completesInterruptedThread {
+		pending, err := mapper.HasInputBlockingIdle(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID, source.ProcessedAt)
+		if err != nil || pending {
+			return nil, false, err
+		}
 	}
 	if thread.Status != "idle" {
 		return reason, true, nil
@@ -343,6 +345,12 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 			if slices.ContainsFunc(threads, func(t sessionThreadRow) bool { return t.Status == "running" || t.Status == "rescheduling" }) {
 				return false, nil
 			}
+		}
+	}
+	if status == "idle" {
+		blocked, err := pendingInterruptBlocksIdle(ctx, executor, session, threadID, event)
+		if blocked || err != nil {
+			return false, err
 		}
 	}
 	if current != status {

@@ -15,7 +15,7 @@ import type {
 import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import { CcrHeartbeat, type CcrHeartbeatConfig } from "./heartbeat.ts";
 import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
-import { isControlInput, object, type Payload } from "./protocol.ts";
+import { isControlInput, isInterruptInput, object, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { CcrCompaction } from "./compaction.ts";
@@ -29,6 +29,7 @@ import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "
 
 declare module "@deepseek-ai/dsh-session/types" {
   interface PluginRecordMap {
+    "plugin:oma/interrupt-applied": { eventId: string; inputId: string; threadId?: string };
     "plugin:oma/subagent-runtime": { version: 1; runtime: "oma" | "dsh" };
   }
 }
@@ -55,13 +56,18 @@ export class CcrSession {
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
+  private readonly stoppedInputs = new Set<string>();
+  private readonly stoppedThreads = new Set<string>();
+  private readonly interruptReceipts = new Map<string, Promise<void>>();
+  private readonly appliedInterrupts = new Set<string>();
+  private recoveryStops?: Map<string, { inputId?: string; threadId?: string }>;
   private draining = false;
   private readonly dispatchWaiters = new Set<() => void>();
-  private waitingOnInterruptedChild = false;
   private readonly interruptedApprovals = new Set<string>();
   private restoredTraceTurns: TurnTrace[] | undefined;
   private reportedTraceTurns: string | undefined;
   private recoveryBlocked?: () => void;
+  private checkRecoveryCancellation?: () => void;
   private readonly recoveryInterrupts = new Map<string, AbortController>();
   private recoveryInterruptedAll = false;
   private recoveryRootInterrupted = false;
@@ -97,7 +103,7 @@ export class CcrSession {
       ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); },
       recoverSandboxCalls: recoverSandboxCalls && ((id, signal, threadId) => recoverSandboxCalls(id, signal, threadId, {
         interrupt: this.recoveryInterrupt(threadId ?? this.id),
-        blocking: () => this.recoveryBlocked?.(),
+        blocking: () => { this.checkRecoveryCancellation?.(); this.recoveryBlocked?.(); },
       })),
     }, {
       onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
@@ -116,13 +122,17 @@ export class CcrSession {
         },
       }),
       setupTools: async scope => {
+        scope.on("agent/inbox/inserted", ({ agent, message }) => {
+          if (agent.id === this.id && this.cancelling && (message.source.kind === "subagent-settled" || message.source.kind === "agent-message"))
+            agent.inbox.remove(message.id);
+        });
         scope.on("agent/status", ({ agent }) => {
           if (agent.id === this.id && (agent.status !== "idle" || this.approvals.size > 0) && !this.opening && !this.abort.signal.aborted)
             void this.updateStatus().catch(() => this.stop());
         });
         await this.subagents.register(scope);
       },
-      beforeRequest: async () => { await this.subagents.settleEvents(); await this.beforePrimaryRequest(); },
+      beforeRequest: async () => { await this.subagents.settleEvents(); await this.beforeModelRequest(this.id); },
       waitForChildren: () => this.subagents.wait(),
       onOpen: session => this.compaction.restore(session),
       afterFlushLog: session => this.compaction.flush(session),
@@ -192,6 +202,11 @@ export class CcrSession {
       const model = metadata?.model;
       if (typeof model === "string" && model.trim()) this.applyModel(model);
       this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
+      const inputId = metadata?.interrupt_input_id;
+      const eventId = metadata?.interrupt_event_id;
+      if (typeof inputId === "string" && inputId && typeof eventId === "string" && eventId) {
+        this.queueRecoveryStop(eventId, inputId);
+      }
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
       this.ready = true;
@@ -227,7 +242,10 @@ export class CcrSession {
     this.restoredFromRemote = await this.ctx.ccrReplication.ensure(this.id);
     setStage("subagent_runtime");
     let recorded = false;
-    const record = this.ctx.ccrReplication.acquiredEvents(this.id).find(event => pluginRecordOf(event)?.type === "plugin:oma/subagent-runtime");
+    const events = this.ctx.ccrReplication.acquiredEvents(this.id);
+    this.checkRecoveryCancellation = () => this.restoreCurrentInput(events);
+    if (this.recoveryStops) this.checkRecoveryCancellation();
+    const record = events.find(event => pluginRecordOf(event)?.type === "plugin:oma/subagent-runtime");
     if (record) {
       const data = record.data;
       if (!data || typeof data !== "object" || !("version" in data) || data.version !== 1
@@ -246,6 +264,7 @@ export class CcrSession {
       await this.checkpoint();
     }
     setStage("subagents_restore");
+    if (this.subagents.busy) this.checkRecoveryCancellation();
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
     const inputResults = this.replay(this.agent.session.snapshotEvents());
@@ -254,17 +273,55 @@ export class CcrSession {
       try { this.replay((await handle.read()).events, thread.id); }
       finally { await handle.close(); }
     }
-    this.pendingEvents.push(...inputResults, ...recoveryEvents);
+    this.pendingEvents.push(...recoveryEvents, ...inputResults);
     traceHooks.turnsInterrupted(this.id, this.restoredTraceTurns);
     this.restoredTraceTurns = undefined;
     this.opening = false;
+    this.checkRecoveryCancellation = undefined;
     await this.checkpoint();
     setStage("report_metadata");
     await this.backend.reportMetadata(this.id, { task_summary: null, pending_action: null, model: this.config.model });
     setStage("publish");
+    for (const eventId of this.recoveryStops?.keys() ?? []) {
+      await this.backend.acknowledge(this.id, eventId, this.abort.signal);
+      this.appliedInterrupts.add(eventId);
+    }
+    this.recoveryStops = undefined;
     await this.publish();
     setStage("update_status");
     await this.updateStatus();
+  }
+
+  private queueRecoveryStop(eventId: string, inputId?: string, threadId?: string): void {
+    (this.recoveryStops ??= new Map()).set(eventId, { inputId, threadId });
+    this.checkRecoveryCancellation?.();
+  }
+
+  private restoreCurrentInput(events: readonly SessionEvent[]): void {
+    let inputSeen = false;
+    const applied = new Map<string, { inputId: string; threadId?: string }>();
+    for (const event of events) {
+      if (event.type === "turn/start") inputSeen = false;
+      if (!inputSeen && event.type === "user/message" && event.data.source.kind === "user") {
+        inputSeen = true;
+        this.inputId = event.data.id;
+        this.inputFinished = false;
+      }
+      if (inputCompletionOf(event)?.inputId === this.inputId) this.inputFinished = true;
+      const record = pluginRecordOf(event);
+      if (record?.type === "plugin:oma/interrupt-applied") {
+        const { eventId, inputId, threadId } = object(record.data);
+        if (typeof eventId === "string" && typeof inputId === "string") applied.set(eventId, { inputId, threadId });
+      }
+    }
+    for (const [eventId, target] of applied) {
+      if (target.inputId === this.inputId && !this.inputFinished || this.recoveryStops?.has(eventId))
+        (this.recoveryStops ??= new Map()).set(eventId, target);
+    }
+    for (const { inputId, threadId } of this.recoveryStops?.values() ?? []) {
+      if (!threadId && inputId) this.stoppedInputs.add(inputId);
+      if (!this.inputFinished && (inputId === undefined || inputId === this.inputId)) this.interruptRecovery(threadId);
+    }
   }
 
   stream(frame: AssistantStreamFrame, threadId?: string): void {
@@ -338,9 +395,18 @@ export class CcrSession {
     const unfinished = new Set<string>();
     for (const event of events) {
       if (nativeRoot) {
+        const applied = pluginRecordOf(event);
+        if (applied?.type === "plugin:oma/interrupt-applied") {
+          const { eventId, inputId: stopped, threadId } = object(applied.data);
+          if (typeof eventId === "string") this.appliedInterrupts.add(eventId);
+          if (!threadId && typeof stopped === "string" && stopped && (unfinished.has(stopped) || !this.receivedInputIds.has(stopped)))
+            this.stoppedInputs.add(stopped);
+        }
         const completion = inputCompletionOf(event);
         if (completion) {
           unfinished.delete(completion.inputId);
+          this.receivedInputIds.add(completion.inputId);
+          this.stoppedInputs.delete(completion.inputId);
           completions.push(...completionOutput(completion.inputId, completion.outcome));
           continue;
         }
@@ -357,10 +423,12 @@ export class CcrSession {
       this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
     }
     for (const inputId of unfinished) {
-      const outcome = turnOutcome(this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
+      const outcome = turnOutcome(this.stoppedInputs.has(inputId) || this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
       appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
       completions.push(...completionOutput(inputId, outcome));
+      this.stoppedInputs.delete(inputId);
     }
+    if (nativeRoot && this.inputId) this.inputFinished = true;
     return completions;
   }
 
@@ -491,7 +559,11 @@ export class CcrSession {
       calls.add(callId);
     }
     this.activity.start(threadId, "tool_exec", callId);
-    try { await this.checkpoint(); return await execute(); }
+    try {
+      await this.checkpoint();
+      if (this.cancelling) throw new ToolNotForwardedError("The turn was stopped before the tool was executed.");
+      return await execute();
+    }
     finally {
       this.activity.end(threadId, "tool_exec", callId);
       for (const done of [...this.dispatchWaiters]) done();
@@ -510,6 +582,7 @@ export class CcrSession {
   /** Serialize writes and compute from current activity to avoid stale status overwrites. */
   updateStatus(): Promise<void> {
     const next = this.statuses.then(async () => {
+      if (this.cancelling) return;
       const approvals = [...this.approvals.values()];
       const pending = approvals.filter((approval) => approval.phase === "confirmation");
       const paused = new Set(pending.map((approval) => approval.threadId));
@@ -519,6 +592,7 @@ export class CcrSession {
       const evaluating = approvals.some((approval) => approval.phase === "policy");
       const status = childRunning || primaryRunning || evaluating ? "running" : pending.length ? "requires_action" : "idle";
       const first = pending[0]?.details;
+      if (status === "idle" && this.interruptReceipts.size) await Promise.all(this.interruptReceipts.values());
       await this.backend.setStatus(this.id, status, pending.length && first ? {
         ...first, ...(pending.length > 1 ? { pending_actions: pending.map((approval) => approval.details) } : {}),
       } : undefined);
@@ -527,34 +601,41 @@ export class CcrSession {
     return next;
   }
 
-  private async beforePrimaryRequest(): Promise<void> {
-    await this.beforeModelRequest(this.id);
-    if (this.waitingOnInterruptedChild) {
-      this.interrupted = true;
-      this.agent.cancel({ kind: "user" });
-    }
-  }
-
   async beforeModelRequest(owner: string): Promise<void> {
-    if (!this.pendingEvents.length) return;
-    await this.ctx.ccrReplication.flush(owner);
-    await this.publish();
+    if (this.pendingEvents.length) {
+      await this.ctx.ccrReplication.flush(owner);
+      await this.publish();
+    }
+    if (this.cancelling) this.ctx.agents.get(SessionId(owner))?.cancel({ kind: "user" });
   }
 
-  wakeParentFromChildReport(): void {
-    this.waitingOnInterruptedChild = false;
+  get cancelling(): boolean {
+    return this.stoppedInputs.has(this.inputId);
+  }
+
+  consumeStoppedThread(threadId: string): boolean {
+    if (this.stoppedThreads.delete(threadId) || this.cancelling) return true;
+    return this.opening && (this.recoveryInterruptedAll || this.recoveryInterrupts.get(threadId)?.signal.aborted === true);
   }
 
   consumeInterruptedApproval(threadId: string): boolean {
     return this.interruptedApprovals.delete(threadId);
   }
 
-  private interrupt(threadId?: string): void {
-    if (threadId && threadId !== this.id && this.subagents.threads.some((thread) => thread.id === threadId && thread.status === "running")) this.waitingOnInterruptedChild = true;
+  private interrupt(threadId?: string, targetInput?: string): void {
+    if (targetInput && (targetInput !== this.inputId || this.inputFinished)) {
+      if (!threadId && !this.receivedInputIds.has(targetInput)) this.stoppedInputs.add(targetInput);
+      return;
+    }
+    if (!threadId && this.inputId && !this.inputFinished) this.stoppedInputs.add(this.inputId);
     for (const approval of this.approvals.values()) {
       if (approval.phase === "confirmation" && (!threadId || approval.threadId === threadId)) this.interruptedApprovals.add(approval.threadId);
     }
-    if (threadId !== this.id) this.subagents.interrupt(threadId);
+    for (const thread of this.subagents.threads) {
+      if (threadId && threadId !== thread.id) continue;
+      if (thread.status === "running") this.stoppedThreads.add(thread.id);
+      this.ctx.agents.get(SessionId(thread.id))?.cancel({ kind: "user" });
+    }
     if (!threadId || threadId === this.id) {
       this.interrupted = true;
       this.agent.cancel({ kind: "user" });
@@ -589,7 +670,7 @@ export class CcrSession {
           this.applyModel(model);
         }
       }
-      if (isInterruptInput(payload) && !interruptConsumed) this.interrupt(payload.session_thread_id);
+      if (isInterruptInput(payload) && !interruptConsumed) this.interrupt(payload.session_thread_id, payload.request.input_id);
       const supported = !controlError && ["initialize", "interrupt", "set_model"].includes(subtype);
       await this.checkpoint();
       await this.backend.events(this.id, [
@@ -613,10 +694,21 @@ export class CcrSession {
 
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
-    const interruptConsumed = !this.ready && isInterruptInput(payload);
-    if (!this.ready) {
-      if (interruptConsumed) this.interruptRecovery(payload.session_thread_id);
+    const isInterrupt = isInterruptInput(payload);
+    const interruptConsumed = this.opening && isInterrupt;
+    if (!this.ready && (!isInterrupt || this.opening)) {
+      if (interruptConsumed) {
+        this.queueRecoveryStop(inputId, payload.request?.input_id, payload.session_thread_id);
+      }
       await this.opened.promise;
+    }
+    if (isInterrupt && payload.type !== "interrupt") {
+      const pending = this.interruptReceipts.get(inputId);
+      if (pending) return pending;
+      const receipt = this.receiveInterrupt(inputId, payload, interruptConsumed);
+      this.interruptReceipts.set(inputId, receipt);
+      try { await receipt; } finally { this.interruptReceipts.delete(inputId); }
+      return;
     }
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
     if (!repeatedControl && payload.type === "control_response") {
@@ -655,7 +747,7 @@ export class CcrSession {
           this.rootTurnReason = undefined;
           this.turnErrorMessage = undefined;
           this.interrupted = false;
-          this.waitingOnInterruptedChild = false;
+          this.stoppedThreads.clear();
           this.inputId = inputId;
           await this.backend.reportDelivery(this.id, inputId, "processing", this.abort.signal);
           stopProgress = startDeliveryProgress(
@@ -663,17 +755,18 @@ export class CcrSession {
             this.abort.signal, () => this.stop(), undefined, false,
           );
           await this.updateStatus();
-          if (!this.interrupted && payload.oma_refresh_tools === true) await this.runtime.refreshTools();
-          return !this.interrupted;
+          if (!this.cancelling && !this.interrupted && payload.oma_refresh_tools === true) await this.runtime.refreshTools();
+          return !this.cancelling && !this.interrupted;
         },
         afterRun: async () => {
           this.inputFinished = true;
-          if (!this.receivedInputIds.has(inputId)) {
+          const stopped = this.stoppedInputs.has(inputId);
+          if (!this.receivedInputIds.has(inputId) && !stopped) {
             if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
             else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
           }
           else {
-            const outcome = this.turnErrorMessage ? { kind: "failed" as const, text: this.turnErrorMessage }
+            const outcome = stopped ? { kind: "success" as const } : this.turnErrorMessage ? { kind: "failed" as const, text: this.turnErrorMessage }
               : this.interrupted ? turnOutcome({ kind: "aborted", reason: { kind: "user" } })
               : this.rootTurnReason ? turnOutcome(this.rootTurnReason) : turnOutcome({ kind: "interrupted" });
             appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
@@ -683,6 +776,7 @@ export class CcrSession {
           await this.checkpoint();
           await this.previews;
           await this.publish();
+          this.stoppedInputs.delete(inputId);
           await this.updateStatus();
           stopProgress();
           await this.checkpoint();
@@ -690,6 +784,17 @@ export class CcrSession {
         },
       });
     } finally { stopProgress(); }
+  }
+
+  private async receiveInterrupt(eventId: string, payload: Payload, recoveryApplied: boolean): Promise<void> {
+    const applied = this.appliedInterrupts.has(eventId);
+    if (!applied) appendPluginRecord(this.agent.session, "plugin:oma/interrupt-applied", {
+      eventId, inputId: payload.request?.input_id ?? this.inputId, ...(payload.session_thread_id ? { threadId: payload.session_thread_id } : {}),
+    });
+    await this.control(payload, applied || recoveryApplied);
+    await this.checkpoint();
+    await this.backend.acknowledge(this.id, eventId, this.abort.signal);
+    this.appliedInterrupts.add(eventId);
   }
 
   private rememberControl(inputId: string): void {
@@ -717,6 +822,8 @@ export class CcrSession {
       const previews = this.previews;
       await this.checkpoint();
       await previews;
+      if (this.interruptReceipts.size && pending.some(event => event.type === "result" || event.type === "session.thread_status_idle"))
+        await Promise.all(this.interruptReceipts.values());
       await this.backend.events(this.id, pending);
       this.pendingEvents.splice(0, through);
     });
@@ -785,9 +892,4 @@ function validatedExternalToolResult(value: unknown): {content:{type:"text";text
  const result=object(value);
  if (typeof result.isError!=="boolean" || !Array.isArray(result.content) || !result.content.length || result.content.some((block:Payload)=>!block || block.type!=="text" || typeof block.text!=="string")) throw new Error("Invalid external tool result");
  return {content:result.content,isError:result.isError};
-}
-
-function isInterruptInput(payload: Payload): boolean {
-  return ["interrupt", "user.interrupt"].includes(payload.type)
-    || payload.type === "control_request" && object(payload.request).subtype === "interrupt";
 }

@@ -132,6 +132,9 @@ func (h *Handler) resetFanout(_ context.Context, sessionID string) {
 }
 
 func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
+	if event.EventType == "user.interrupt" {
+		event.Payload = sessionEventPayload(event)
+	}
 	return sessionStreamEvent{
 		ExternalID:        event.ExternalID,
 		WorkspaceUUID:     event.WorkspaceUUID,

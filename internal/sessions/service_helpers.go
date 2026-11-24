@@ -285,7 +285,7 @@ func normalizeInputEvent(
 	payload["id"] = eventID
 	payload["processed_at"] = formatEventTime(now)
 	processedAt := now
-	if eventType == "user.message" || eventType == "user.tool_confirmation" {
+	if eventType == "user.message" || eventType == "user.tool_confirmation" || eventType == "user.interrupt" {
 		payload["processed_at"] = nil
 		processedAt = time.Time{}
 	}
@@ -355,7 +355,12 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 	case "system.message":
 		err = validateContentBlocks(payload, "content", true)
 	case "user.interrupt":
-		return nil
+		for key := range payload {
+			if key != "type" && key != "session_thread_id" {
+				return fmt.Errorf("unsupported user.interrupt field %q", key)
+			}
+		}
+		return validateSessionThreadIDPayload(payload)
 	case "user.tool_confirmation":
 		err = validateToolConfirmationPayload(payload)
 	case "user.tool_result":

@@ -103,6 +103,45 @@
         )
     </select>
 
+    <select id="ListCompletingInterrupts" resultType="sessionEventRow">
+        SELECT <include refid="columns"/> FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND event_type = 'user.interrupt' AND processed_at IS NULL AND deleted_at IS NULL
+          AND created_at &lt;= #{at}
+          AND (payload-&gt;&gt;'session_thread_id' IS NULL OR payload-&gt;&gt;'session_thread_id' = #{threadID})
+        <if test="unboundOnly">
+            AND payload-&gt;&gt;'_interrupt_input_id' IS NULL AND payload-&gt;&gt;'session_thread_id' IS NULL
+        </if>
+        <if test="inputID != ''">
+            AND (payload-&gt;&gt;'_interrupt_input_id' IS NULL OR payload-&gt;&gt;'_interrupt_input_id' = #{inputID})
+        </if>
+        ORDER BY created_at, external_id
+    </select>
+
+    <select id="HasPendingInterrupts" result="scalar" resultType="bool">
+        SELECT EXISTS (SELECT 1 FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND event_type = 'user.interrupt' AND processed_at IS NULL AND deleted_at IS NULL
+          AND (#{threadID} = '' OR payload-&gt;&gt;'session_thread_id' = #{threadID}))
+    </select>
+    <select id="FindCancelableInputID" result="scalar" resultType="string">
+        SELECT COALESCE((
+            SELECT external_id FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+              AND deleted_at IS NULL AND event_type = 'user.message'
+              AND (processed_at IS NULL OR processed_at &gt; COALESCE((
+                  SELECT processed_at FROM session_events
+                  WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+                    AND deleted_at IS NULL AND event_type = 'session.status_idle'
+                    AND payload-&gt;'stop_reason'-&gt;&gt;'type' IS DISTINCT FROM 'requires_action'
+                  ORDER BY id DESC LIMIT 1
+              ), '-infinity'))
+            ORDER BY processed_at DESC NULLS LAST,
+                     CASE WHEN processed_at IS NULL THEN id END ASC, id DESC
+            LIMIT 1
+        ), '')
+    </select>
+
     <select id="FindLatestTurnStart" result="optional" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -130,18 +169,11 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
-    <select id="ListPage" resultType="sessionEventRow">
-        SELECT <include refid="columns"/>
-        FROM session_events
-        <where>
-            workspace_uuid = #{params.WorkspaceUUID}
-            AND session_external_id = #{params.SessionExternalID}
-            AND deleted_at IS NULL
-            <if test="params.ThreadExternalID != ''">
-                AND thread_external_id = #{params.ThreadExternalID}
-            </if>
-            <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
-                AND thread_external_id = (
+    <sql id="streamThreadMatches">
+        <choose>
+            <when test="params.ThreadExternalID != ''">thread_external_id = #{params.ThreadExternalID}</when>
+            <when test="params.PrimaryOnly">
+                thread_external_id = (
                     SELECT external_id FROM session_threads
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
@@ -150,7 +182,32 @@
                     ORDER BY created_at ASC, uuid ASC
                     LIMIT 1
                 )
-            </if>
+            </when>
+            <otherwise>TRUE</otherwise>
+        </choose>
+    </sql>
+
+    <select id="ListPage" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND session_external_id = #{params.SessionExternalID}
+            AND deleted_at IS NULL
+            <choose>
+                <when test="params.PublicThreadIdle">
+                    AND (
+                        (event_type = 'session.thread_status_idle'
+                         AND COALESCE(payload-&gt;&gt;'original_event_id', '') = ''
+                         <if test="!params.PrimaryOnly &amp;&amp; params.ThreadExternalID != ''">
+                             AND COALESCE(NULLIF(payload-&gt;&gt;'session_thread_id', ''), thread_external_id) = #{params.ThreadExternalID}
+                         </if>
+                        )
+                        OR (event_type != 'session.thread_status_idle' AND <include refid="streamThreadMatches"/>)
+                    )
+                </when>
+                <otherwise>AND <include refid="streamThreadMatches"/></otherwise>
+            </choose>
             <if test="len(params.Types) &gt; 0">
                 AND event_type IN
                 <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
@@ -250,7 +307,7 @@
     <select id="MarkInputProcessed" result="optional" resultType="sessionEventRow">
         WITH updated AS (UPDATE session_events SET processed_at = #{processedAt}
         WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
-        AND external_id = #{eventExternalID} AND event_type IN ('user.message', 'user.tool_confirmation')
+        AND external_id = #{eventExternalID} AND event_type IN ('user.message', 'user.tool_confirmation', 'user.interrupt')
         AND processed_at IS NULL AND deleted_at IS NULL
         RETURNING <include refid="columns"/>)
         SELECT <include refid="columns"/> FROM updated

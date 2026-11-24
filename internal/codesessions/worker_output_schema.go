@@ -42,16 +42,17 @@ type workerOutputMessage struct {
 }
 
 type workerOutputCommonPayload struct {
-	Type            string          `json:"type"`
-	UUID            string          `json:"uuid"`
-	ID              string          `json:"id"`
-	SessionID       string          `json:"session_id"`
-	SessionThreadID string          `json:"session_thread_id"`
-	CreatedAt       string          `json:"created_at"`
-	ProcessedAt     string          `json:"processed_at"`
-	Timestamp       string          `json:"timestamp"`
-	Content         json.RawMessage `json:"content"`
-	Data            json.RawMessage `json:"data"`
+	InterruptInputID string          `json:"_interrupt_input_id"`
+	Type             string          `json:"type"`
+	UUID             string          `json:"uuid"`
+	ID               string          `json:"id"`
+	SessionID        string          `json:"session_id"`
+	SessionThreadID  string          `json:"session_thread_id"`
+	CreatedAt        string          `json:"created_at"`
+	ProcessedAt      string          `json:"processed_at"`
+	Timestamp        string          `json:"timestamp"`
+	Content          json.RawMessage `json:"content"`
+	Data             json.RawMessage `json:"data"`
 }
 
 type workerAssistantOutputPayload struct {

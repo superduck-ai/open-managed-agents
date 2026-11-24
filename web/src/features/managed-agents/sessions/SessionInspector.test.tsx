@@ -4,6 +4,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import { TooltipProvider } from '../../../shared/ui/tooltip';
 import { type DisplayEventEntry, type QuickstartSessionEvent, type SessionApiResponse } from '../types';
+import { mergeSessionStreamFrame, sessionDetailScopeEvents } from '../api';
 import { SessionInspector } from './SessionInspector';
 
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
@@ -45,6 +46,35 @@ function renderInspector(
 }
 
 describe('SessionInspector', () => {
+  test('interleaves primary and child history in the rendered event list when a running child is interrupted', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const cache = new QueryClient();
+    const append = (thread: string, id: string, type: string, time: string) =>
+      mergeSessionStreamFrame(cache, 'default', 'sesn_test', thread, {
+        id,
+        type,
+        processed_at: `2026-11-20T06:34:${time}Z`,
+        session_thread_id: thread || 'primary',
+      });
+    append('', 'sent', 'agent.thread_message_sent', '34.286');
+    append('', 'parent-start', 'span.model_request_start', '34.362998');
+    append('', 'interrupt', 'user.interrupt', '42.654');
+    append('', 'idle', 'session.status_idle', '42.753');
+    append('child', 'received', 'agent.thread_message_received', '34.286');
+    append('child', 'child-start', 'span.model_request_start', '34.362001');
+    append('child', 'tool', 'agent.tool_use', '35.342');
+    append('child', 'result', 'agent.tool_result', '42.679');
+    append('child', 'child-idle', 'session.thread_status_idle', '42.716');
+    const events = sessionDetailScopeEvents(cache, 'default', 'sesn_test', ['', 'child']);
+    const view = renderInspector({ activeTab: 'events', events });
+    await act(async () => Promise.resolve());
+    expect(
+      Array.from(view.container.querySelectorAll('[role="option"][data-event-id]'), (row) =>
+        row.getAttribute('data-event-id'),
+      ),
+    ).toEqual(['sent', 'received', 'child-start', 'parent-start', 'tool', 'interrupt', 'result', 'child-idle', 'idle']);
+  });
+
   test.each([
     [-1, 300, '300ms'],
     [-1, -2, '1.0s'],

@@ -6,6 +6,10 @@ import (
 )
 
 func sessionThreadStatusCopies(event SessionEvent, primary, target SessionThread) ([]SessionEvent, error) {
+	if event.EventType == "session.thread_status_idle" {
+		event.ThreadExternalID = &target.ExternalID
+		return []SessionEvent{event}, nil
+	}
 	if target.ExternalID == primary.ExternalID {
 		return []SessionEvent{event}, nil
 	}

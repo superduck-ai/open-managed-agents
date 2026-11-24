@@ -1,0 +1,9 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -10 +10 @@
+-import { randomUUID } from "node:crypto";
++import { randomBytes, randomUUID } from "node:crypto";
+@@ -1403 +1403 @@
+-		const childId = spec.childId ?? brandString(randomUUID());
++		const childId = spec.childId ?? brandString(`sthr_${randomBytes(16).toString("hex")}`);

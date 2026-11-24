@@ -28,8 +28,19 @@ func Render(r contracts.Reply) string {
 		}
 		elements = append(elements, ToolGroup(tools, r.Ended)...)
 	}
-	if !r.Ended && !r.Interrupted {
-		elements = append(elements, InteractionElements(r)...)
+	active := !r.Ended && !r.Interrupted
+	var stop map[string]any
+	if active && r.StopValue != nil {
+		stop = button("停止对话", "danger", *r.StopValue, false)
+	}
+	if active {
+		if stop != nil && len(r.Interactions) == 1 && r.Interactions[0].Kind == "oauth" {
+			oauth := r.Interactions[0]
+			elements = append(elements, oauthElements(r.OAuthOrigin, oauth.Value, oauth.Input, stop)...)
+			stop = nil
+		} else {
+			elements = append(elements, InteractionElements(r)...)
+		}
 	}
 	if r.Thinking && len(r.Interactions) == 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "_🧠 正在思考…_", "text_size": "notation"})
@@ -37,11 +48,11 @@ func Render(r contracts.Reply) string {
 	if len(elements) == 0 {
 		elements = append(elements, map[string]any{"tag": "markdown", "content": "_正在处理…_"})
 	}
-	if !r.Ended && !r.Interrupted && r.StopValue != nil {
-		elements = append(elements, map[string]any{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "停止对话"}, "type": "danger", "behaviors": []map[string]any{{"type": "callback", "value": r.StopValue}}})
+	if stop != nil {
+		elements = append(elements, stop)
 	}
 	status := r.Status
-	if !r.Ended && !r.Interrupted && len(r.Interactions) > 0 {
+	if active && len(r.Interactions) > 0 {
 		status = "等待确认"
 		if len(r.Interactions) == 1 && r.Interactions[0].Name == "RequestOAuth" {
 			status = "等待授权"
@@ -53,7 +64,18 @@ func Render(r contracts.Reply) string {
 			status = "思考中"
 		}
 	}
-	card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true, "summary": map[string]string{"content": status}}, "header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": status}, "template": "blue"}, "body": map[string]any{"elements": elements}}
+	title := cmp.Or(r.Title, status)
+	color := "blue"
+	switch r.Status {
+	case "已连接":
+		title = r.Status
+		color = "green"
+	case "已取消授权", "已结束授权":
+		color = "grey"
+	case "连接失效", "授权已过期":
+		color = "red"
+	}
+	card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true, "summary": map[string]string{"content": status}}, "header": map[string]any{"title": map[string]string{"tag": "plain_text", "content": title}, "template": color}, "body": map[string]any{"elements": elements}}
 	encoded, _ := json.Marshal(card)
 	return string(encoded)
 }

@@ -3,6 +3,8 @@ import { afterEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 import { I18nProvider } from '../../shared/i18n';
 import { WorkbenchDrawer } from './dialogs';
+import { ModelDrawer, ToolsDrawer } from './drawers';
+import { createDefaultRevision, defaultWebSearchToolForm } from './model';
 
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 afterEach(cleanup);
@@ -92,4 +94,87 @@ test('keeps a nonmodal drawer open while interacting with the background', async
   });
   expect(panel.hasAttribute('data-open')).toBe(true);
   expect(document.activeElement).toBe(outside);
+});
+
+test('allows clearing and typing multi-digit values in Workbench numeric settings before clamping on blur', () => {
+  function ModelNumericHarness() {
+    const [draft, setDraft] = useState(() => ({
+      ...createDefaultRevision(),
+      model_name: 'claude-sonnet-4-5',
+      max_tokens_to_sample: 4096,
+      thinking: { type: 'enabled' as const, effort: 'high' as const, budget_tokens: 16000 },
+    }));
+    return (
+      <I18nProvider initialLocale="en">
+        <ModelDrawer draft={draft} models={[]} setDraft={setDraft} onRun={() => {}} isRunning={false} />
+      </I18nProvider>
+    );
+  }
+
+  render(<ModelNumericHarness />);
+  const maxTokens = screen.getByRole('spinbutton', { name: 'Max tokens' }) as HTMLInputElement;
+  fireEvent.change(maxTokens, { target: { value: '' } });
+  expect(maxTokens.value).toBe('');
+  fireEvent.change(maxTokens, { target: { value: '2048' } });
+  expect(maxTokens.value).toBe('2048');
+  fireEvent.change(maxTokens, { target: { value: '' } });
+  fireEvent.blur(maxTokens);
+  expect(maxTokens.value).toBe('1');
+
+  const budgetTokens = screen.getByRole('spinbutton', { name: 'Budget tokens' }) as HTMLInputElement;
+  fireEvent.change(budgetTokens, { target: { value: '' } });
+  expect(budgetTokens.value).toBe('');
+  fireEvent.change(budgetTokens, { target: { value: '2' } });
+  expect(budgetTokens.value).toBe('2');
+  fireEvent.change(budgetTokens, { target: { value: '204' } });
+  expect(budgetTokens.value).toBe('204');
+  fireEvent.change(budgetTokens, { target: { value: '2048' } });
+  expect(budgetTokens.value).toBe('2048');
+  fireEvent.change(budgetTokens, { target: { value: '500' } });
+  fireEvent.blur(budgetTokens);
+  expect(budgetTokens.value).toBe('1024');
+});
+
+test('allows clearing and replacing Web search max uses before normalizing on blur', () => {
+  function WebSearchNumericHarness() {
+    const [toolForm, setToolForm] = useState<'custom' | 'web_search' | null>('web_search');
+    const [customTool, setCustomTool] = useState(() => ({ name: '', description: '', schema: '{}' }));
+    const [webSearchTool, setWebSearchTool] = useState(() => ({
+      ...defaultWebSearchToolForm(),
+      maxUsesEnabled: true,
+      maxUses: 5,
+    }));
+    return (
+      <I18nProvider initialLocale="en">
+        <ToolsDrawer
+          tools={[]}
+          toolForm={toolForm}
+          setToolForm={setToolForm}
+          customTool={customTool}
+          setCustomTool={setCustomTool}
+          webSearchTool={webSearchTool}
+          setWebSearchTool={setWebSearchTool}
+          onAddCustom={() => {}}
+          onAddWebSearch={() => {}}
+          onUpdateWebSearch={() => {}}
+          onRemove={() => {}}
+          onRun={() => {}}
+          canAddCustom={false}
+          canAddWebSearch
+          isRunning={false}
+        />
+      </I18nProvider>
+    );
+  }
+
+  render(<WebSearchNumericHarness />);
+  const maxUses = screen.getByLabelText('Web search max uses') as HTMLInputElement;
+  expect(maxUses.value).toBe('5');
+  fireEvent.change(maxUses, { target: { value: '' } });
+  expect(maxUses.value).toBe('');
+  fireEvent.change(maxUses, { target: { value: '8' } });
+  expect(maxUses.value).toBe('8');
+  fireEvent.change(maxUses, { target: { value: '' } });
+  fireEvent.blur(maxUses);
+  expect(maxUses.value).toBe('1');
 });

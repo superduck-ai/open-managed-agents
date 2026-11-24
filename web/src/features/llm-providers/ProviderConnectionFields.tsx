@@ -33,9 +33,9 @@ export function ProviderConnectionFields({
           id="llm-provider-name"
           aria-invalid={Boolean(errors.name)}
           aria-describedby={errors.name ? 'llm-provider-name-error' : undefined}
-          value={form.name || form.slug}
+          value={form.name}
           onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))}
-          placeholder={msg('llmModels.optionalName', 'Display name (optional)')}
+          placeholder={form.slug || msg('llmModels.optionalName', 'Display name (optional)')}
           autoComplete="off"
         />
         {errors.name ? <FieldError id="llm-provider-name-error">{errors.name}</FieldError> : null}

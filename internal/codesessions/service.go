@@ -297,7 +297,7 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 		}
 		batch.events = append(batch.events, prepared)
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", func(db.CodeSession) error {
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", nil, func(db.CodeSession) error {
 		return batch.publish(ctx)
 	})
 }
@@ -605,6 +605,9 @@ func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID str
 }
 
 func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
+	if usesBrainClaimTransport(codeSession) {
+		return nil
+	}
 	threadByAgent, err := s.subagentThreadMappings(ctx, codeSession)
 	if err != nil || len(threadByAgent) == 0 {
 		return err

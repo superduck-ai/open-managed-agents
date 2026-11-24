@@ -14,16 +14,18 @@ import (
 )
 
 type OAuthRequest struct {
-	Kind          string `json:"kind"`
-	Provider      string `json:"provider,omitempty"`
-	TargetHost    string `json:"target_host,omitempty"`
-	ProviderName  string `json:"provider_name,omitempty"`
-	SecretName    string `json:"secret_name,omitempty"`
-	MCPServerName string `json:"mcp_server_name,omitempty"`
-	MCPServerURL  string `json:"mcp_server_url,omitempty"`
-	ParentCallID  string `json:"parent_call_id"`
-	Reason        string `json:"reason"`
-	InvocationID  string `json:"invocation_id,omitempty"`
+	ResumeThreadID string `json:"-"`
+	ResumeEventID  string `json:"-"`
+	Kind           string `json:"kind"`
+	Provider       string `json:"provider,omitempty"`
+	TargetHost     string `json:"target_host,omitempty"`
+	ProviderName   string `json:"provider_name,omitempty"`
+	SecretName     string `json:"secret_name,omitempty"`
+	MCPServerName  string `json:"mcp_server_name,omitempty"`
+	MCPServerURL   string `json:"mcp_server_url,omitempty"`
+	ParentCallID   string `json:"parent_call_id"`
+	Reason         string `json:"reason"`
+	InvocationID   string `json:"invocation_id,omitempty"`
 }
 
 func (r OAuthRequest) Validate() error {
@@ -102,4 +104,11 @@ func (s *Service) handleOAuthRequest(ctx context.Context, codeSessionID string, 
 		return err
 	}
 	return s.publishWorkerPublicPayloads(ctx, codeSessionID, []json.RawMessage{raw, pending})
+}
+
+func OAuthGranted(text string) bool {
+	var grant struct {
+		Authorized bool `json:"authorized"`
+	}
+	return jsonv2.Unmarshal([]byte(text), &grant) == nil && grant.Authorized
 }

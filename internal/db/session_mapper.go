@@ -112,16 +112,16 @@ type sessionWriteParams struct {
 }
 
 type sessionUpdateParams struct {
-	WorkspaceUUID   string
-	ExternalID      string
-	AgentSnapshot   []byte
-	Title           *string
-	SetTitle        bool
-	Metadata        []byte
-	Budget          []byte
-	BudgetReachedAt *time.Time
-	BudgetRemovedAt *time.Time
-	UpdatedAt       time.Time
+	WorkspaceUUID     string
+	ExternalID        string
+	AgentSnapshot     []byte
+	Title             *string
+	Metadata          []byte
+	Budget            []byte
+	BudgetReachedAt   *time.Time
+	BudgetRemovedAt   *time.Time
+	PreviousUpdatedAt time.Time
+	PreviousStatus    string
 }
 
 type sessionPageMapperParams struct {

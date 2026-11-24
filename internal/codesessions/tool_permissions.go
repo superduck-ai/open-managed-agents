@@ -432,7 +432,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 		if err != nil {
 			return false, err
 		}
-		return true, s.publishControlResponse(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, ack, "self-hosted-tool-confirmation", "external-confirmation:"+event.ExternalID, "")
+		return true, s.publishControlResponse(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, ack, "self-hosted-tool-confirmation", "external-confirmation:"+event.ExternalID, "", false)
 	}
 	denyMessage := stringField(payload, "deny_message")
 	sessionThreadID := firstNonEmpty(toolPermissionSessionThreadID(payload), request.SessionThreadID)
@@ -524,16 +524,13 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 	if request.EventType != "agent.custom_tool_use" {
 		return false, nil
 	}
-	if sandboxOAuthRequest(request) {
-		if err := s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, request.PublicEventID, func(locked db.CodeSession) error {
-			if locked.CurrentWorkerEpoch != codeSession.CurrentWorkerEpoch {
-				return db.ErrWorkerEpochMismatch
-			}
-			return nil
-		}); err != nil {
+	if request.ToolName == "RequestOAuth" {
+		if err := s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID}); err != nil {
 			return true, err
 		}
-		return true, s.sink.ProcessCodeSessionInputs(ctx, codeSession, codeSession.CurrentWorkerEpoch, []string{event.ExternalID})
+	}
+	if sandboxOAuthRequest(request) {
+		return true, s.publishToolHandoff(ctx, codeSession, request.PublicEventID, true, func(db.CodeSession) error { return nil })
 	}
 	if payload.IsError && len(payload.Content) == 0 {
 		payload.Content = []selfHostedToolContent{{Type: "text", Text: "User declined to answer."}}
@@ -610,7 +607,7 @@ func (s *Service) sendToolDecision(ctx context.Context, codeSessionID string, wo
 	if inputEventID != "" {
 		completedToolID = request.PublicEventID
 	}
-	return s.publishControlResponse(ctx, codeSessionID, workerEpoch, payload, source, "control-response:"+request.RequestID, completedToolID)
+	return s.publishControlResponse(ctx, codeSessionID, workerEpoch, payload, source, "control-response:"+request.RequestID, completedToolID, request.ToolName == "RequestOAuth")
 }
 
 // controlResponseUUID preserves the UUIDv5 output previously produced with the

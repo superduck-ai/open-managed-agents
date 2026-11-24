@@ -25,6 +25,7 @@ func NewHandler(service *Service, logger *slog.Logger) *Handler {
 func (h *Handler) RegisterConsole(router chi.Router) {
 	base := "/workspaces/{workspaceId}"
 	h.mount(router, base)
+	router.Get(base+"/identities/directory", h.adapter.Wrap(h.directory))
 	router.Post(base+"/identities", h.adapter.Wrap(h.create))
 	router.Patch(base+"/identities/{identity_id}", h.adapter.Wrap(h.update))
 	router.Delete(base+"/identities/{identity_id}", h.adapter.Wrap(h.remove))
@@ -233,15 +234,42 @@ func (h *Handler) agents(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	rows, err := h.service.IdentityAgents(r.Context(), principal, chi.URLParam(r, "identity_id"), r.URL.Query().Get("window"))
+	query := r.URL.Query()
+	window := query.Get("window")
+	page, err := identityPageNumber(query.Get("page"))
 	if err != nil {
 		return err
 	}
+	includeChannels := query.Get("include_channels") == "true"
+	rows, channels, hasMore, err := h.service.IdentityAgents(r.Context(), principal, chi.URLParam(r, "identity_id"), window, page, includeChannels)
+	if err != nil {
+		return err
+	}
+	type agentChannel struct {
+		ID            string `json:"id"`
+		Type          string `json:"channel_type"`
+		Name          string `json:"name"`
+		BindingStatus string `json:"binding_status"`
+	}
+	byAgent := make(map[string][]agentChannel)
+	for _, channel := range channels {
+		byAgent[channel.AgentExternalID] = append(byAgent[channel.AgentExternalID], agentChannel{
+			ID: channel.ChannelExternalID, Type: channel.ChannelType, Name: channel.Name, BindingStatus: channel.BindingStatus,
+		})
+	}
 	data := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		data = append(data, map[string]any{"agent_id": row.AgentExternalID, "sessions": row.Sessions, "last_used_at": formatTime(row.LastUsedAt)})
+		view := map[string]any{"agent_id": row.AgentExternalID, "sessions": row.Sessions, "last_used_at": formatTime(row.LastUsedAt)}
+		if includeChannels {
+			view["channels"] = append([]agentChannel{}, byAgent[row.AgentExternalID]...)
+		}
+		data = append(data, view)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"data": data, "window": windowLabel(r.URL.Query().Get("window"))})
+	body := map[string]any{"data": data, "window": windowLabel(window)}
+	if hasMore {
+		body["next_page"] = page + 1
+	}
+	httpapi.WriteJSON(w, http.StatusOK, body)
 	return nil
 }
 

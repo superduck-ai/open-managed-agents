@@ -956,6 +956,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   workspaceId={activeWorkspaceId}
                 />
               }
+              initiallyShowInspector={inspectorTab !== 'session'}
               inspectorOpen={inspectorOpen}
               isMultiAgent={isMultiAgent}
               lanes={lanes}
@@ -1076,6 +1077,7 @@ export function EventsTab({
   hasFilter,
   hoveredEventId,
   inspector,
+  initiallyShowInspector,
   inspectorOpen,
   isMultiAgent,
   lanes,
@@ -1225,6 +1227,7 @@ export function EventsTab({
         data-testid="session-trace-shell"
       >
         <SessionTraceWorkspaceLayout
+          initiallyShowInspector={initiallyShowInspector}
           inspectorOpen={inspectorOpen}
           onInspectorCollapse={onCloseInspector}
           resizeLabel={msg('managedAgents.sessions.trace.resizeInspector', 'Resize event inspector')}

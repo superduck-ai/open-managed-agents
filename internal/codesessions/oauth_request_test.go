@@ -10,8 +10,8 @@ import (
 func TestOAuthRequestValidation(t *testing.T) {
 	for _, input := range []OAuthRequest{
 		{},
-		{Kind: "env_oauth", Provider: "custom:friday", SecretName: "FRIDAY_4A_TOKEN", Reason: "missing"},
-		{Kind: "env_oauth", ParentCallID: "call", Provider: "custom:friday", Reason: "missing"},
+		{Kind: "env_oauth", Provider: "custom:catalog", SecretName: "CATALOG_TOKEN", Reason: "missing"},
+		{Kind: "env_oauth", ParentCallID: "call", Provider: "custom:catalog", Reason: "missing"},
 		{Kind: "mcp_oauth", ParentCallID: "call", MCPServerName: "notion", MCPServerURL: "https://user:secret@example.com/mcp", Reason: "missing"},
 		{Kind: "mcp_oauth", ParentCallID: "call", MCPServerName: "notion", MCPServerURL: "https://example.com/mcp", Reason: "forbidden"},
 	} {
@@ -20,8 +20,8 @@ func TestOAuthRequestValidation(t *testing.T) {
 		}
 	}
 	for _, input := range []OAuthRequest{
-		{Kind: "env_oauth", ParentCallID: "bash-call", TargetHost: "friday.example", SecretName: "FRIDAY_4A_TOKEN", Reason: "missing"},
-		{Kind: "env_oauth", ParentCallID: "bash-call", Provider: "custom:friday", SecretName: "FRIDAY_4A_TOKEN", Reason: "missing"},
+		{Kind: "env_oauth", ParentCallID: "bash-call", TargetHost: "catalog.example", SecretName: "CATALOG_TOKEN", Reason: "missing"},
+		{Kind: "env_oauth", ParentCallID: "bash-call", Provider: "custom:catalog", SecretName: "CATALOG_TOKEN", Reason: "missing"},
 		{Kind: "mcp_oauth", ParentCallID: "mcp-call", MCPServerName: "notion", MCPServerURL: "https://mcp.notion.com/mcp", Reason: "reauthorization_required"},
 	} {
 		if err := input.Validate(); err != nil {
@@ -32,7 +32,7 @@ func TestOAuthRequestValidation(t *testing.T) {
 
 func TestInlineOAuthProviderNameUsesCharacterLimit(t *testing.T) {
 	request := OAuthRequest{
-		Kind: "env_oauth", Provider: vaults.EnvOAuthProviderInline, SecretName: "FRIDAY_4A_TOKEN",
+		Kind: "env_oauth", Provider: vaults.EnvOAuthProviderInline, SecretName: "CATALOG_TOKEN",
 		ParentCallID: "bash-call", Reason: "reauthorization_required",
 		ProviderName: strings.Repeat("授", vaults.EnvOAuthInlineNameMaxRunes+1),
 	}

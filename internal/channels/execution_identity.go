@@ -15,6 +15,7 @@ import (
 
 type identityIngress interface {
 	PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error)
+	PrepareSelfPairing(context.Context, identities.Ingress) (string, error)
 	AllowsSelfPairing(context.Context, identities.Ingress) (bool, error)
 	ConfirmSelfPairing(context.Context, identities.Ingress, string, *int) error
 	Resolve(context.Context, identities.Ingress) (identities.Decision, error)
@@ -145,7 +146,6 @@ func (w *channelWorker) sessionForDecision(ctx context.Context, msg *channelMess
 	metadata["binding_revision"] = strconv.FormatInt(decision.BindingRevision, 10)
 	metadata["config_revision"] = strconv.FormatInt(decision.ConfigRevision, 10)
 	metadata["pairing_id"] = decision.PairingExternalID
-	metadata["execution_agent_id"] = decision.AgentExternalID
 	if decision.PersonalVaultID != "" {
 		metadata["personal_vault_id"] = decision.PersonalVaultID
 		metadata["oauth_vault_id"] = decision.PersonalVaultID

@@ -62,7 +62,7 @@ func (s *Server) resolvePlatformSessionPrincipal(r *http.Request, session platfo
 		return auth.Principal{}, platformOrganizationInvalid()
 	}
 	if header != "" && session.VerifiedLogin() && s.platformAuth.VerifiedLoginEnabled() {
-		principal, granted, accessErr := s.resolvePlatformAdministrator(r, session, organizationUUID)
+		principal, granted, accessErr := s.resolvePlatformAdministrator(r, session, organizationUUID, "")
 		if accessErr != nil {
 			return auth.Principal{}, accessErr
 		}
@@ -115,7 +115,7 @@ func verifiedInvitationEmail(r *http.Request) (string, bool) {
 	return session.VerifiedEmail, ok && session.VerifiedEmail != ""
 }
 
-func (s *Server) resolvePlatformAdministrator(r *http.Request, session platformsession.Session, organizationUUID string) (auth.Principal, bool, *httpapi.Error) {
+func (s *Server) resolvePlatformAdministrator(r *http.Request, session platformsession.Session, organizationUUID, targetWorkspace string) (auth.Principal, bool, *httpapi.Error) {
 	_, err := s.platformAccess.Authorize(r.Context(), session.UserUUID)
 	if errors.Is(err, platformadmin.ErrDenied) {
 		return auth.Principal{}, false, nil
@@ -124,7 +124,18 @@ func (s *Server) resolvePlatformAdministrator(r *http.Request, session platforms
 		s.logger.ErrorContext(r.Context(), "authorize platform organization request", "actor_account_uuid", session.UserUUID, "error_code", "authorization_unavailable")
 		return auth.Principal{}, false, platformAuthorizationUnavailable()
 	}
-	organization, err := s.db.GetPlatformOrganization(r.Context(), organizationUUID)
+	if targetWorkspace != "" {
+		organizationUUID, err = s.db.GetWorkspaceOrganization(r.Context(), targetWorkspace)
+		if errors.Is(err, db.ErrNotFound) {
+			return auth.Principal{}, false, platformWorkspaceNotFound()
+		}
+	} else {
+		organization, lookupErr := s.db.GetPlatformOrganization(r.Context(), organizationUUID)
+		err = lookupErr
+		if err == nil {
+			organizationUUID = organization.UUID
+		}
+	}
 	if errors.Is(err, db.ErrNotFound) {
 		return auth.Principal{}, false, platformOrganizationNotFound()
 	}
@@ -137,10 +148,27 @@ func (s *Server) resolvePlatformAdministrator(r *http.Request, session platforms
 	principal.AccountExternalID = session.UserExternalID
 	principal.UserUUID = ""
 	principal.UserExternalID = ""
-	principal.OrganizationUUID = organization.UUID
+	principal.OrganizationUUID = organizationUUID
 	principal.OrganizationAccessSource = auth.OrganizationAccessPlatformAdmin
 	principal.WorkspaceAccess = auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: string(auth.OrganizationAccessPlatformAdmin)}
 	return principal, true, nil
+}
+
+func (s *Server) workspaceBootstrapPrincipal(r *http.Request, session platformsession.Session, workspaceID string) (auth.Principal, *httpapi.Error) {
+	if !session.VerifiedLogin() || !s.platformAuth.VerifiedLoginEnabled() || r.Header.Get("X-Api-Key") != "" || r.Header.Get("Authorization") != "" {
+		return auth.Principal{}, platformOrganizationDenied()
+	}
+	if workspaceID == "" || r.Header.Get("X-Organization-UUID") != "" || r.URL.Query().Has("organization_uuid") || platformRequestWorkspaceID(r) != "" {
+		return auth.Principal{}, platformOrganizationInvalid()
+	}
+	principal, granted, err := s.resolvePlatformAdministrator(r, session, "", workspaceID)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if !granted {
+		return auth.Principal{}, platformOrganizationDenied()
+	}
+	return s.resolvePlatformWorkspace(r, principal, workspaceID)
 }
 
 func (s *Server) servePlatformPrincipal(w http.ResponseWriter, r *http.Request, next http.Handler, principal auth.Principal) {

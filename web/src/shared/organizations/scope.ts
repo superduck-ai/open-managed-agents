@@ -84,3 +84,7 @@ export function workspacePreference(
 ) {
   return !navigate && initial ? initial : readPreference(accountUuid, orgUuid);
 }
+
+export function workspaceTargetChanged(requested: string | undefined, selected: string | undefined) {
+  return Boolean(requested && requested !== 'default' && selected !== requested);
+}

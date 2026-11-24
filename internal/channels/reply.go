@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 )
@@ -20,6 +21,7 @@ type replyRunner struct {
 	stream       channelReplyStream
 	seen         map[string]struct{}
 	closed       bool
+	oauthCards   map[string]string
 	previewDirty bool
 	lastUpdate   time.Time
 }
@@ -163,6 +165,13 @@ func (r *replyRunner) open(ctx context.Context) error {
 		return err
 	}
 	r.stream = opened
+	if r.task.delivery != nil && r.task.delivery.ArtifactDelivery != "" {
+		var receipts channelArtifactDelivery
+		if err := json.Unmarshal([]byte(r.task.delivery.ArtifactDelivery), &receipts); err != nil {
+			return err
+		}
+		r.oauthCards = receipts.OAuthCards
+	}
 	if r.task.delivery != nil {
 		r.presentation.IncludeThinking = r.task.delivery.IncludeThinking
 		r.presentation.IncludeToolCalls = r.task.delivery.IncludeToolCalls
@@ -183,8 +192,15 @@ func (r *replyRunner) consumeEvent(ctx context.Context, event omaEvent) (bool, e
 		if event.ID == r.task.inputEventID {
 			return false, nil
 		}
-		if !channelOwnsInput(r.worker.record, r.msg.ChatID, event) {
-			r.task.terminal = true
+		own := channelOwnsInput(r.worker.record, r.msg.ChatID, event)
+		if own && (len(event.ProcessedAt) == 0 || string(event.ProcessedAt) == "null") {
+			return false, nil
+		}
+		r.task.terminal = true
+		if err := r.settleOAuthCards(ctx, event); err != nil {
+			return false, err
+		}
+		if !own {
 			r.task.normalEnd = false
 			r.reply.status = "已暂停"
 			r.reply.finish(channelForeignInputMessage)
@@ -193,10 +209,6 @@ func (r *replyRunner) consumeEvent(ctx context.Context, event omaEvent) (bool, e
 			}
 			return true, r.update(ctx)
 		}
-		if len(event.ProcessedAt) == 0 || string(event.ProcessedAt) == "null" {
-			return false, nil
-		}
-		r.task.terminal = true
 		r.task.normalEnd = !r.reply.interrupted
 		r.reply.status = "已完成"
 		if r.reply.interrupted {
@@ -231,6 +243,9 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 	case "agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use":
 		r.task.usedTools = true
 	}
+	if err := r.settleOAuthCards(ctx, event); err != nil {
+		return err
+	}
 	_, changed := r.reply.consume(r.presentation, event)
 	if !changed {
 		return nil
@@ -242,11 +257,22 @@ func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
 }
 
 func (r *replyRunner) update(ctx context.Context) error {
+	view := r.reply.view()
+	if err := r.detachOAuthCard(ctx, &view); err != nil {
+		return err
+	}
+	if err := updateChannelReply(ctx, r.stream, view); err != nil {
+		return err
+	}
+	r.lastUpdate = time.Now()
+	r.previewDirty = false
+	return nil
+}
+
+func updateChannelReply(ctx context.Context, stream channelReplyStream, view contracts.Reply) error {
 	for attempt := range channelAskAttempts {
-		err := r.stream.Update(ctx, r.reply.view())
+		err := stream.Update(ctx, view)
 		if err == nil {
-			r.lastUpdate = time.Now()
-			r.previewDirty = false
 			return nil
 		}
 		if attempt == channelAskAttempts-1 {

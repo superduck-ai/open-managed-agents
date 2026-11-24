@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
-import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
@@ -30,8 +30,17 @@ import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "
 declare module "@deepseek-ai/dsh-session/types" {
   interface PluginRecordMap {
     "plugin:oma/interrupt-applied": { eventId: string; inputId: string; threadId?: string };
+    "plugin:oma/tool-oauth": {callId: string; invocation?: string; dispatched?: boolean; server?: string; discovery?: boolean};
     "plugin:oma/subagent-runtime": { version: 1; runtime: "oma" | "dsh" };
   }
+}
+
+const PUBLISHED_EVENTS_METADATA = "oma_published_events";
+
+function publishedEventsOf(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const counts = Object.entries(value).filter((entry): entry is [string, number] => Number.isSafeInteger(entry[1]) && entry[1] >= 0);
+  return Object.fromEntries(counts);
 }
 
 export class CcrSession {
@@ -71,8 +80,11 @@ export class CcrSession {
   private readonly recoveryInterrupts = new Map<string, AbortController>();
   private recoveryInterruptedAll = false;
   private recoveryRootInterrupted = false;
+  private readonly recoveryControlsReady = Promise.withResolvers<void>();
   private readonly opened = Promise.withResolvers<void>();
   private ready = false;
+  private openedAt = 0;
+  private publishedEvents?: Record<string, number>;
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
@@ -101,7 +113,7 @@ export class CcrSession {
     const recoverSandboxCalls = config.recoverSandboxCalls;
     this.runtime = new SessionRuntime(ctx, {
       ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); },
-      recoverSandboxCalls: recoverSandboxCalls && ((id, signal, threadId) => recoverSandboxCalls(id, signal, threadId, {
+      recoverSandboxCalls: recoverSandboxCalls && ((id, signal, mcp, threadId) => recoverSandboxCalls(id, signal, mcp, threadId, {
         interrupt: this.recoveryInterrupt(threadId ?? this.id),
         blocking: () => { this.checkRecoveryCancellation?.(); this.recoveryBlocked?.(); },
       })),
@@ -190,7 +202,10 @@ export class CcrSession {
     return this.runtime.busy || this.subagents.busy;
   }
   get lastIdle() {
-    return this.subagents.lastIdle;
+    return Math.max(this.subagents.lastIdle, this.openedAt);
+  }
+  get initializing(): boolean {
+    return !this.ready;
   }
 
   async open(): Promise<void> {
@@ -207,9 +222,11 @@ export class CcrSession {
       if (typeof inputId === "string" && inputId && typeof eventId === "string" && eventId) {
         this.queueRecoveryStop(eventId, inputId);
       }
+      this.publishedEvents = publishedEventsOf(metadata?.[PUBLISHED_EVENTS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
       this.ready = true;
+      this.openedAt = Date.now();
       this.opened.resolve();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
         session_id: this.id, duration_ms: Date.now() - startMs,
@@ -256,6 +273,9 @@ export class CcrSession {
     }
     setStage("subagents_load");
     await this.subagents.loadThreads();
+    const acquired = (id: string) => this.ctx.ccrReplication.acquiredEvents(id).length;
+    const published = this.publishedEvents
+      ?? Object.fromEntries([this.id, ...this.subagents.threads.map(thread => thread.id)].map(id => [id, acquired(id)]));
     setStage("runtime_open");
     await this.runtime.open();
     if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
@@ -267,11 +287,15 @@ export class CcrSession {
     if (this.subagents.busy) this.checkRecoveryCancellation();
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
-    const inputResults = this.replay(this.agent.session.snapshotEvents());
+    const inputResults = await this.replay(this.agent.session.snapshotEvents(), published[this.id] ?? 0);
+    const replayed = { [this.id]: this.agent.session.snapshotEvents().length };
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
-      try { this.replay((await handle.read()).events, thread.id); }
-      finally { await handle.close(); }
+      try {
+        const { events } = await handle.read();
+        await this.replay(events, published[thread.id] ?? 0, thread.id);
+        replayed[thread.id] = events.length;
+      } finally { await handle.close(); }
     }
     this.pendingEvents.push(...recoveryEvents, ...inputResults);
     traceHooks.turnsInterrupted(this.id, this.restoredTraceTurns);
@@ -288,6 +312,8 @@ export class CcrSession {
     }
     this.recoveryStops = undefined;
     await this.publish();
+    this.publishedEvents = replayed;
+    await this.backend.reportMetadata(this.id, { [PUBLISHED_EVENTS_METADATA]: replayed });
     setStage("update_status");
     await this.updateStatus();
   }
@@ -386,14 +412,15 @@ export class CcrSession {
       .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
   }
 
-  private replay(events: readonly SessionEvent[], threadId?: string): Payload[] {
+  private async replay(events: readonly SessionEvent[], publishedCount: number, threadId?: string): Promise<Payload[]> {
     const completions: Payload[] = [];
     const tools = new CcrToolResults();
     let inputId = "";
     let inputSeen = false;
     const nativeRoot = !threadId;
     const unfinished = new Set<string>();
-    for (const event of events) {
+    for (const [index, event] of events.entries()) {
+      const unpublished = index >= publishedCount;
       if (nativeRoot) {
         const applied = pluginRecordOf(event);
         if (applied?.type === "plugin:oma/interrupt-applied") {
@@ -407,7 +434,7 @@ export class CcrSession {
           unfinished.delete(completion.inputId);
           this.receivedInputIds.add(completion.inputId);
           this.stoppedInputs.delete(completion.inputId);
-          completions.push(...completionOutput(completion.inputId, completion.outcome));
+          if (unpublished) completions.push(...completionOutput(completion.inputId, completion.outcome));
           continue;
         }
       }
@@ -420,10 +447,25 @@ export class CcrSession {
         if (nativeRoot) unfinished.add(inputId);
       }
       if (nativeRoot && event.type === "turn/end") continue;
-      this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
+      const toolName = tools.record(event, threadId ?? this.id);
+      if (unpublished) this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, toolName, threadId));
     }
     for (const inputId of unfinished) {
-      const outcome = turnOutcome(this.stoppedInputs.has(inputId) || this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
+      let reason: Parameters<typeof turnOutcome>[0] = this.stoppedInputs.has(inputId) || this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" };
+      const last = events.findLast(event => event.type === "assistant/message" || event.type === "tool/result" || event.type === "user/message");
+      if (reason.kind === "interrupted" && inputId === this.inputId && last?.type === "tool/result" && !last.data.message.isError
+        && events.some(event => { const record = pluginRecordOf(event); return record?.type === "plugin:oma/tool-oauth" && object(record.data).callId === last.data.message.toolCallId; })) {
+        this.opening = false;
+        await this.checkpoint();
+        this.recoveryControlsReady.resolve();
+        this.recoveryBlocked?.();
+        this.agent.followup(createUserMessage({ source: { kind: "system-prompt" }, content: [
+          { type: "text", text: "授权后的工具调用已完成，请根据刚才的工具结果继续处理用户的原问题。" },
+        ] }));
+        await this.agent.whenIdle();
+        reason = this.rootTurnReason ?? reason;
+      }
+      const outcome = turnOutcome(reason);
       appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
       completions.push(...completionOutput(inputId, outcome));
       this.stoppedInputs.delete(inputId);
@@ -487,6 +529,13 @@ export class CcrSession {
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
     const requestId = crypto.randomUUID();
     const ownerId = threadId ?? this.id;
+    const oauthOwner = request.kind === "oauth" ? (threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session) : undefined;
+    const invocation = request.input.kind === "mcp_oauth" ? request.input.invocation_id : undefined;
+    if (oauthOwner) appendPluginRecord(oauthOwner, "plugin:oma/tool-oauth", {
+      callId:request.input.parent_call_id,
+      ...(request.input.kind === "mcp_oauth" && {server:request.input.mcp_server_name, discovery:request.input.reason === "missing"}),
+      ...(invocation && {invocation})
+    });
     const details = { tool_name: request.toolName, action_description: `Use ${request.toolName}`,
       tool_use_id: request.callId, request_id: requestId, input: request.input,
       ...(threadId ? { session_thread_id: threadId } : {}) };
@@ -544,6 +593,10 @@ export class CcrSession {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
       await this.updateStatus();
+    }
+    if (oauthOwner && invocation && !decision.externalResult?.isError && decision.behavior === "allow") {
+      appendPluginRecord(oauthOwner,"plugin:oma/tool-oauth",{callId:request.input.parent_call_id,dispatched:true});
+      await this.checkpoint();
     }
     return { allowed: decision.behavior === "allow", input: decision.updatedInput,
       ...(decision.externalResult !== undefined ? { externalResult: validatedExternalToolResult(decision.externalResult) } : {}),
@@ -700,7 +753,8 @@ export class CcrSession {
       if (interruptConsumed) {
         this.queueRecoveryStop(inputId, payload.request?.input_id, payload.session_thread_id);
       }
-      await this.opened.promise;
+      if (isControlInput(payload.type)) await Promise.race([this.opened.promise, this.recoveryControlsReady.promise]);
+      else await this.opened.promise;
     }
     if (isInterrupt && payload.type !== "interrupt") {
       const pending = this.interruptReceipts.get(inputId);
@@ -775,7 +829,10 @@ export class CcrSession {
           this.receivedInputIds.add(inputId);
           await this.checkpoint();
           await this.previews;
+          const published = this.publishedCounts();
           await this.publish();
+          this.publishedEvents = published;
+          await this.backend.reportMetadata(this.id, { [PUBLISHED_EVENTS_METADATA]: published });
           this.stoppedInputs.delete(inputId);
           await this.updateStatus();
           stopProgress();
@@ -829,6 +886,14 @@ export class CcrSession {
     });
     this.publications = next.catch(() => {});
     return next;
+  }
+  private publishedCounts(): Record<string, number> {
+    const counts = { ...this.publishedEvents, [this.id]: this.agent.session.snapshotEvents().length };
+    for (const thread of this.subagents.threads) {
+      const count = this.ctx.ccrReplication.eventCount(thread.id);
+      if (count !== undefined) counts[thread.id] = Math.max(counts[thread.id] ?? 0, count);
+    }
+    return counts;
   }
   dispatching(): boolean { return this.activeDispatches.size > 0 || this.outcomeConfirmations.size > 0; }
 

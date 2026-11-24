@@ -26,6 +26,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Deployment Run creation, scheduled Worker, River state/retry, occurrence idempotency or restart recovery | All four `deployment` scenarios below |
 | Memory/Filestore mounts, mutation, token scope, cross-session lifetime or cleanup | All six `memory` scenarios below; run `memory doctor mounts` for FUSE preflight |
 | Brain Memory catalog discovery, permission or sandbox MCP reads | `chat.brain-memory`; read [Memory](features/memory.md) |
+| Resuming a budget-paused Brain task after raising or removing its cap | `chat.brain-budget`; read [Brain](features/brain.md#会话预算恢复) |
 | Transcript archive/export/restore/delete, compaction boundary, pending cleanup or object integrity | All five `transcript` scenarios below |
 | Files API, file metadata, workspace authorization, storage or cleanup | `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance` |
 | Tool permissions or confirmation | `chat.tools` |

@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -33,7 +35,7 @@ func (b *inboundPublicationBatch) cleanupUnpublished(ctx context.Context) {
 	}
 }
 
-func (s *Service) publishControlResponse(ctx context.Context, codeSessionID string, workerEpoch int64, payload []byte, source, seed, completedToolID string) error {
+func (s *Service) publishControlResponse(ctx context.Context, codeSessionID string, workerEpoch int64, payload []byte, source, seed, completedToolID string, wake bool) error {
 	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
 	defer cancel()
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
@@ -52,10 +54,24 @@ func (s *Service) publishControlResponse(ctx context.Context, codeSessionID stri
 	}
 	batch := &inboundPublicationBatch{service: s, events: []preparedInboundEvent{prepared}}
 	defer batch.cleanupUnpublished(ctx)
-	return s.db.WithLockedActiveCodeSession(ctx, codeSessionID, completedToolID, func(locked db.CodeSession) error {
+	return s.publishToolHandoff(ctx, codeSession, completedToolID, wake, func(locked db.CodeSession) error {
 		if workerEpoch > 0 && locked.CurrentWorkerEpoch != workerEpoch {
 			return db.ErrWorkerEpochMismatch
 		}
 		return batch.publish(ctx)
 	})
+}
+
+func (s *Service) publishToolHandoff(ctx context.Context, code db.CodeSession, completedToolID string, wake bool, publish func(db.CodeSession) error) error {
+	var workerTraceParent *string
+	if wake && usesBrainClaimTransport(code) {
+		workerTraceParent = new(telemetry.TraceParent(ctx))
+	}
+	if err := s.db.WithLockedActiveCodeSession(ctx, code.ExternalID, completedToolID, workerTraceParent, publish); err != nil {
+		return err
+	}
+	if workerTraceParent != nil {
+		s.notifyBrainWork(ctx, code.ExternalID)
+	}
+	return nil
 }

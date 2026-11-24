@@ -1,3 +1,4 @@
+import type { OAuthRequirement } from "../runtime/oauth.ts";
 import { HttpError, OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { normalizeSandboxResult } from "./output.ts";
@@ -8,6 +9,7 @@ export const CANCELLATION_UNCONFIRMED = "Cancellation could not be confirmed. Ve
 
 export class SandboxCalls implements SandboxExecutor {
   constructor(readonly api: OmaApi, readonly sessionId: string) {}
+
 
   async provision(signal: AbortSignal): Promise<void> { signal.throwIfAborted(); }
 
@@ -62,6 +64,11 @@ export class SandboxCalls implements SandboxExecutor {
         throw new ToolNotForwardedError(`Sandbox tool call rejected with HTTP ${error.status}`);
       throw error;
     }
+  }
+
+  async credential(requirement: OAuthRequirement, signal: AbortSignal, resume: boolean, threadId?: string): Promise<Payload> {
+    const path = this.path(requirement.parent_call_id, threadId) + "/oauth-credential" + (resume ? "?resume=1" : "");
+    return this.api.request(path, this.api.assignment(this.sessionId).ingress_token, "POST", requirement, this.api.traceHeaders(this.sessionId), signal, resume ? 0 : 35_000);
   }
 
   async peek(callId: string, signal: AbortSignal, threadId?: string): Promise<Payload> {

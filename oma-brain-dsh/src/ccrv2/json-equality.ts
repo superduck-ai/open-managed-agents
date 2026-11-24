@@ -1,4 +1,4 @@
-function canonicalJson(value: unknown): unknown {
+export function canonicalJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJson);
   if (!value || typeof value !== "object") return value;
   const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));

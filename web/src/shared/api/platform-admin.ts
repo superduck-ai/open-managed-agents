@@ -19,6 +19,7 @@ export class PlatformAdminClient {
     options: { method?: string; body?: unknown; key?: string; signal?: AbortSignal } = {},
   ): Promise<T> {
     const scope = this.controller.signal;
+    const signal = options.signal ? AbortSignal.any([scope, options.signal]) : scope;
     const headers = new Headers({ Accept: 'application/json' });
     const multipart = options.body instanceof FormData;
     if (options.body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
@@ -35,10 +36,10 @@ export class PlatformAdminClient {
         : options.body === undefined
           ? undefined
           : JSON.stringify(options.body),
-      signal: read ? AbortSignal.any([scope, ...(options.signal ? [options.signal] : [])]) : undefined,
+      signal: read ? signal : undefined,
     });
     const body = await response.json().catch(() => null);
-    scope.throwIfAborted();
+    signal.throwIfAborted();
     if (response.status === 204) return undefined as T;
     if (!response.ok) {
       const error = platformError(response.status, body);

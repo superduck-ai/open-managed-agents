@@ -164,6 +164,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 		claims.WorkspaceTaggedID,
 		claims.ResolvedWorkspaceTaggedID,
 		claims.FilesystemID,
+		claims.SandboxUUID,
 	)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

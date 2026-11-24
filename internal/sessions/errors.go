@@ -15,6 +15,16 @@ import (
 var ErrStreamReset = errors.New("session stream interrupted; replay required")
 var ErrStreamHeartbeat = errors.New("session stream heartbeat due")
 
+var errSessionUpdateInactive = errors.New("session must be non-terminated and unarchived to update")
+var errSessionAgentUpdateRequiresIdle = errors.New("session must be idle to update the agent")
+var errSessionUpdateTitleLength = errors.New("title must contain between 1 and 500 characters")
+var errSessionVaultUpdateUnsupported = errors.New("vault_ids updates are not supported")
+var errSessionUpdateCreateOnly = errors.New("environment_id and resources cannot be changed by a session update")
+
+func sessionUpdateConflict(err error) error {
+	return apperr.New(apperr.Conflict, "session changed during update; retry the request", err)
+}
+
 var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
 var errSessionAgentUpdateUnsupportedFields = errors.New("only tools and mcp_servers can be updated in an existing session")
 var errStoredSessionAgentInvalid = errors.New("stored session agent is invalid")
@@ -123,7 +133,7 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrSessionToolConfirmationInvalid) {
 		return invalidRequest(err)
 	}
-	if errors.Is(err, db.ErrSessionInputPaused) {
+	if errors.Is(err, db.ErrSessionInputPaused) || errors.Is(err, db.ErrSessionBudgetNotRaised) {
 		return invalidRequest(err)
 	}
 	if errors.Is(err, db.ErrSessionInputConflict) {
@@ -241,4 +251,26 @@ func mapSkillReferenceValidationError(err error) error {
 		return invalidRequest(err)
 	}
 	return internalError("Could not validate Session Skill references", fmt.Errorf("validate Session Skill references: %w", err))
+}
+
+func oauthWaitCancelled() error { return apperr.New(apperr.Conflict, "OAuth 等待已取消", nil) }
+
+func oauthAuthorizationIncomplete() error {
+	return apperr.New(apperr.Conflict, "OAuth 授权未完成", nil)
+}
+
+func oauthAuthorizationUnconfirmed() error {
+	return apperr.New(apperr.Conflict, "OAuth 授权未确认", nil)
+}
+
+func oauthCredentialNotReady() error {
+	return apperr.New(apperr.Conflict, "OAuth 凭据未就绪", nil)
+}
+
+func oauthBoundToEnvironmentCredential() error {
+	return apperr.New(apperr.Conflict, "当前变量已绑定普通环境凭据", nil)
+}
+
+func oauthBoundToDifferentProvider() error {
+	return apperr.New(apperr.Conflict, "当前变量已绑定其他 OAuth 连接", nil)
 }

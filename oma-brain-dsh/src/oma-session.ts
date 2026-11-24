@@ -27,7 +27,9 @@ export function createOmaSession(
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
     provider,
-    recoverSandboxCalls: (id,signal,threadId,recovery) => recoverSandboxCalls(ctx,new SandboxCalls(api,assignment.session_id),id,signal,threadId,recovery),
+    recoverSandboxCalls: (id, signal, mcp, threadId, recovery) => recoverSandboxCalls(
+      ctx, new SandboxCalls(api, assignment.session_id), id, signal, threadId, recovery, mcp,
+    ),
     configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,

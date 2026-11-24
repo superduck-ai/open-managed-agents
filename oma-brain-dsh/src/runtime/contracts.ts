@@ -75,6 +75,11 @@ export function isShutdownCancel(reason: unknown): boolean {
     && "reason" in reason && reason.reason === SHUTDOWN_CANCEL.reason;
 }
 
+export interface ThreadMcpContext {
+  config: unknown;
+  fetcher: typeof fetch;
+}
+
 export interface SandboxRecovery {
   interrupt: AbortSignal;
   blocking(): void;
@@ -96,7 +101,7 @@ declare module "@deepseek-ai/cordis" {
 export interface SessionRuntimeConfig {
   configureModel?(call: LlmCallConfig): LlmCallConfig;
   refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
-  threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
+  threadMcpContext?(threadId: string): Promise<ThreadMcpContext>;
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;
   id: string;
@@ -105,7 +110,7 @@ export interface SessionRuntimeConfig {
   workDir: string;
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
-  recoverSandboxCalls?(sessionId: string, signal: AbortSignal, threadId?: string, recovery?: SandboxRecovery): Promise<void>;
+  recoverSandboxCalls?(sessionId: string, signal: AbortSignal, mcp: ThreadMcpContext | undefined, threadId?: string, recovery?: SandboxRecovery): Promise<void>;
   setup?(scope: Context): Promise<void>;
   setupTools?(scope: Context, bridge: ToolExecutionBridge, tools?: string[], threadId?: string, permissions?: ToolPermissions): Promise<Fiber | void>;
   subagentSystemPrompt?(thread: SubagentThread): string;

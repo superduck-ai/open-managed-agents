@@ -3,15 +3,12 @@ package feishu
 import "github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 
 func InteractionElements(reply contracts.Reply) []map[string]any {
-	if reply.StopValue == nil {
-		return nil
-	}
 	elements := []map[string]any{}
 	for _, interaction := range reply.Interactions {
 		value := interaction.Value
 		switch interaction.Kind {
 		case "oauth":
-			elements = append(elements, oauthElements(reply.OAuthOrigin, value, interaction.Input)...)
+			elements = append(elements, oauthElements(reply.OAuthOrigin, value, interaction.Input, nil)...)
 		case "question":
 			value.Kind = "answer"
 			if len(interaction.Questions) == 0 {

@@ -222,7 +222,7 @@ For real E2E tests, set `server.addr` to `127.0.0.1:18080` in an isolated test c
 
 ```bash
 ./scripts/generate-go.sh
-CONFIG_FILE=/path/to/test-config.yaml go run .
+CONFIG_FILE=/path/to/test-config.yaml go run ./cmd/oma-server
 ```
 
 In another terminal, run the SDK test with the default development API key `sk-ant-local-default` available on the test server:

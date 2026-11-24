@@ -25,6 +25,7 @@ import { useManagedReferenceOptions } from '../resources/useManagedReferenceOpti
 import { ManagedVaultSelectField } from '../resources/vault-select-field';
 import type { AgentApiResponse, ManagedEntityFormValues, SessionApiResponse } from '../types';
 import { errorMessage } from '../utils';
+import { sessionEditErrorMessage } from './sessionEdit';
 
 export function SessionCreateDialog({
   title,
@@ -46,7 +47,9 @@ export function SessionCreateDialog({
     ...initialFormValues('sessions', entity),
     ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
   }));
-  const references = useManagedReferenceOptions(workspaceId);
+  const editing = Boolean(entity);
+  const references = useManagedReferenceOptions(workspaceId, !editing || values.vaultIds.length > 0);
+  const referenceError = editing ? null : references.error;
   const [acknowledged, setAcknowledged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -57,14 +60,13 @@ export function SessionCreateDialog({
       setValues((current) => (current.environmentId ? current : { ...current, environmentId: firstEnvironmentId }));
   }, [references.environments]);
   const patch = (changes: Partial<ManagedEntityFormValues>) => setValues((current) => ({ ...current, ...changes }));
-  const editing = Boolean(entity);
+  const titleTooLong = values.name !== values.originalSessionTitle && Array.from(values.name.trim()).length > 500;
   const canSubmit =
-    !references.error &&
-    values.name.trim().length <= 500 &&
+    !referenceError &&
+    !titleTooLong &&
     managedEntityDialogCanSubmit('sessions', values, {
       submitting,
       loadingOptions: references.loading,
-      needsReferences: true,
       editing,
       vaultAcknowledged: acknowledged,
     });
@@ -80,7 +82,7 @@ export function SessionCreateDialog({
     try {
       await onSubmit(values);
     } catch (error) {
-      setSubmitError(errorMessage(error));
+      setSubmitError(editing ? sessionEditErrorMessage(error, msg) : errorMessage(error));
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -96,7 +98,12 @@ export function SessionCreateDialog({
           <DialogHeader className="relative px-6 pb-5 pt-6 sm:px-8 sm:pt-7">
             <DialogTitle className="pr-8 text-xl font-semibold">{title}</DialogTitle>
             <DialogDescription>
-              {msg('managedAgents.sessions.setupDescription', 'Set up an instance of your agent in its environment.')}
+              {editing
+                ? msg('managedAgents.sessions.editDescription', 'Update the settings for this session.')
+                : msg(
+                    'managedAgents.sessions.setupDescription',
+                    'Set up an instance of your agent in its environment.',
+                  )}
             </DialogDescription>
             <Button
               type="button"
@@ -121,7 +128,8 @@ export function SessionCreateDialog({
               <Input
                 id="session-create-title"
                 autoFocus
-                maxLength={500}
+                aria-invalid={titleTooLong}
+                aria-describedby={titleTooLong ? 'session-title-error' : undefined}
                 spellCheck={false}
                 className="h-10 bg-background"
                 value={values.name}
@@ -129,33 +137,45 @@ export function SessionCreateDialog({
                 disabled={submitting}
                 onChange={(event) => patch({ name: event.target.value })}
               />
+              {titleTooLong && (
+                <p id="session-title-error" className="text-sm text-destructive">
+                  {msg(
+                    'managedAgents.sessions.errors.titleLength',
+                    'Use up to 500 characters for the title, or leave it blank.',
+                  )}
+                </p>
+              )}
             </div>
             <fieldset disabled={submitting} className="min-w-0 space-y-5">
-              {lockedAgent ? (
-                <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
-              ) : (
-                <AgentSelectField
-                  workspaceId={workspaceId}
-                  value={values.agentId}
-                  defaultFirst
-                  manage
-                  showEmptyHint
-                  onChange={(agentId) => patch({ agentId })}
-                />
+              {!editing && (
+                <>
+                  {lockedAgent ? (
+                    <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
+                  ) : (
+                    <AgentSelectField
+                      workspaceId={workspaceId}
+                      value={values.agentId}
+                      defaultFirst
+                      manage
+                      showEmptyHint
+                      onChange={(agentId) => patch({ agentId })}
+                    />
+                  )}
+                  <ManagedSelectField
+                    label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                    manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/environments`}
+                    manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
+                    value={values.environmentId}
+                    options={references.environments}
+                    placeholder={
+                      references.loading
+                        ? msg('managedAgents.environments.loading', 'Loading environments...')
+                        : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
+                    }
+                    onChange={(environmentId) => patch({ environmentId })}
+                  />
+                </>
               )}
-              <ManagedSelectField
-                label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/environments`}
-                manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
-                value={values.environmentId}
-                options={references.environments}
-                placeholder={
-                  references.loading
-                    ? msg('managedAgents.environments.loading', 'Loading environments...')
-                    : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
-                }
-                onChange={(environmentId) => patch({ environmentId })}
-              />
               <ManagedVaultSelectField
                 label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                 optional
@@ -170,49 +190,29 @@ export function SessionCreateDialog({
                 onAcknowledgedChange={editing ? undefined : setAcknowledged}
                 onChange={(vaultIds) => patch({ vaultIds })}
               />
-              <ManagedResourceFields
-                values={values}
-                onChange={setValues}
-                workspaceId={workspaceId}
-                memoryStores={references.memoryStores}
-              />
+              {!editing && (
+                <ManagedResourceFields
+                  values={values}
+                  onChange={setValues}
+                  workspaceId={workspaceId}
+                  memoryStores={references.memoryStores}
+                />
+              )}
               {!entity || entityBudgetUsdInput(entity) ? <BudgetField values={values} onChange={patch} /> : null}
             </fieldset>
-            {references.error ? (
+            {referenceError ? (
               <Alert variant="destructive">
                 <AlertDescription>
-                  <p>{references.error}</p>
+                  <p>{referenceError}</p>
                   <Button type="button" variant="outline" size="sm" className="mt-2" onClick={references.retry}>
                     {msg('common.retry', 'Retry')}
                   </Button>
                 </AlertDescription>
               </Alert>
             ) : null}
-            {submitError ? (
-              <Alert variant="destructive">
-                <AlertDescription className="space-y-2 [overflow-wrap:anywhere]">
-                  <p>{budgetErrorMessage(submitError, msg)}</p>
-                  {/invalid\s+skill\s+reference/i.test(submitError) ? (
-                    <div className="space-y-2 text-xs">
-                      <p>
-                        {msg(
-                          'managedAgents.sessions.invalidSkillReferenceHint',
-                          'This agent references a deleted or unavailable skill. Edit the agent to remove or replace it before starting a session.',
-                        )}
-                      </p>
-                      {lockedAgent?.id || values.agentId ? (
-                        <a
-                          href={`/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/${encodeURIComponent(lockedAgent?.id || values.agentId)}`}
-                          className="inline-flex items-center font-medium underline underline-offset-4 hover:opacity-80"
-                        >
-                          {msg('managedAgents.sessions.editAgent', 'Edit agent')}
-                        </a>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            {submitError && (
+              <SessionSubmitError message={submitError} workspaceId={workspaceId} agentId={values.agentId} />
+            )}
           </div>
           <DialogFooter className="px-6 pb-6 pt-1 sm:px-8 sm:pb-7">
             <Button type="button" variant="outline" onClick={close} disabled={submitting}>
@@ -229,5 +229,42 @@ export function SessionCreateDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SessionSubmitError({
+  message,
+  workspaceId,
+  agentId,
+}: {
+  message: string;
+  workspaceId: string;
+  agentId: string;
+}) {
+  const { msg } = useI18n();
+  return (
+    <Alert variant="destructive">
+      <AlertDescription className="space-y-2 [overflow-wrap:anywhere]">
+        <p>{budgetErrorMessage(message, msg)}</p>
+        {/invalid\s+skill\s+reference/i.test(message) ? (
+          <div className="space-y-2 text-xs">
+            <p>
+              {msg(
+                'managedAgents.sessions.invalidSkillReferenceHint',
+                'This agent references a deleted or unavailable skill. Edit the agent to remove or replace it before starting a session.',
+              )}
+            </p>
+            {agentId ? (
+              <a
+                href={`/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/${encodeURIComponent(agentId)}`}
+                className="inline-flex items-center font-medium underline underline-offset-4 hover:opacity-80"
+              >
+                {msg('managedAgents.sessions.editAgent', 'Edit agent')}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+      </AlertDescription>
+    </Alert>
   );
 }

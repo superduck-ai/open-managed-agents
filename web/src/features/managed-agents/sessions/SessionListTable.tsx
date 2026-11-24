@@ -129,7 +129,7 @@ function SessionRowActions({
       icon: Pencil,
       label: entityActionLabel('edit', 'sessions', msg),
       run: () => actions.onEdit(session),
-      disabled: archived,
+      disabled: viewOnly,
     },
     {
       key: 'archive',

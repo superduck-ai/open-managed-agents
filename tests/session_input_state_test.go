@@ -6,13 +6,17 @@ import (
 	"bytes"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
+	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 )
 
 func TestSessionRejectsInvalidUserContentBlocks(t *testing.T) {
@@ -112,6 +116,141 @@ func TestSessionUpdatedEventsContainOnlyChangedFields(t *testing.T) {
 	}
 	if len(payload["metadata"]) == 0 || len(payload["title"]) != 0 || len(payload["agent"]) != 0 {
 		t.Fatalf("metadata update included unchanged fields: %s", events.Data[1])
+	}
+	updateSession(t, app, sessionID, `{"metadata":null}`)
+	events = listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 3 {
+		t.Fatalf("metadata clear events: %s", events.Data)
+	}
+	payload = nil
+	if err := json.Unmarshal(events.Data[2], &payload); err != nil || payload["metadata"] != nil {
+		t.Fatalf("metadata clear included empty metadata: %s, error = %v", events.Data[2], err)
+	}
+}
+
+func TestSessionRenameIsAtomicWithEvent(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-rename-atomic"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	updateSession(t, app, sessionID, `{"title":"original"}`)
+	history := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	event, err := app.db.GetSessionEvent(t.Context(), worker.WorkspaceUUID, sessionID, sessionEventStringField(t, history.Data[0], "id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("load session = %t, %v", found, err)
+	}
+	session.Title = new("uncommitted")
+	if _, _, err := app.db.UpdateSession(t.Context(), session, event, 0); err == nil {
+		t.Fatal("accepted a duplicate event ID")
+	}
+	persisted := retrieveSession(t, app, sessionID, defaultTestKey)
+	if persisted.Title == nil || *persisted.Title != "original" {
+		t.Fatalf("title changed after event write failed: %v", persisted.Title)
+	}
+	updateSession(t, app, sessionID, `{"metadata":{"state":"concurrent"}}`)
+	if _, _, err := app.db.UpdateSession(t.Context(), session, event, 0); !errors.Is(err, db.ErrSessionUpdateConflict) {
+		t.Fatalf("stale session update returned %v", err)
+	}
+	history = listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(history.Data) != 2 {
+		t.Fatalf("unexpected events after failed updates: %s", history.Data)
+	}
+}
+
+func TestSessionBudgetReplacementUsesCommittedUsage(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-budget-running"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	original := json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
+	if _, err := app.pool.Exec(t.Context(), "UPDATE sessions SET status='running', budget=$1 WHERE workspace_uuid=$2 AND external_id=$3", original, worker.WorkspaceUUID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, sessionID)
+	if err != nil || !found {
+		t.Fatalf("load session = %t, %v", found, err)
+	}
+	now := time.Now().UTC()
+	end := db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "sevt_budget_end", EventType: "span.model_request_end",
+		Payload: json.RawMessage(`{"type":"span.model_request_end","billing":{"list_cost":"20","currency":"USD"}}`), CreatedAt: now, ProcessedAt: now}
+	if _, err := app.db.AppendSessionEventsIfAbsent(t.Context(), session.WorkspaceUUID, sessionID, []db.SessionEvent{end}); err != nil {
+		t.Fatal(err)
+	}
+	previousBudget := session.Budget
+	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"20","currency":"USD"}}`)
+	event := db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "sevt_budget_update", EventType: "session.updated",
+		Payload: json.RawMessage(`{"type":"session.updated","budget":` + string(session.Budget) + `}`), CreatedAt: now, ProcessedAt: now}
+	if _, _, err := app.db.UpdateSession(t.Context(), session, event, 20); !errors.Is(err, db.ErrSessionBudgetNotRaised) {
+		t.Fatalf("replacement at consumed cost returned %v", err)
+	}
+	saved, found, err := app.db.GetSession(t.Context(), session.WorkspaceUUID, sessionID)
+	if err != nil || !found || !bytes.Equal(saved.Budget, previousBudget) {
+		t.Fatalf("rejected replacement changed budget: %s, error = %v", saved.Budget, err)
+	}
+	if _, err := app.db.GetSessionEvent(t.Context(), session.WorkspaceUUID, sessionID, event.ExternalID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("rejected replacement wrote event: %v", err)
+	}
+}
+
+func TestSessionBudgetCompletionUsesLatestCap(t *testing.T) {
+	objects := &payloadFaultStore{fakeStore: newFakeStore("session-budget-completion")}
+	app := newPayloadIntegrationApp(t, objects)
+	worker, _ := newPayloadIntegrationSession(t, app)
+	setBudget := func(amount string) error {
+		_, err := app.pool.Exec(t.Context(), "UPDATE sessions SET budget=$1 WHERE workspace_uuid=$2 AND external_id=$3",
+			`{"type":"limit","max_list_cost":{"amount":"`+amount+`","currency":"USD"}}`, worker.WorkspaceUUID, worker.SessionExternalID)
+		return err
+	}
+	if err := setBudget("100"); err != nil {
+		t.Fatal(err)
+	}
+	objects.afterUpload = func(string) error { return setBudget("10") }
+	sink := sessions.NewHandler(app.cfg, app.db, newCodeSessionService(app, nil, nil), nil, nil, app.vaultSecrets, nil)
+	end := json.RawMessage(`{"id":"sevt_cap_at_settlement","type":"span.model_request_end","billing":{"list_cost":"20","currency":"USD"},"detail":` +
+		quoteJSON(strings.Repeat("x", eventpayload.Threshold)) + `}`)
+	if err := sink.PublishCodeSessionEvents(t.Context(), worker, []json.RawMessage{end}); err != nil {
+		t.Fatal(err)
+	}
+	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+	if err != nil || !found || session.BudgetReachedAt == nil {
+		t.Fatalf("new cap not enforced at completion: reached_at=%v, error=%v", session.BudgetReachedAt, err)
+	}
+}
+
+func TestSessionRenameWhileRunning(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-rename-running"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	if _, err := app.db.SetSessionStatus(t.Context(), worker.WorkspaceUUID, sessionID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	for _, patch := range []string{
+		`{"agent":{"tools":[]},"title":"rejected"}`,
+		`{"environment_id":"env_other"}`,
+		`{"resources":[]}`,
+		`{"vault_ids":[]}`,
+		`{"vault_ids":null}`,
+		`{"title":""}`,
+		`{"title":` + quoteJSON(strings.Repeat("界", 501)) + `}`,
+	} {
+		resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+sessionID+"?beta=true", strings.NewReader(patch), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	}
+	title := strings.Repeat("界", 500)
+	updated := updateSession(t, app, sessionID, `{"title":`+quoteJSON(title)+`}`)
+	if updated.Title == nil || *updated.Title != title || updated.Status != "running" {
+		t.Fatalf("renamed session = %+v", updated)
+	}
+	updateSession(t, app, sessionID, `{"title":null}`)
+	events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 2 || sessionEventStringField(t, events.Data[0], "title") != title {
+		t.Fatalf("rename history = %s", events.Data)
+	}
+	var cleared map[string]json.RawMessage
+	if err := json.Unmarshal(events.Data[1], &cleared); err != nil || string(cleared["title"]) != "null" {
+		t.Fatalf("clear title event = %s, error = %v", events.Data[1], err)
 	}
 }
 

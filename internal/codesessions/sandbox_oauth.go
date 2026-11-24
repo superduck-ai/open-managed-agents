@@ -178,10 +178,10 @@ func (s *Service) RequestSandboxOAuth(ctx context.Context, code db.CodeSession, 
 	if err := jsonv2.Unmarshal(data, &fields); err != nil {
 		return "", err
 	}
-	invocation := fmt.Sprintf("%x", sha256.Sum256([]byte(input.InvocationID)))[:16]
+
 	requestID := fmt.Sprintf("sandbox-oauth:%x", sha256.Sum256([]byte(code.ExternalID+"\x00"+input.ParentCallID+"\x00"+input.Provider+"\x00"+input.InvocationID)))
 	payload := workerControlRequestPayload{RequestID: requestID, Request: workerPermissionRequest{
-		Subtype: "request_oauth", ToolName: "RequestOAuth", ToolUseID: input.ParentCallID + ":oauth:" + input.Provider + ":" + invocation, Input: fields,
+		Subtype: "request_oauth", ToolName: "RequestOAuth", ToolUseID: input.toolUseID(), Input: fields,
 	}}
 	if err := s.handleOAuthRequest(ctx, code.ExternalID, code.CurrentWorkerEpoch, &payload, EventMetadata{RequestID: &requestID}); err != nil {
 		return "", err
@@ -193,4 +193,9 @@ func (s *Service) RequestSandboxOAuth(ctx context.Context, code db.CodeSession, 
 
 func sandboxOAuthRequest(request toolPermissionRequest) bool {
 	return request.ToolName == "RequestOAuth" && strings.HasPrefix(request.RequestID, "sandbox-oauth:")
+}
+
+func (input OAuthRequest) toolUseID() string {
+	invocation := sha256.Sum256([]byte(input.InvocationID))
+	return fmt.Sprintf("%s:oauth:%s:%x", input.ParentCallID, input.Provider, invocation[:8])
 }

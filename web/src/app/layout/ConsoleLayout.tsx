@@ -15,7 +15,6 @@ import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
-import { PlatformReturnButton } from '../../features/organizations/PlatformReturnButton';
 import { PlatformAdminMenuItem } from '../../features/platform-admin/PlatformAdminMenuItem';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
@@ -26,6 +25,8 @@ import {
   useContext,
   useEffect,
   forwardRef,
+  useRef,
+  type RefObject,
   useState,
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -49,6 +50,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from '@/shared/ui/sidebar';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/shared/ui/tooltip';
 import { Skeleton } from '@/shared/ui/skeleton';
 import {
   DropdownMenu,
@@ -563,7 +565,6 @@ function SidebarFooter({
   return (
     <AppSidebarFooter className="mt-auto px-2 py-2">
       <SidebarMenu data-console-footer-links>{workspaceEntry}</SidebarMenu>
-      <PlatformReturnButton collapsed={collapsed} />
       <AccountMenu account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
     </AppSidebarFooter>
   );
@@ -590,6 +591,11 @@ export function AccountMenu({
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
+  const subtitleRef = useRef<HTMLSpanElement>(null);
+  const organizationLabel = organizationName
+    ? msg('account.currentOrganization', 'Current organization: {name}', { name: organizationName })
+    : undefined;
+
   const handleMenuNavigation = async (href: string) => {
     setOpen(false);
     if (onNavigate) {
@@ -615,34 +621,54 @@ export function AccountMenu({
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={setOpen}>
-          <DropdownMenuTrigger
-            render={
-              <SidebarMenuButton
-                size="lg"
-                className={clsx(
-                  interactiveMotionClass,
-                  'data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
-                  collapsed ? 'justify-center' : '',
-                )}
-                aria-label={collapsed ? identity.name : undefined}
-              />
-            }
+          <Tooltip
+            disabled={open}
+            onOpenChange={(show, event) => {
+              const subtitle = subtitleRef.current;
+              if (show && (!subtitle || subtitle.scrollWidth <= subtitle.clientWidth)) event.cancel();
+            }}
           >
-            <span className="grid size-8 place-items-center rounded-md border-[0.5px] border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
-              <Building2 className="size-4" aria-hidden />
-            </span>
-            {collapsed ? null : (
-              <>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
-                  <span className="flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/70">
-                    <AccountOrganizationSubtitle organizationName={organizationName} isLoading={isLoading} />
+            <DropdownMenuTrigger
+              render={
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton
+                      size="lg"
+                      className={clsx(
+                        interactiveMotionClass,
+                        'aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground',
+                        collapsed ? 'justify-center' : '',
+                      )}
+                      aria-label={collapsed ? identity.name : undefined}
+                    />
+                  }
+                />
+              }
+            >
+              <span className="grid size-8 place-items-center rounded-md border-[0.5px] border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
+                <Building2 className="size-4" aria-hidden />
+              </span>
+              {collapsed ? null : (
+                <>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
+                    <span className="flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/70">
+                      <AccountOrganizationSubtitle
+                        subtitleRef={subtitleRef}
+                        organizationName={organizationName}
+                        isLoading={isLoading}
+                      />
+                    </span>
                   </span>
-                </span>
-                <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
-              </>
-            )}
-          </DropdownMenuTrigger>
+                  <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
+                </>
+              )}
+            </DropdownMenuTrigger>
+
+            <TooltipContent side="right" className="whitespace-normal [overflow-wrap:anywhere]">
+              {organizationLabel}
+            </TooltipContent>
+          </Tooltip>
 
           <DropdownMenuContent
             align="end"
@@ -651,7 +677,14 @@ export function AccountMenu({
             className="console-navigation-menu subtle-scrollbar w-[288px] max-w-[calc(100vw-2rem)] p-1"
           >
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="space-y-1 px-3 py-2 text-xs">
+                {organizationLabel && (
+                  <span className="block whitespace-normal [overflow-wrap:anywhere] text-foreground">
+                    {organizationLabel}
+                  </span>
+                )}
+                <span className="block truncate">{identity.email}</span>
+              </DropdownMenuLabel>
             </DropdownMenuGroup>
 
             <OrganizationMenu />
@@ -731,18 +764,21 @@ function WorkspaceSwitcherTitle({ name, isLoading }: { name: string; isLoading: 
 }
 
 function AccountOrganizationSubtitle({
+  subtitleRef,
   organizationName,
   isLoading,
 }: {
+  subtitleRef: RefObject<HTMLSpanElement | null>;
   organizationName?: string;
   isLoading: boolean;
 }) {
-  if (isLoading && !organizationName) {
-    return <Skeleton className="my-0.5 h-3.5 w-20 rounded-sm bg-sidebar-accent" />;
+  const { msg } = useI18n();
+  if (!organizationName) {
+    return isLoading ? <Skeleton className="my-0.5 h-3.5 w-20 rounded-sm bg-sidebar-accent" /> : null;
   }
   return (
-    <span className="min-w-0 flex-1 truncate" title={organizationName}>
-      {organizationName}
+    <span ref={subtitleRef} className="min-w-0 flex-1 truncate">
+      {msg('account.organizationShort', 'Org: {name}', { name: organizationName })}
     </span>
   );
 }

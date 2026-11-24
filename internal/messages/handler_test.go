@@ -46,12 +46,13 @@ func TestWriteProxyResponseCopiesAndFlushes(t *testing.T) {
 	response := &http.Response{
 		StatusCode: http.StatusAccepted,
 		Header: http.Header{
-			"Content-Type":      []string{"text/event-stream"},
-			"Connection":        []string{"X-Connection-Only"},
-			"Proxy-Connection":  []string{"keep-alive"},
-			"X-Upstream-Test":   []string{"reached"},
-			"X-Connection-Only": []string{"must-not-be-forwarded"},
-			"Transfer-Encoding": []string{"chunked"},
+			"Content-Type":         []string{"text/event-stream"},
+			"Connection":           []string{"X-Connection-Only"},
+			"Proxy-Connection":     []string{"keep-alive"},
+			"X-Upstream-Test":      []string{"reached"},
+			"X-Oma-Session-Budget": []string{"reached"},
+			"X-Connection-Only":    []string{"must-not-be-forwarded"},
+			"Transfer-Encoding":    []string{"chunked"},
 		},
 		Body: io.NopCloser(strings.NewReader("data: hello\n\n")),
 	}
@@ -67,6 +68,9 @@ func TestWriteProxyResponseCopiesAndFlushes(t *testing.T) {
 	}
 	if result.Header.Get("Content-Type") != "text/event-stream" || result.Header.Get("X-Upstream-Test") != "reached" {
 		t.Fatalf("unexpected response headers: %#v", result.Header)
+	}
+	if result.Header.Get("X-Oma-Session-Budget") != "" {
+		t.Fatal("upstream supplied the local budget-gate marker")
 	}
 	if result.Header.Get("Transfer-Encoding") != "" ||
 		result.Header.Get("Proxy-Connection") != "" ||

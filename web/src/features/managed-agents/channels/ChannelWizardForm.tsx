@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
+import { useWorkspace } from '@/shared/workspaces/context';
+import { listEnvOAuthProviders } from '../api';
 import { ManagedResourceFields } from '../resources/ManagedResourceFields';
 import type { resourceFormValues } from '../resources/git-resource';
 import { useId, type ReactNode } from 'react';
@@ -9,6 +12,7 @@ import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
+import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Switch } from '../../../shared/ui/switch';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
@@ -212,26 +216,20 @@ export function StepConnect({
         </Select>
       </div>
       <div className="space-y-3">
-        <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className={binding === 'qr' ? 'border-primary text-primary' : undefined}
-            disabled={Boolean(saved && saved.binding_status === 'bound')}
-            onClick={() => onBindingChange('qr')}
-          >
+        <Label id="wizard-channel-access-method">{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
+        <RadioGroup
+          aria-labelledby="wizard-channel-access-method"
+          value={binding}
+          onValueChange={(next) => onBindingChange(String(next))}
+          className="w-fit grid-cols-2 gap-0 rounded-lg bg-muted p-0.5"
+        >
+          <RadioGroupItem value="qr" variant="segment" className="px-3" disabled={saved?.binding_status === 'bound'}>
             {msg('managedAgents.channels.feishuAuth', '飞书授权')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={binding === 'credentials' ? 'border-primary text-primary' : undefined}
-            onClick={() => onBindingChange('credentials')}
-          >
+          </RadioGroupItem>
+          <RadioGroupItem value="credentials" variant="segment" className="px-3">
             {msg('managedAgents.channels.manualInput', '手动输入')}
-          </Button>
-        </div>
+          </RadioGroupItem>
+        </RadioGroup>
       </div>
       {binding === 'credentials' ? (
         <ChannelCredentials
@@ -331,14 +329,69 @@ function QrBindPanel({
   );
 }
 
+function PairingProviderField({
+  workspaceId,
+  value,
+  onChange,
+}: {
+  workspaceId: string;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const { orgUuid } = useWorkspace();
+  const { msg } = useI18n();
+  const fieldId = useId();
+  const query = useQuery({
+    queryKey: ['env-oauth-providers', orgUuid, workspaceId],
+    enabled: Boolean(orgUuid),
+    queryFn: () => listEnvOAuthProviders(orgUuid!, workspaceId),
+  });
+  const options = (query.data ?? []).filter((p) => p.enabled && p.configured && p.default_secret_name);
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={fieldId}>{msg('managedAgents.channels.pairingProvider', '私聊配对授权')}</Label>
+      <Select
+        value={value || 'none'}
+        onValueChange={(v) => onChange(v === 'none' ? '' : (v ?? ''))}
+        items={[
+          { value: 'none', label: msg('managedAgents.channels.noPairingProvider', '无需授权') },
+          ...options.map((p) => ({ value: p.id, label: p.name })),
+        ]}
+      >
+        <SelectTrigger id={fieldId} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">{msg('managedAgents.channels.noPairingProvider', '无需授权')}</SelectItem>
+          {options.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              {p.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {query.isError && (
+        <p role="alert">
+          {msg(
+            'managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoadFailed',
+            '无法加载 OAuth 服务方。',
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function StepStrategy<T extends ChannelInput>({
   value,
   onChange,
   modeLocked,
+  workspaceId,
 }: {
   value: T;
   onChange: (value: T) => void;
   modeLocked: boolean;
+  workspaceId?: string;
 }) {
   const { msg } = useI18n();
   const modeId = useId();
@@ -364,6 +417,13 @@ export function StepStrategy<T extends ChannelInput>({
           </SelectContent>
         </Select>
       </div>
+      {value.mode === 'pairing' && workspaceId && (
+        <PairingProviderField
+          workspaceId={workspaceId}
+          value={value.pairing_oauth_provider ?? ''}
+          onChange={(id) => onChange({ ...value, pairing_oauth_provider: id })}
+        />
+      )}
       <div className="space-y-2">
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.identityReply', '身份与回复')}

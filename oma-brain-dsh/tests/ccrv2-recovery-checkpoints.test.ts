@@ -1,8 +1,7 @@
 import { runSubagent } from "./subagent-tools.ts";
-import { completedInputs } from "./session-log.ts";
+import { completedInputs, seedInterruptedTool } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { createMessage, freezeMessage, MessageId, ToolCallId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -32,34 +31,27 @@ async function mount(backend: Backend) {
   return { session, close };
 }
 
-for (const phase of ["requested", "dispatch"] as const) {
+for (const phase of ["requested", "dispatch", "removed-tool", "removed-before-oauth"] as const) {
   test(`native ${phase} tool recovery persists once across another restart`, async () => {
     const backend = new Backend();
     cleanups.push(async () => { backend.stop(); });
+    const removed = phase.startsWith("removed");
+    const name = removed ? "RemovedTool" : "Bash";
+    const args = removed ? '{"args":["app","list"]}' : '{"command":"write"}';
     const first = await mount(backend);
-    const native = first.session.agent.session;
-    const callId = ToolCallId("interrupted-call");
-    first.session.inputId = "interrupted-input";
-    await first.session.checkpoint();
-    native.append("turn/start", { turn: 1 });
-    native.append("step/start", { turn: 1, step: 1 });
-    native.append("user/message", freezeMessage({ id: MessageId("interrupted-input"), role: "user", source: { kind: "user" }, content: [{ type: "text", text: "Interrupted input" }] }), { surfaceOp: "append" });
-    native.append("assistant/message", {
-      turn: 1, step: 1, stream: [],
-      message: createMessage({ role: "assistant", source: { kind: "model", provider: "oma", model: "test-model" },
-        content: [{ type: "tool-call", id: callId, name: "Bash", arguments: '{"command":"write"}' }] }),
-    }, { surfaceOp: "append" });
-    if (phase === "dispatch") native.append("tool/call", { turn: 1, step: 1, callId, name: "Bash", arguments: '{"command":"write"}' });
+    const callId = "interrupted-call";
+    await seedInterruptedTool(first.session, "interrupted-input", callId, { name, arguments: args }, phase !== "requested");
+    if (phase === "removed-tool") (await import("@deepseek-ai/dsh-session")).appendPluginRecord(first.session.agent.session,"plugin:oma/tool-oauth",{callId});
     await first.session.checkpoint();
     await first.close();
     const recovered = await mount(backend);
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
     expect(results).toHaveLength(1);
-    expect(results[0]?.data.error?.code).toBe("TOOL_NOT_STARTED");
+    expect(results[0]?.data.error?.code).toBe(phase === "removed-before-oauth" ? "TOOL_OUTCOME_UNKNOWN" : "TOOL_NOT_STARTED");
     expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
       .find(block => block.type === "tool_result" && block.tool_use_id === callId);
-    expect(publicResult?.tool_name).toBe("Bash");
+    expect(publicResult?.tool_name).toBe(name);
     await recovered.close();
     const persisted = () => [...backend.privateLog.values()].filter(payload => payload.data?.type !== "session/end-seed");
     const stored = structuredClone(persisted());

@@ -153,6 +153,10 @@ func TestExecutionModeMapsFixedContextWithoutInventingIdentity(t *testing.T) {
 
 type inactiveSelfPairing struct{}
 
+func (inactiveSelfPairing) PrepareSelfPairing(context.Context, identities.Ingress) (string, error) {
+	return "", nil
+}
+
 func (inactiveSelfPairing) PersonalActorIdentity(context.Context, identities.Ingress, bool) (db.IdentityRecord, error) {
 	return db.IdentityRecord{}, db.ErrNotFound
 }

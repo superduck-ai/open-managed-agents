@@ -15,18 +15,20 @@ type Attachment struct {
 }
 
 type Message struct {
-	MessageID      string           `json:"message_id"`
-	MessageIDs     []string         `json:"message_ids"`
-	ChatID         string           `json:"chat_id"`
-	ChatType       string           `json:"chat_type"`
-	UserID         string           `json:"user_id"`
-	Content        string           `json:"content"`
-	RawContentType string           `json:"raw_content_type"`
-	RootID         string           `json:"root_id"`
-	ThreadID       string           `json:"thread_id"`
-	PairingID      string           `json:"pairing_id,omitempty"`
-	Resources      []Attachment     `json:"resources"`
-	Input          *db.ChannelInput `json:"-"`
+	MessageID       string           `json:"message_id"`
+	MessageIDs      []string         `json:"message_ids"`
+	ChatID          string           `json:"chat_id"`
+	ChatType        string           `json:"chat_type"`
+	UserID          string           `json:"user_id"`
+	Content         string           `json:"content"`
+	RawContentType  string           `json:"raw_content_type"`
+	RootID          string           `json:"root_id"`
+	ThreadID        string           `json:"thread_id"`
+	PairingProvider string           `json:"oauth_provider,omitempty"`
+	PairingCard     string           `json:"oauth_card,omitempty"`
+	PairingID       string           `json:"pairing_id,omitempty"`
+	Resources       []Attachment     `json:"resources"`
+	Input           *db.ChannelInput `json:"-"`
 }
 
 type Resource struct {
@@ -102,6 +104,8 @@ type Interaction struct {
 	Questions []Question
 }
 type Reply struct {
+	Title                        string
+	DeliveryKey                  string
 	OAuthOrigin                  string
 	Interrupted, Thinking, Ended bool
 	Status, Text                 string

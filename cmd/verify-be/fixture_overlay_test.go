@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,11 @@ func TestBaselineFixtureOverlayOnlyAppliesToPerformanceBaseline(t *testing.T) {
 func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	env := newEnvironment(t.TempDir(), t.TempDir(), "fixture-overlay-test")
 	env.backendCommit = "reference-commit"
+	sessionFixtureFunctions := []string{
+		"buildSessionMapperInsert", "scanSessionMapperInsert",
+		"buildSessionMapperLockSessionForEvents", "scanSessionMapperLockSessionForEvents",
+	}
+
 	for _, name := range []string{"admin_api_keys_mapper", "code_session_mapper", "session_mapper", "session_thread_mapper", "session_resource_file_mapper", "session_resource_mapper"} {
 		for _, root := range []string{env.root, filepath.Join(env.directory, "backend-source")} {
 			path := filepath.Join(root, "internal", "db", name+".sqlmap.gen.go")
@@ -47,6 +53,16 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 			source += "func buildSessionResourceMapperInsertDirectory() string { return \"directory\" }\n"
 			if name == "admin_api_keys_mapper" {
 				source += "func buildAdminAPIKeyMapperFindActiveByKeyHash() {}\nfunc scanAdminAPIKeyMapperFindActiveByKeyHash() {}\n"
+			}
+
+			if name == "session_mapper" {
+				version := "reference"
+				if root == env.root {
+					version = "candidate"
+				}
+				for _, function := range append(sessionFixtureFunctions, "buildSessionMapperUpdateByExternalID") {
+					source += fmt.Sprintf("func %s() string { return %q }\n", function, function+"-"+version)
+				}
 			}
 
 			if name == "session_resource_mapper" && root != env.root {
@@ -89,6 +105,15 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 		if filepath.Base(current) == "admin_api_keys_mapper.sqlmap.gen.go" {
 			want = `return "candidate"`
 		}
+		if filepath.Base(current) == "session_mapper.sqlmap.gen.go" {
+			want = "buildSessionMapperUpdateByExternalID-candidate"
+			for _, function := range sessionFixtureFunctions {
+				if !strings.Contains(string(merged), function+"-reference") {
+					t.Fatalf("session fixture must use reference %s", function)
+				}
+			}
+		}
+
 		if err != nil || !strings.Contains(string(merged), want) || !strings.Contains(string(merged), "func candidateBudgetMethod()") {
 			t.Fatalf("基线 SQL 或当前接口实现丢失：%s %v", merged, err)
 		}

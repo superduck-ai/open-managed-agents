@@ -46,6 +46,19 @@ func (w *Adapter) OpenReply(ctx context.Context, msg *contracts.Message, initial
 			return nil, err
 		}
 		messageID = id
+	} else if len(initial) > 0 && initial[0].DeliveryKey != "" {
+		body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType("interactive").Content(card).Uuid(initial[0].DeliveryKey).Build()
+		sent, err := w.Client.Im.V1.Message.Create(ctx, larkim.NewCreateMessageReqBuilder().ReceiveIdType("chat_id").Body(body).Build())
+		if err != nil {
+			return nil, err
+		}
+		if !sent.Success() {
+			return nil, fmt.Errorf("飞书发送授权卡失败: %d %s", sent.Code, sent.Msg)
+		}
+		if sent.Data == nil || sent.Data.MessageId == nil {
+			return nil, errors.New("飞书授权卡缺少 message_id")
+		}
+		messageID = *sent.Data.MessageId
 	} else {
 		sent, err := w.Channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: card})
 		if err != nil {

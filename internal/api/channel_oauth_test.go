@@ -29,20 +29,23 @@ func TestChannelOAuthBrowserBinding(t *testing.T) {
 func TestVaultOAuthCallbackKeepsFailureVisible(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		failed bool
+		status string
 		title  string
 	}{
-		{"授权失败", true, "授权未完成"},
-		{"授权成功", false, "授权成功"},
+		{"授权失败", "error", "授权未完成"},
+		{"授权成功", "ok", "授权成功"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			writeVaultOAuthCallback(response, "env-oauth", []byte(`{"type":"vault_oauth_complete"}`), test.failed)
+			writeEnvOAuthCallback(response, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: test.status})
 			body := response.Body.String()
 			if !strings.Contains(body, "<h1>"+test.title+"</h1>") || !strings.Contains(body, "if (window.opener)") || response.Header().Get("Cache-Control") != "no-store" {
 				t.Fatal("回调页面必须提供可见结果，并保留控制台通知")
 			}
-			if test.failed && !strings.Contains(body, "if (false) setTimeout") {
+			if test.status == "ok" && !strings.Contains(body, "if (true) setTimeout(() => window.close(), 3000)") {
+				t.Fatal("成功回调应在三秒后尝试关闭")
+			}
+			if test.status == "error" && !strings.Contains(body, "if (false) setTimeout") {
 				t.Fatal("失败回调不得自动关闭")
 			}
 		})

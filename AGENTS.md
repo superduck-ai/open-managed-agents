@@ -3,7 +3,7 @@
 ## 本地重启脚本
 
 - 在仓库根目录使用 `just restart-server` 重启本地后端服务，地址为 `127.0.0.1:38080`。
-- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式运行服务；绑定环境先构建二进制，再在机器级锁内完成端口分配和开始监听，未绑定环境继续执行 `go run .`。
+- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式运行服务；绑定环境先构建二进制，再在机器级锁内完成端口分配和开始监听，未绑定环境继续执行 `go run ./cmd/oma-server`。
 - 仅在 `server.addr` 已改为其他端口时，才使用 `PORT=... just restart-server` 指定需要释放的对应端口。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
 
@@ -199,7 +199,7 @@
 - 集成回归使用独立命令 `just test-integration`，等价于生成源码后运行 `go test -tags=integration ./... -count=1`；它包含普通单测及显式启用的集成测试。定向运行示例为 `just test-integration ./tests -run '^TestFilesAPI$'`。使用隔离测试配置与依赖，不得因为本地依赖恰好可用就让默认单测执行集成测试。
 - 修改 schema 或 handler 后默认运行 `just test` 并补充或更新相关回归，不再自动执行整个集成包或全仓集成。需要定向集成验证时，用 `just test-integration` 显式选择最小范围；整域或全量回归按用户指定范围执行。未执行时明确说明集成覆盖未验证，不把单测通过称为全量通过。此命令不构成运行 `verify-be` 的授权。
 - Go lint 和死代码检查启用 `integration` 标签，只编译与分析集成测试源码，不执行测试；不得因测试分层降低静态检查覆盖。现有 `e2e`、`e2b_integration` 与 verify-be 场景仍通过各自显式入口触发。
-- 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
+- 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run ./cmd/oma-server` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：
   - Go：`just test-integration ./tests -run TestGoSDKFilesE2E -v`
   - Python：在官方 Python SDK virtualenv 中运行 `tests/e2e/python/files_e2e.py`。

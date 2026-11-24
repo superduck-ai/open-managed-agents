@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -347,6 +346,15 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlow, token vaultsapi.OAuthTokenEndpointResult, customProvider *vaultsapi.EnvOAuthCustomProvider, now time.Time) (string, error) {
+	if c := flow.Continuation; c != nil && c.InputUUID != "" {
+		target, err := s.channelService.OAuthContinuationTarget(ctx, flow.WorkspaceUUID, c)
+		if err != nil {
+			return "", err
+		}
+		if target.Vault.UUID != flow.VaultUUID || target.Request.Provider != flow.ProviderKey || target.Request.SecretName != flow.SecretName {
+			return "", db.ErrInvalidState
+		}
+	}
 	credentials, _, err := s.db.ListVaultCredentialsPage(ctx, db.ListVaultCredentialsPageParams{
 		WorkspaceUUID:   flow.WorkspaceUUID,
 		VaultExternalID: flow.VaultExternalID,
@@ -576,25 +584,5 @@ func writeEnvOAuthCallback(w http.ResponseWriter, payload envOAuthCallbackPayloa
 	if err != nil {
 		payloadJSON = []byte(`{"type":"vault_oauth_complete","status":"error","error_code":"invalid_request"}`)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>OAuth complete</title>
-</head>
-<body>
-<script>
-const payload = %s;
-try {
-  new BroadcastChannel("env-oauth").postMessage(payload);
-} catch (error) {}
-try {
-  if (window.opener) window.opener.postMessage(payload, window.location.origin);
-} catch (error) {}
-setTimeout(() => window.close(), 250);
-</script>
-</body>
-</html>`, payloadJSON)
+	writeVaultOAuthCallback(w, "env-oauth", payloadJSON, err != nil || payload.Status != "ok")
 }

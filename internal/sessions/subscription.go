@@ -43,6 +43,12 @@ func (h *Handler) SubscribeEvents(ctx context.Context, sessionID string, options
 	if err != nil {
 		return nil, err
 	}
+	return h.subscribeSessionThread(ctx, session, options)
+}
+
+func (h *Handler) subscribeSessionThread(ctx context.Context, session db.Session, options StreamOptions) (*EventSubscription, error) {
+	sessionID := session.ExternalID
+	var err error
 	var thread db.SessionThread
 	if options.ThreadID == "" {
 		thread, err = h.ensurePrimarySessionThread(ctx, session)

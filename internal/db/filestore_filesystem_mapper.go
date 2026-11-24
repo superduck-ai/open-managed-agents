@@ -16,7 +16,7 @@ type FilestoreFilesystemMapper interface {
 	FindProvisionedByIdentifier(ctx context.Context, workspaceUUID, filesystemExternalID, filesystemUUID string) (filestoreFilesystemRow, bool, error)
 	FindProvisionedBySession(ctx context.Context, workspaceUUID, sessionUUID string) (filestoreFilesystemRow, bool, error)
 	InsertProvisioned(ctx context.Context, params filestoreFilesystemProvisionParams) (filestoreFilesystemRow, error)
-	FindTokenScope(ctx context.Context, organizationUUID, accountUUID, workspaceUUID, workspaceTaggedID, resolvedWorkspaceTaggedID, filesystemID, filesystemUUID string) (filestoreTokenScopeRow, bool, error)
+	FindTokenScope(ctx context.Context, organizationUUID, accountUUID, workspaceUUID, workspaceTaggedID, resolvedWorkspaceTaggedID, filesystemID, filesystemUUID, sandboxUUID string) (filestoreTokenScopeRow, bool, error)
 	FindSessionTokenScope(ctx context.Context, workspaceUUID, sessionExternalID string) (filestoreTokenScopeRow, bool, error)
 	FindFilesystemByIdentifier(ctx context.Context, workspaceUUID, filesystemID, filesystemUUID string) (filestoreFilesystemRow, bool, error)
 	FindFilesystemBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (filestoreFilesystemRow, bool, error)

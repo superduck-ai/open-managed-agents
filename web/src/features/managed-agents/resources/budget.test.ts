@@ -12,7 +12,7 @@ import {
   sessionBudgetState,
 } from './budget';
 
-function formValues(budgetUsd: string, budgetChanged = false) {
+function formValues(budgetUsd: string, originalBudgetUsd = budgetUsd) {
   return {
     name: '',
     description: '',
@@ -29,7 +29,7 @@ function formValues(budgetUsd: string, budgetChanged = false) {
     originalResources: [],
     resourcesChanged: false,
     budgetUsd,
-    budgetChanged,
+    originalBudgetUsd,
   };
 }
 
@@ -70,9 +70,9 @@ describe('budget bodies', () => {
 
   it('sends update budget only when changed; null clears', () => {
     expect(budgetUpdateBody(formValues('25'))).toBeUndefined();
-    expect(budgetUpdateBody(formValues('25', true))).toEqual(budgetWireBody(2500));
-    expect(budgetUpdateBody(formValues('', true))).toBeNull();
-    expect(budgetUpdateBody(formValues('bad', true))).toBeNull();
+    expect(budgetUpdateBody(formValues('25', '10'))).toEqual(budgetWireBody(2500));
+    expect(budgetUpdateBody(formValues('', '25'))).toBeNull();
+    expect(budgetUpdateBody(formValues('bad', '25'))).toBeNull();
   });
 
   it('blocks submit on invalid budget text', () => {

@@ -361,7 +361,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 	// skills 和记忆目录已经可用。
 	ctx = run.begin(ctx, "filestore")
 	if preparation != nil {
-		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session, preparation.MemoryMounts)
+		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session, record.UUID, preparation.MemoryMounts)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)

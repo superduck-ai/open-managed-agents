@@ -59,6 +59,7 @@ type rcloneFilestoreLaunch struct {
 func (r *Runner) prepareRcloneFilestoreLaunch(
 	ctx context.Context,
 	session db.Session,
+	sandboxUUID string,
 	memoryMounts []memoryRuntimeMount,
 ) (rcloneFilestoreLaunch, error) {
 	serviceURL := codeSessionSandboxAPIBaseURL(r.cfg)
@@ -70,6 +71,7 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 		return rcloneFilestoreLaunch{}, fmt.Errorf("resolve managed-agent filestore identity: %w", err)
 	}
 	identity := filestoreTokenIdentityFromScope(scope)
+	identity.SandboxUUID = sandboxUUID
 	readWriteToken, err := r.filestoreTokens.Issue(identity)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore read-write token: %w", err)

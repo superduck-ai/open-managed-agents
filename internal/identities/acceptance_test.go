@@ -63,29 +63,29 @@ func TestAcceptanceDecisions(t *testing.T) {
 	if err != nil || held.Mode != "hold" || contains(held.VaultIDs, "vlt_alice") {
 		t.Fatalf("shared vault fell back: %v %#v", err, held)
 	}
-	friday := store.identities["id_friday"]
-	friday.Enabled = false
-	store.identities["id_friday"] = friday
+	catalog := store.identities["id_catalog"]
+	catalog.Enabled = false
+	store.identities["id_catalog"] = catalog
 	if err := service.AdmitExecution(context.Background(), "org", "ws", "ses_live", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.AdmitExecution(context.Background(), "org", "ws", "ses_live", true); err == nil {
 		t.Fatal("disabled identity started a round")
 	}
-	if _, err := service.EnableIdentity(context.Background(), principal, "idn_friday"); err != nil {
+	if _, err := service.EnableIdentity(context.Background(), principal, "idn_catalog"); err != nil {
 		t.Fatal(err)
 	}
-	if store.channelMutations != 0 || !store.identities["id_friday"].Enabled {
-		t.Fatalf("enable changed other resources: %d %#v", store.channelMutations, store.identities["id_friday"])
+	if store.channelMutations != 0 || !store.identities["id_catalog"].Enabled {
+		t.Fatalf("enable changed other resources: %d %#v", store.channelMutations, store.identities["id_catalog"])
 	}
-	_, err = service.ClearIdentity(context.Background(), principal, "idn_friday")
+	_, err = service.ClearIdentity(context.Background(), principal, "idn_catalog")
 	var appErr *apperr.Error
 	if !errors.As(err, &appErr) || appErr.Kind != apperr.Conflict || !strings.Contains(appErr.PublicMessage, "ses_running") {
 		t.Fatalf("cleanup conflict: %v", err)
 	}
 	store.running = nil
 	store.listConfigErr = errors.New("list failed")
-	if _, err := service.ClearIdentity(context.Background(), principal, "idn_friday"); err == nil || store.channelMutations != 0 {
+	if _, err := service.ClearIdentity(context.Background(), principal, "idn_catalog"); err == nil || store.channelMutations != 0 {
 		t.Fatalf("cleanup continued after vault list failure: %v mutations=%d", err, store.channelMutations)
 	}
 	store.listConfigErr = nil
@@ -98,7 +98,7 @@ func TestAcceptanceDecisions(t *testing.T) {
 	}
 	store.vaultErr = nil
 	store.archiveErr = db.ErrDuplicate
-	cleared, err := service.ClearIdentity(context.Background(), principal, "idn_friday")
+	cleared, err := service.ClearIdentity(context.Background(), principal, "idn_catalog")
 	if err != nil || cleared.Outcome.Completed || cleared.Outcome.PersonalVaultsDeleted || !contains(cleared.Outcome.RetainedSharedVaults, "vlt_shared") || contains(cleared.Outcome.RetainedSharedVaults, "vlt_left") {
 		t.Fatalf("partial cleanup: %v %#v", err, cleared)
 	}
@@ -138,7 +138,7 @@ type acceptanceStore struct {
 }
 
 func newAcceptanceStore() *acceptanceStore {
-	friday := "id_friday"
+	catalog := "id_catalog"
 	left := "id_left"
 	right := "id_right"
 	now := time.Now().UTC()
@@ -146,19 +146,19 @@ func newAcceptanceStore() *acceptanceStore {
 		return db.IdentityRecord{UUID: id, ExternalID: external, OrganizationUUID: "org", WorkspaceUUID: "ws", Namespace: "crm", ExternalSubjectID: external, DisplayName: external, Enabled: enabled, CreatedAt: now, UpdatedAt: now}
 	}
 	store := &acceptanceStore{
-		identities: map[string]db.IdentityRecord{"id_friday": identity(friday, "idn_friday", true), left: identity(left, "idn_left", true), right: identity(right, "idn_right", true)},
+		identities: map[string]db.IdentityRecord{"id_catalog": identity(catalog, "idn_catalog", true), left: identity(left, "idn_left", true), right: identity(right, "idn_right", true)},
 		configs: map[string]db.IdentityConfigRecord{
-			left + ":agent_left":     {ExternalID: "idcfg_left", IdentityUUID: left, AgentExternalID: "agent_left", Env: `{"REGION":"cn"}`, VaultMounts: `["vlt_left"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
-			right + ":agent_right":   {ExternalID: "idcfg_right", IdentityUUID: right, AgentExternalID: "agent_right", VaultMounts: `["vlt_right"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
-			friday + ":agent_friday": {ExternalID: "idcfg_friday", IdentityUUID: friday, AgentExternalID: "agent_friday", VaultMounts: `[]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
-			friday + ":agent_shared": {ExternalID: "idcfg_shared", IdentityUUID: friday, AgentExternalID: "agent_shared", VaultMounts: `["vlt_shared"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
+			left + ":agent_left":       {ExternalID: "idcfg_left", IdentityUUID: left, AgentExternalID: "agent_left", Env: `{"REGION":"cn"}`, VaultMounts: `["vlt_left"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
+			right + ":agent_right":     {ExternalID: "idcfg_right", IdentityUUID: right, AgentExternalID: "agent_right", VaultMounts: `["vlt_right"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
+			catalog + ":agent_catalog": {ExternalID: "idcfg_catalog", IdentityUUID: catalog, AgentExternalID: "agent_catalog", VaultMounts: `[]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
+			catalog + ":agent_shared":  {ExternalID: "idcfg_shared", IdentityUUID: catalog, AgentExternalID: "agent_shared", VaultMounts: `["vlt_shared"]`, DisabledVaults: `[]`, Revision: 1, Status: "active"},
 		},
 		pairings: map[string]db.ScopePairingRecord{
 			"oc_left":   {ExternalID: "chsp_left", Status: "active", IdentityUUID: &left, AgentExternalID: "agent_left", Revision: 3, RemoteID: "oc_left", ScopeKind: "room"},
 			"oc_right":  {ExternalID: "chsp_right", Status: "active", IdentityUUID: &right, AgentExternalID: "agent_right", Revision: 4, RemoteID: "oc_right", ScopeKind: "room"},
-			"ou_alice":  {ExternalID: "chsp_alice", Status: "active", IdentityUUID: &friday, AgentExternalID: "agent_friday", Revision: 1, RemoteID: "ou_alice", ScopeKind: "direct"},
-			"ou_bob":    {ExternalID: "chsp_bob", Status: "active", IdentityUUID: &friday, AgentExternalID: "agent_friday", Revision: 1, RemoteID: "ou_bob", ScopeKind: "direct"},
-			"ou_shared": {ExternalID: "chsp_shared", Status: "active", IdentityUUID: &friday, AgentExternalID: "agent_shared", Revision: 1, RemoteID: "ou_shared", ScopeKind: "direct"},
+			"ou_alice":  {ExternalID: "chsp_alice", Status: "active", IdentityUUID: &catalog, AgentExternalID: "agent_catalog", Revision: 1, RemoteID: "ou_alice", ScopeKind: "direct"},
+			"ou_bob":    {ExternalID: "chsp_bob", Status: "active", IdentityUUID: &catalog, AgentExternalID: "agent_catalog", Revision: 1, RemoteID: "ou_bob", ScopeKind: "direct"},
+			"ou_shared": {ExternalID: "chsp_shared", Status: "active", IdentityUUID: &catalog, AgentExternalID: "agent_shared", Revision: 1, RemoteID: "ou_shared", ScopeKind: "direct"},
 		},
 		vaults: map[string]db.Vault{
 			"vlt_left": activeVault("vlt_left"), "vlt_right": activeVault("vlt_right"), "vlt_alice": activeVault("vlt_alice"), "vlt_bob": activeVault("vlt_bob"),
@@ -240,7 +240,7 @@ func (s *acceptanceStore) FindSessionIdentity(_ context.Context, _, session stri
 	if session != "ses_live" {
 		return db.SessionIdentityRecord{}, db.ErrNotFound
 	}
-	return db.SessionIdentityRecord{SessionExternalID: session, IdentityUUID: "id_friday", AgentExternalID: "agent_friday"}, nil
+	return db.SessionIdentityRecord{SessionExternalID: session, IdentityUUID: "id_catalog", AgentExternalID: "agent_catalog"}, nil
 }
 
 func (s *acceptanceStore) SetBusinessIdentityEnabled(_ context.Context, _, external string, enabled bool) error {
@@ -419,7 +419,15 @@ func (s *acceptanceStore) ListIdentitySessions(context.Context, string, string, 
 func (s *acceptanceStore) BusinessIdentityStats(context.Context, string, string, *time.Time) (db.IdentityStatsRecord, error) {
 	return db.IdentityStatsRecord{}, nil
 }
-func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int) ([]db.IdentityAgentUsageRecord, error) {
+func (s *acceptanceStore) IdentityDirectory(context.Context, db.IdentityDirectoryParams) (string, error) {
+	return "{}", nil
+}
+
+func (s *acceptanceStore) ListIdentityChannels(context.Context, string, string) ([]db.IdentityChannelBindingRecord, error) {
+	return nil, nil
+}
+
+func (s *acceptanceStore) ListBusinessIdentityAgents(context.Context, string, string, *time.Time, int, int) ([]db.IdentityAgentUsageRecord, error) {
 	return nil, nil
 }
 func (s *acceptanceStore) ListAgentIdentityBindings(context.Context, string, string) ([]db.AgentBindingRecord, error) {
@@ -441,7 +449,7 @@ func TestCompleteByCodeLooksUpHash(t *testing.T) {
 	store.pendingHash = HashPairingCode(code)
 	store.pendingCode = db.ScopePairingRecord{ExternalID: "chsp_late", Status: "pending", ScopeKind: "room", RemoteID: "oc_late"}
 	store.rejectPairingList = true
-	view, err := NewService(store, nil).completeByCode(context.Background(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}, store.identities["id_friday"], PairingWrite{Code: code, AgentID: "agent_friday"})
+	view, err := NewService(store, nil).completeByCode(context.Background(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}, store.identities["id_catalog"], PairingWrite{Code: code, AgentID: "agent_catalog"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,18 +489,18 @@ func TestPairingWriteRequiresAgentEnvironment(t *testing.T) {
 	store.pairingEnvironmentErr = db.ErrNotFound
 	store.activated = new(store.pairings["ou_alice"])
 	_, err := service.CompletePairing(t.Context(), principal, PairingWrite{
-		PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday",
+		PairingID: "chsp_alice", IdentityID: "idn_catalog", AgentID: "agent_catalog",
 	})
 	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.Conflict || !strings.Contains(public.PublicMessage, "渠道执行环境") {
 		t.Fatalf("缺少执行环境时应拒绝配对：%v", err)
 	}
-	_, err = service.UpdatePairing(t.Context(), principal, "chsp_alice", PairingWrite{AgentID: "agent_friday", Revision: 1})
+	_, err = service.UpdatePairing(t.Context(), principal, "chsp_alice", PairingWrite{AgentID: "agent_catalog", Revision: 1})
 	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.Conflict || !strings.Contains(public.PublicMessage, "渠道执行环境") {
 		t.Fatalf("缺少执行环境时应拒绝改绑：%v", err)
 	}
 	store.pairingEnvironmentErr = nil
 	version := 0
-	_, err = service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday", AgentVersion: &version})
+	_, err = service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_catalog", AgentID: "agent_catalog", AgentVersion: &version})
 	if public, ok := errors.AsType[*apperr.Error](err); !ok || public.Kind != apperr.InvalidArgument {
 		t.Fatalf("版本 0 应被拒绝：%v", err)
 	}
@@ -500,7 +508,7 @@ func TestPairingWriteRequiresAgentEnvironment(t *testing.T) {
 	pending.Status = "pending"
 	store.activated = &pending
 	store.activateErr = db.ErrInvalidState
-	completed, err := service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_friday", AgentID: "agent_friday"})
+	completed, err := service.CompletePairing(t.Context(), principal, PairingWrite{PairingID: "chsp_alice", IdentityID: "idn_catalog", AgentID: "agent_catalog"})
 	if err != nil || completed["status"] != "active" {
 		t.Fatalf("相同目标的并发激活应返回已有绑定：%v %#v", err, completed)
 	}

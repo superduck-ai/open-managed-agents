@@ -16,6 +16,29 @@ func (s *Service) AllowsSelfPairing(ctx context.Context, ingress Ingress) (bool,
 	return execution.Mode == "pairing" && !execution.EntryClosed, err
 }
 
+func (s *Service) PrepareSelfPairing(ctx context.Context, in Ingress) (string, error) {
+	allows, err := s.AllowsSelfPairing(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	if !allows {
+		return "", db.ErrInvalidState
+	}
+	in.ScopeKind = "direct"
+	in.RemoteID = in.ActorID
+	p, _, _, err := s.ensurePendingPairing(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	if p.Status == "active" {
+		return "", nil
+	}
+	if p.Status != "pending" {
+		return "", db.ErrInvalidState
+	}
+	return p.ExternalID, nil
+}
+
 func (s *Service) ConfirmSelfPairing(ctx context.Context, ingress Ingress, pairingID string, version *int) error {
 	execution, err := s.store.FindExecutionContext(ctx, ingress.WorkspaceUUID, ingress.ChannelExternalID)
 	legacy := errors.Is(err, db.ErrNotFound) && ingress.ChannelMode == "pairing"

@@ -32,7 +32,7 @@ func TestPlatformRuntimeFilestoreScopePostgres(t *testing.T) {
 	execFixture(`INSERT INTO filestore_filesystems(uuid,external_id,organization_uuid,workspace_uuid,session_uuid) VALUES ($1,'claude_chat_runtime',$2,$3,$4)`, filesystem, target, workspace, session)
 	execFixture(`INSERT INTO code_sessions(external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,environment_uuid,environment_external_id,status) VALUES ('cse_runtime',$1,$2,$3,'sesn_runtime','63000000-0000-4000-8000-000000000009','env_runtime','active')`, target, workspace, session)
 	validate := func(user string) error {
-		_, err := store.ResolveFilestoreTokenScope(ctx, target, user, workspace, "wrkspc_runtime", "wrkspc_runtime", "claude_chat_runtime")
+		_, err := store.ResolveFilestoreTokenScope(ctx, target, user, workspace, "wrkspc_runtime", "wrkspc_runtime", "claude_chat_runtime", "")
 		return err
 	}
 	for _, invalid := range []struct{ name, metadata string }{

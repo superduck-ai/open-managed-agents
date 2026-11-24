@@ -121,7 +121,7 @@ test('keeps a successfully saved provider draft mounted until its exit completes
   await waitFor(() => expect(screen.getByText('Closed 1')).toBeTruthy());
 });
 
-test('editing preserves an existing display name and clearing it saves the Provider ID', async () => {
+test('editing preserves an existing display name and clearing it stays empty while saving the Provider ID', async () => {
   let savedName = '';
   render(
     <I18nProvider initialLocale="en">
@@ -138,9 +138,15 @@ test('editing preserves an existing display name and clearing it saves the Provi
       />
     </I18nProvider>,
   );
-  expect(screen.getByLabelText('Display name')).toHaveProperty('value', provider.name);
-  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: '' } });
-  expect(screen.getByLabelText('Display name')).toHaveProperty('value', provider.slug);
+  const name = screen.getByLabelText('Display name');
+  expect(name).toHaveProperty('value', provider.name);
+  fireEvent.change(name, { target: { value: '' } });
+  expect(name).toHaveProperty('value', '');
+  expect(name.getAttribute('placeholder')).toBe(provider.slug);
+  fireEvent.change(name, { target: { value: 'Renamed provider' } });
+  expect(name).toHaveProperty('value', 'Renamed provider');
+  fireEvent.change(name, { target: { value: '' } });
+  expect(name).toHaveProperty('value', '');
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(savedName).toBe(provider.slug));
 });

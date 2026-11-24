@@ -1,19 +1,33 @@
 import { budgetValid } from './budget';
+import { sessionEditBody } from '../sessions/sessionEdit';
 import { managedResourceFieldsValid } from './git-resource';
 import { previewSchedule } from './deployment-schedule';
 import type { ManagedEntityFormValues, ManagedEntitySection } from '../types';
 
+type DialogReadiness = {
+  submitting: boolean;
+  loadingOptions: boolean;
+  editing?: boolean;
+  vaultAcknowledged?: boolean;
+};
+
+function sessionCanSubmit(values: ManagedEntityFormValues, options: DialogReadiness) {
+  if (options.submitting || !budgetValid(values)) return false;
+  if (options.editing) return Object.keys(sessionEditBody(values)).length > 0;
+  return (
+    !options.loadingOptions &&
+    Boolean(values.agentId.trim() && values.environmentId.trim()) &&
+    managedResourceFieldsValid(values, false) &&
+    (!values.vaultIds.length || options.vaultAcknowledged === true)
+  );
+}
+
 export function managedEntityDialogCanSubmit(
   section: ManagedEntitySection,
   values: ManagedEntityFormValues,
-  options: {
-    submitting: boolean;
-    loadingOptions: boolean;
-    needsReferences: boolean;
-    editing?: boolean;
-    vaultAcknowledged?: boolean;
-  },
+  options: DialogReadiness,
 ) {
+  if (section === 'sessions') return sessionCanSubmit(values, options);
   if (options.submitting || options.loadingOptions) {
     return false;
   }
@@ -33,14 +47,5 @@ export function managedEntityDialogCanSubmit(
     }
     return values.triggerType === 'schedule' && !previewSchedule(values.cronExpression, values.timezone).error;
   }
-  const referencesReady =
-    !options.needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0);
-  return (
-    referencesReady &&
-    (section === 'sessions'
-      ? managedResourceFieldsValid(values, false) &&
-        budgetValid(values) &&
-        (options.editing || !values.vaultIds.length || options.vaultAcknowledged === true)
-      : values.name.trim().length > 0)
-  );
+  return values.name.trim().length > 0;
 }

@@ -7,12 +7,19 @@ function RadioGroup({ className, ...props }: RadioGroupPrimitive.Props) {
   return <RadioGroupPrimitive data-slot="radio-group" className={cn('grid w-full gap-2', className)} {...props} />;
 }
 
-function RadioGroupItem({ className, children, ...props }: RadioPrimitive.Root.Props) {
+function RadioGroupItem({
+  className,
+  children,
+  variant,
+  ...props
+}: RadioPrimitive.Root.Props & { variant?: 'segment' }) {
   return (
     <RadioPrimitive.Root
       data-slot="radio-group-item"
       className={cn(
         'group/radio-group-item peer relative flex aspect-square size-4 shrink-0 rounded-full border-[0.5px] border-muted-foreground outline-none after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:outline-solid focus-visible:outline-[0.5px] focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-[0.5px] aria-invalid:ring-destructive/20 aria-invalid:aria-checked:border-primary dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground dark:data-checked:bg-primary',
+        variant === 'segment' &&
+          'h-7 w-full aspect-auto items-center justify-center gap-2 rounded-md border-[0.5px] border-transparent bg-transparent text-sm text-muted-foreground after:hidden data-disabled:cursor-not-allowed data-disabled:opacity-50 data-checked:border-border data-checked:bg-background data-checked:text-foreground data-checked:shadow-none dark:bg-transparent dark:data-checked:bg-background [&>[data-slot=radio-group-indicator]]:hidden',
         className,
       )}
       {...props}

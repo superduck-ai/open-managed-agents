@@ -15,16 +15,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	scope := transcriptTestScope()
 	sessionUUID := seedTranscriptArchiveSession(t, database, scope)
 	sessionID := "ses_" + sessionUUID
-	session, found, err := store.GetSession(t.Context(), scope.WorkspaceUUID, sessionID)
-	if err != nil || !found {
-		t.Fatalf("加载会话：%v", err)
-	}
-	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"1","currency":"USD"}}`)
-	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = NewSessionThreadMapper(store.mapperDB).Insert(t.Context(), sessionThreadWriteParameters(SessionThread{
+	_, err := NewSessionThreadMapper(store.mapperDB).Insert(t.Context(), sessionThreadWriteParameters(SessionThread{
 		UUID: uuid.NewV4().String(), ExternalID: "sthr_budget", OrganizationUUID: scope.OrganizationUUID,
 		WorkspaceUUID: scope.WorkspaceUUID, SessionUUID: sessionUUID, SessionExternalID: sessionID,
 		AgentSnapshot: json.RawMessage(`{}`), Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
@@ -39,6 +30,21 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 			WorkspaceUUID: scope.WorkspaceUUID, SessionUUID: sessionUUID, SessionExternalID: sessionID,
 			EventType: kind, Payload: json.RawMessage(payload), CreatedAt: at, ProcessedAt: at}
 	}
+	setBudget := func(budget json.RawMessage, limit int64, removedAt *time.Time) Session {
+		t.Helper()
+		current, found, err := store.GetSession(t.Context(), scope.WorkspaceUUID, sessionID)
+		if err != nil || !found {
+			t.Fatalf("加载会话：%v", err)
+		}
+		current.Budget, current.BudgetReachedAt, current.BudgetRemovedAt = budget, nil, removedAt
+		update := event("sevt_"+uuid.NewV4().String(), "session.updated", `{"type":"session.updated"}`, now)
+		updated, _, err := store.UpdateSession(t.Context(), current, update, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return updated
+	}
+	session := setBudget(json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"1","currency":"USD"}}`), 1, nil)
 	usage := event("sevt_budget_usage", "session.usage", `{"type":"session.usage"}`, now)
 	idle := event("sevt_budget_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"budget_reached"}}`, now.Add(time.Microsecond))
 	transition := SessionBudgetTransition{Budget: session.Budget, ReachedAt: now}
@@ -83,11 +89,7 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 		t.Fatalf("已开始的请求不能结算：%v", err)
 	}
 
-	session.BudgetReachedAt = nil
-	session.Budget = json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`)
-	if _, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, true); err != nil {
-		t.Fatal(err)
-	}
+	setBudget(json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`), 100, nil)
 	changes, err = store.AppendSessionBudgetReachedEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{usage, idle}, transition)
 	if err != nil || len(changes.Events) != 0 {
 		t.Fatalf("旧预算覆盖新预算：%+v，%v", changes, err)
@@ -104,15 +106,34 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	if err := rejectPausedSessionInput(t.Context(), store.mapperDB, session, primary.thread(), []SessionEvent{message}); err != nil {
 		t.Fatalf("提高预算后消息仍被暂停：%v", err)
 	}
-	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{start}); err != nil {
-		t.Fatalf("提高预算后模型调用仍被阻止：%v", err)
-	}
-	session.Budget = nil
-	session.BudgetRemovedAt = new(now)
-	session, _, err = store.UpdateSession(t.Context(), scope.WorkspaceUUID, sessionID, session, true)
-	if err != nil {
+	child := primary.thread()
+	child.UUID, child.ExternalID = uuid.NewV4().String(), "sthr_child"
+	child.ParentThreadUUID, child.ParentThreadExternalID = &primary.UUID, &primary.ExternalID
+	if _, err := NewSessionThreadMapper(store.mapperDB).Insert(t.Context(), sessionThreadWriteParameters(child)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.ExecContext(t.Context(), "UPDATE code_sessions SET worker_status = 'running' WHERE uuid = $1", scope.CodeSessionUUID); err != nil {
+		t.Fatal(err)
+	}
+	childRunning := event("sevt_child_running", "session.thread_status_running", `{}`, now)
+	childRunning.StatusThreadID = child.ExternalID
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{childRunning, start}); err != nil {
+		t.Fatal(err)
+	}
+	primary, err = NewSessionThreadMapper(store.mapperDB).FindPrimary(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil || primary.Status != "running" {
+		t.Fatalf("子线程先运行后，主线程恢复模型请求时状态应为 running，实际为 %q：%v", primary.Status, err)
+	}
+	childIdle := event("sevt_child_idle", "session.thread_status_idle", `{"stop_reason":{"type":"end_turn"}}`, now)
+	childIdle.StatusThreadID = child.ExternalID
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{childIdle}); err != nil {
+		t.Fatal(err)
+	}
+	session, _, err = store.GetSession(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil || session.Status != "running" {
+		t.Fatalf("子线程结束时，主线程仍在执行，会话状态为 %q：%v", session.Status, err)
+	}
+	setBudget(nil, 0, &now)
 	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{message}, nil); err != nil {
 		t.Fatalf("移除预算后消息仍被暂停：%v", err)
 	}

@@ -28,6 +28,7 @@ func (d *DB) ResolveFilestoreTokenScope(
 	workspaceTaggedID string,
 	resolvedWorkspaceTaggedID string,
 	filesystemID string,
+	sandboxUUID string,
 ) (FilestoreTokenScope, error) {
 	// 查询末尾两列同时取回当前安全策略：组织 taints 来自 settings JSON，
 	// CMEK 状态则由工作区是否配置 external_key_id 推导，供鉴权层校验 JWT 快照。
@@ -41,6 +42,7 @@ func (d *DB) ResolveFilestoreTokenScope(
 		strings.TrimSpace(resolvedWorkspaceTaggedID),
 		strings.TrimSpace(filesystemID),
 		tryParseDBUUIDIdentifierString(filesystemID),
+		sandboxUUID,
 	)
 	return filestoreTokenScopeFromMapperRow(row, found, err)
 }

@@ -37,12 +37,14 @@ export function SessionTraceWorkspaceLayout({
   primary,
   inspector,
   inspectorOpen,
+  initiallyShowInspector = false,
   onInspectorCollapse,
   resizeLabel,
 }: {
   primary: ReactNode;
   inspector: ReactNode;
   inspectorOpen: boolean;
+  initiallyShowInspector?: boolean;
   onInspectorCollapse?: () => void;
   resizeLabel: string;
 }) {
@@ -57,12 +59,15 @@ export function SessionTraceWorkspaceLayout({
   // treating an unknown `0px` as compact would briefly inert the transcript
   // and steal focus before the real container breakpoint is known.
   const compact = containerWidth > 0 && containerWidth < sessionTraceDualPaneMinWidth;
-  const previousCompactRef = useRef(false);
+  const previousCompactRef = useRef<boolean | null>(null);
   useLayoutEffect(() => {
-    const enteringCompact = compact && !previousCompactRef.current;
+    if (containerWidth <= 0) return;
+    const previousCompact = previousCompactRef.current;
     previousCompactRef.current = compact;
-    if (enteringCompact) onInspectorCollapse?.();
-  }, [compact, onInspectorCollapse]);
+    if (compact && (previousCompact === false || (previousCompact === null && !initiallyShowInspector))) {
+      onInspectorCollapse?.();
+    }
+  }, [compact, containerWidth, initiallyShowInspector, onInspectorCollapse]);
   const compactInspectorOpen = compact && inspectorOpen;
   const splitInspectorOpen = inspectorOpen && !compact;
   const maximumInspectorWidth = Math.round(sessionTraceInspectorMaximumWidth(containerWidth, viewportWidth));

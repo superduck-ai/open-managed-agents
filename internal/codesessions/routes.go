@@ -23,12 +23,14 @@ func (h *Handler) RegisterV1Routes(router chi.Router) {
 func (h *Handler) RegisterV2Routes(router chi.Router) {
 	h.registerSessionIngressRoutes(router)
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
+	router.Head("/sessions/{code_session_id}/budget", h.handleSessionBudget)
 	router.Get("/sessions/{code_session_id}/skills", h.handleSessionSkills)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
 	router.Route("/ccr-sessions/{code_session_id}/threads/{thread_id}/tool-calls", func(r chi.Router) {
 		r.Post("/", h.handleToolCallSubmit)
 		r.Get("/{call_id}", h.handleToolCallWait)
 		r.Post("/{call_id}/cancel", h.handleToolCallCancel)
+		r.Post("/{call_id}/oauth-credential", h.handleToolOAuthCredential)
 	})
 	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
 	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)

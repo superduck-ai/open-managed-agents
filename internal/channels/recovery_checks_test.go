@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 )
 
@@ -61,6 +62,10 @@ func TestBindingReadFailureDoesNotCreateSession(t *testing.T) {
 	id, err := worker.sessionFor(t.Context(), &channelMessage{ChatID: "oc_1", UserID: "ou_1"}, "chat:oc_1")
 	if !errors.Is(err, context.DeadlineExceeded) || id != "" || created != 0 || store.binding("chat:oc_1") != "sesn_original" {
 		t.Fatalf("绑定读取异常被误当成无绑定: id=%s err=%v requests=%d", id, err, created)
+	}
+	msg := &channelMessage{Input: &db.ChannelInput{SessionExternalID: "sesn_original"}}
+	if _, err := worker.inputSession(t.Context(), msg, "chat:oc_1"); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errChannelSessionUnconfirmed) {
+		t.Fatalf("读取失败的旧输入应保留重试：%v", err)
 	}
 }
 

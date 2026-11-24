@@ -228,8 +228,7 @@
               {
                 "group": "集成智能体",
                 "pages": [
-                  "docs/zh/message-channels",
-                  "docs/zh/identities"
+                  "docs/zh/message-channels"
                 ]
               },
               {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -50,7 +51,16 @@ func nullableStringFromRaw(raw json.RawMessage, name string) (*string, error) {
 	return &value, nil
 }
 
+func sessionUpdateTitle(raw json.RawMessage) (*string, error) {
+	title, err := nullableStringFromRaw(raw, "title")
+	if err == nil && title != nil && (*title == "" || utf8.RuneCountInString(*title) > 500) {
+		return nil, errSessionUpdateTitleLength
+	}
+	return title, err
+}
+
 func validateMetadataEntries(metadata map[string]string) error {
+	delete(metadata, "_oma_runtime_user_uuid")
 	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
 }
 

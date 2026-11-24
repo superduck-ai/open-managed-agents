@@ -54,6 +54,10 @@ func platformCSRFRejected() *httpapi.Error {
 func platformOrganizationInvalid() *httpapi.Error {
 	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Invalid or conflicting organization scope")
 }
+func platformWorkspaceNotFound() *httpapi.Error {
+	return httpapi.NewError(http.StatusNotFound, "not_found_error", "Workspace not found")
+}
+
 func platformOrganizationNotFound() *httpapi.Error {
 	return httpapi.NewError(http.StatusNotFound, "not_found_error", "Organization not found")
 }

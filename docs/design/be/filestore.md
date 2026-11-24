@@ -82,7 +82,7 @@ Filestore JWT 包含以下注册 claims 与业务 claims：
 | `iss`                                                  | 固定为 `open-managed-agents`                                         |
 | `sub`                                                  | 非空的主体标识                                                       |
 | `aud`                                                  | 必须包含 `filestore`                                                 |
-| `iat` / `exp`                                          | 签发时间与到期时间必填；当前有效期固定为 1 小时                      |
+| `iat` / `exp`                                          | `iat` 必填；携带 `exp` 时按到期时间校验；不携带 `sandbox_uuid` 的 token 必须携带数字 `exp` |
 | `org_uuid`                                             | 必须匹配文件系统所属组织                                             |
 | `account_uuid`                                         | 必须匹配未删除账号，且属于目标组织或等于该 filesystem 所属 Session 的已保存运行账号                                           |
 | `workspace_uuid`                                       | 必须匹配未归档工作区                                                 |
@@ -91,8 +91,18 @@ Filestore JWT 包含以下注册 claims 与业务 claims：
 | `org_taints`                                           | 规范化后必须与当前组织策略一致                                       |
 | `workspace_cmek_enabled`                               | 必须与当前 workspace CMEK 状态一致                                   |
 | `readonly`                                             | 仅第二类 token 携带，且只允许为 `true`；禁止目录、文件的所有变更操作 |
+| `sandbox_uuid`                                         | Runner 签发的 token 携带；必须指向状态为 `creating` 或 `running`、且属于该 filesystem 所属 Session 的 `environment_sandboxes` 记录 |
 
-第一类读写 token 不序列化 `readonly`，并拥有其绑定 filesystem 的完整写权限；第二类 token 只能通过专用的 `IssueReadonly` 入口签发，避免出现语义含混的 `readonly:false`。Filestore 不再定义或执行路径前缀级写权限，Sandbox 中 `/uploads`、`/transcripts` 和 `/tool_results` 的只读约束由各自的 rclone 只读挂载与只读 token 保证。验证器除固定算法与 `kid` 外，还强制校验 issuer、audience、签发时间和到期时间；token 有效期内的每次请求仍会回查数据库范围和当前安全策略，因此 Session 生命周期、组织 taints 或 workspace CMEK 状态变化可立即撤销权限。
+第一类读写 token 不序列化 `readonly`，并拥有其绑定 filesystem 的完整写权限；第二类 token 只能通过专用的 `IssueReadonly` 入口签发，避免出现语义含混的 `readonly:false`。Filestore 不再定义或执行路径前缀级写权限，Sandbox 中 `/uploads`、`/transcripts` 和 `/tool_results` 的只读约束由各自的 rclone 只读挂载与只读 token 保证。验证器除固定算法与 `kid` 外，还强制校验 issuer、audience、签发时间，以及“要么绑定 Sandbox、要么带到期时间”的规则；每次请求仍会回查数据库范围和当前安全策略，因此 Sandbox 停止、Session 生命周期、组织 taints 或 workspace CMEK 状态变化可立即撤销权限。
+
+```mermaid
+flowchart LR
+    T[Filestore JWT] --> S{sandbox_uuid?}
+    S -->|有| Q[回查 Sandbox 处于 creating/running<br/>且属于 filesystem 所属 Session]
+    S -->|无| E{exp?}
+    E -->|有| V[按 exp 校验]
+    E -->|无| R[拒绝]
+```
 
 ### 手动签发测试 token
 
@@ -120,7 +130,7 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 - 组织有多个 taint 时重复传入 `--org-taint`。
 - workspace 已启用 CMEK 时传入 `--workspace-cmek-enabled`。
 - 默认签发读写 Token 1；增加 `--readonly` 后签发携带 `readonly=true` 的 Token 2。
-- token 自签发起 1 小时后失效；长时间 mount 或联调需要在到期前重新签发并更新客户端凭证。
+- CLI 签发的 token 不绑定 Sandbox，自签发起 1 小时后失效；长时间 mount 或联调需要在到期前重新签发并更新客户端凭证。
 - 所有身份和策略字段都必须与当前数据库一致，且 `filesystem-id` 必须已经存在，否则服务端验签后的范围回查仍会拒绝请求。
 
 当前公开合同没有 filesystem 创建接口，Filestore 鉴权也不会根据其他凭证惰性建档。public Session 创建事务会自动建立唯一 filesystem，并在同一事务中建立 `/outputs`、`/skills`、`/uploads`、`/transcripts`、`/tool_results` 五个固定一级目录；JWT 在 sandbox 启动等受信边界按需签发，不持久化。请求改用同 workspace 的其他 filesystem、同名 filesystem 已被其他 Session 绑定，或数据库记录尚未创建时，都必须拒绝，不能改绑或泄露其存在性。每次鉴权还会回查所属 Session；Session 一旦归档、终止或删除，既有 JWT 立即失效。
@@ -131,7 +141,7 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 
 ## E2B Sandbox 固定挂载
 
-Cloud Session 的 Environment Runner 在创建 E2B Sandbox 前只读取 Session 与启动所需的可信上下文。Sandbox 创建成功后，Runner 再从数据库读取唯一 filesystem、workspace、organization 和创建该 Session 的可信账号链。Runner 不接受客户端提供的 token claims，也不新增 Filestore HTTP 签发路由；它复用进程内唯一的 Filestore signer，分别签发当前固定一小时有效期、绑定完整 filesystem 写权限的读写 Token 和只读 Token。
+Cloud Session 的 Environment Runner 在创建 E2B Sandbox 前只读取 Session 与启动所需的可信上下文。Sandbox 创建成功后，Runner 再从数据库读取唯一 filesystem、workspace、organization 和创建该 Session 的可信账号链。Runner 不接受客户端提供的 token claims，也不新增 Filestore HTTP 签发路由；它复用进程内唯一的 Filestore signer，分别签发绑定当前 Sandbox（`sandbox_uuid`）、不含墙钟有效期的读写 Token 和只读 Token；Sandbox 停止后两者立即失效，Sandbox 运行期间无需续签。
 
 filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经就绪。Runner 不扫描、不清空、不调和 `/uploads` 子树，也不复制 Files 对象；它只读取当前 Session 的可信 filesystem scope、签发挂载 Token 并创建 Sandbox。Sandbox 创建后使用下面的固定 multimount 合同：
 
@@ -157,7 +167,7 @@ Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-
 /opt/rclone/rclone-filestore multimount --config /tmp/rclone-mount-config.json
 ```
 
-Runner 启动 rclone 后只使用 E2B Files API 探测 `/tmp/rclone-mounts/ready`，每 `200ms` 一次，最长 `20s`，不执行 Sandbox shell wait 命令，也不探测进程 PID。ready 后立即删除包含 Token 的配置文件；删除命令失败时最多重试三次，并用 E2B Files API 验证文件是否已经不存在。三次都无法确认删除时记录只含阶段、尝试次数与错误类型的告警，但不杀掉已经 ready 的 Sandbox；残留读写 Token 在到期前拥有所绑定 filesystem 的完整写权限，因此该告警属于安全审计信号。Token 不进入 shell command、环境变量、Session metadata 或 Environment Work metadata。当前不刷新 mount Token，超过一小时的 Sandbox 行为不在本期处理。
+Runner 启动 rclone 后只使用 E2B Files API 探测 `/tmp/rclone-mounts/ready`，每 `200ms` 一次，最长 `20s`，不执行 Sandbox shell wait 命令，也不探测进程 PID。ready 后立即删除包含 Token 的配置文件；删除命令失败时最多重试三次，并用 E2B Files API 验证文件是否已经不存在。三次都无法确认删除时记录只含阶段、尝试次数与错误类型的告警，但不杀掉已经 ready 的 Sandbox；残留读写 Token 在该 Sandbox 停止前拥有所绑定 filesystem 的完整写权限，因此该告警属于安全审计信号。Token 不进入 shell command、环境变量、Session metadata 或 Environment Work metadata。mount Token 不刷新，其有效性完全由 Sandbox 状态决定。
 
 ```mermaid
 sequenceDiagram

@@ -39,7 +39,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 function registerTools(ctx: Context, config: Config): void {
   const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions, config.threadId);
   ctx.tools.restrict({ allow: [] });
-  for (const tool of sandboxToolDefinitions()) {
+  const tools = sandboxToolDefinitions();
+  for (const tool of tools) {
     if (config.tools && !config.tools.includes(tool.name)) continue;
     ctx.tools.register({
       name: tool.name,

@@ -147,7 +147,7 @@ func sessionBudgetAmount(session db.Session) (int64, bool) {
 // reaches its cap, marks the cap reached and emits the CMA budget_reached
 // event sequence: session.usage immediately followed by session.status_idle
 // with stop_reason budget_reached.
-func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
+func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) error {
 	if h == nil || len(events) == 0 {
 		return nil
 	}
@@ -161,7 +161,11 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 	if !interesting {
 		return nil
 	}
-	totals, err := h.db.SumSessionUsageTotals(ctx, session.WorkspaceUUID, session.ExternalID)
+	session, found, err := h.db.GetSession(ctx, workspaceUUID, sessionID)
+	if err != nil || !found {
+		return err
+	}
+	totals, err := h.db.SumSessionUsageTotals(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return fmt.Errorf("sum session usage: %w", err)
 	}

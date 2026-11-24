@@ -389,6 +389,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
+	router.Get("/oauth/channels/{channel_id}/pairing/{input_id}", s.handleChannelOAuthStart)
 	router.Get("/oauth/channels/{channel_id}/sessions/{session_id}/requests/{request_id}", s.handleChannelOAuthStart)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
@@ -589,20 +590,18 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		orgHeader := strings.TrimSpace(r.Header.Get("X-Organization-UUID"))
-		if auth.ExtractPlatformSessionKey(r) == "" {
-			if orgHeader != "" {
-				httpapi.WriteError(w, r, platformIdentityUnauthorized())
-				return
-			}
-			next.ServeHTTP(w, r)
-			return
+		query := r.URL.Query()
+		workspaceBootstrap := r.URL.Path == "/api/bootstrap" && query.Has("target_workspace_id")
+		scoped := orgHeader != "" || workspaceBootstrap
+		if workspaceBootstrap {
+			w.Header().Set("Cache-Control", "no-store")
 		}
 		session, err := s.loadPlatformSession(r)
 		if err != nil {
-			if err.Status == http.StatusUnauthorized {
+			if err.Status == http.StatusUnauthorized && auth.ExtractPlatformSessionKey(r) != "" {
 				clearPlatformSessionCookies(w)
 			}
-			if err.Status >= http.StatusInternalServerError || orgHeader != "" {
+			if err.Status >= http.StatusInternalServerError || scoped {
 				httpapi.WriteError(w, r, err)
 				return
 			}
@@ -610,9 +609,16 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			return
 		}
 		ctx := platformsession.WithSession(r.Context(), session)
-		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session, orgHeader); scopeErr == nil {
+		var principal auth.Principal
+		var scopeErr *httpapi.Error
+		if workspaceBootstrap {
+			principal, scopeErr = s.workspaceBootstrapPrincipal(r, session, query.Get("target_workspace_id"))
+		} else {
+			principal, scopeErr = s.resolvePlatformSessionPrincipal(r, session, orgHeader)
+		}
+		if scopeErr == nil {
 			ctx = auth.WithPrincipal(ctx, principal)
-		} else if orgHeader != "" {
+		} else if scoped {
 			httpapi.WriteError(w, r, scopeErr)
 			return
 		}

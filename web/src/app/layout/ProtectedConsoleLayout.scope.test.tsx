@@ -43,7 +43,7 @@ for (const [status, message] of [
     await act(async () => {
       render(
         <QueryClientProvider client={client}>
-          <I18nProvider>
+          <I18nProvider initialLocale="en">
             <AuthContext.Provider
               value={{
                 account: { uuid: 'operator', email_address: 'operator@example.com' },

@@ -55,6 +55,7 @@ type prebuildJobArgs struct {
 	Dockerfile      string              `json:"dockerfile"`
 	BaseImage       string              `json:"base_image,omitempty"`
 	Template        *templateBuildInput `json:"template,omitempty"`
+	BuildSpec       *buildSpecSnapshot  `json:"build_spec,omitempty"`
 }
 
 func (prebuildJobArgs) Kind() string { return PrebuildQueue }
@@ -188,6 +189,7 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		EnvironmentUUID: env.UUID,
 		ProviderKey:     svc.providerKey,
 		Template:        &template,
+		BuildSpec:       snapshotBuildSpec(spec),
 	}
 	if spec.needsImage() {
 		args.Dockerfile = templateDockerfile(svc.cfg.Image.BaseImage, spec, svc.packages)
@@ -210,25 +212,47 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 	if err != nil {
 		return err
 	}
+	var active db.Environment
 	if current != nil {
+		active = activeResolution(*current)
 		previous, err := decodeEnvironmentBuildSpec(current.Config)
 		if err == nil && sameBuildSpec(previous, spec) {
 			next.BuildJobID = current.BuildJobID
-			if current.BuildJobID != nil || current.ResolvedBuildJobID != nil {
-				next.ResolvedTemplate, next.ResolvedBuildJobID = current.ResolvedTemplate, current.ResolvedBuildJobID
+			if current.BuildJobID != nil || active.ResolvedBuildJobID != nil {
+				copyResolution(next, active)
 			}
 			return nil
 		}
 	}
 	next.BuildJobID = nil
-	next.ResolvedBuildJobID = nil
-	if current != nil && current.ResolvedBuildJobID != nil && spec != nil && next.ArchivedAt == nil {
-		next.ResolvedTemplate, next.ResolvedBuildJobID = current.ResolvedTemplate, current.ResolvedBuildJobID
+	next.ResolvedBuildJobID, next.ResolvedBuildSpec = nil, nil
+	enabled := svc != nil && svc.cfg.Enabled
+	if active.ResolvedBuildJobID != nil && spec != nil && next.ArchivedAt == nil && enabled {
+		copyResolution(next, active)
 	}
-	if spec == nil || next.ArchivedAt != nil || svc == nil || !svc.cfg.Enabled {
+	if spec == nil || next.ArchivedAt != nil || !enabled {
 		return nil
 	}
 	return svc.enqueue(ctx, tx, next, spec)
+}
+
+func activeResolution(env db.Environment) db.Environment {
+	if environmentTemplateSource(env) != templateSourceCurrent {
+		return env
+	}
+	env.ResolvedBuildJobID = env.BuildJobID
+	if len(env.ResolvedBuildSpec) == 0 {
+		if spec, err := decodeEnvironmentBuildSpec(env.Config); err == nil {
+			env.ResolvedBuildSpec, _ = encodeBuildSpecSnapshot(snapshotBuildSpec(spec))
+		}
+	}
+	return env
+}
+
+func copyResolution(next *db.Environment, active db.Environment) {
+	next.ResolvedTemplate = active.ResolvedTemplate
+	next.ResolvedBuildJobID = active.ResolvedBuildJobID
+	next.ResolvedBuildSpec = active.ResolvedBuildSpec
 }
 
 // The environment row serializes API mutations and worker checkpoints. A stale
@@ -272,7 +296,11 @@ func (svc *Prebuilds) persistCheckpoint(ctx context.Context, task *prebuildTask)
 			return err
 		}
 		if task.output.TemplateID != "" {
-			return svc.db.ResolveEnvironmentPrebuildTx(ctx, tx, env.WorkspaceUUID, env.UUID, task.job.ID, task.output.TemplateID)
+			buildSpec, err := encodeBuildSpecSnapshot(task.job.Args.BuildSpec)
+			if err != nil {
+				return err
+			}
+			return svc.db.ResolveEnvironmentPrebuildTx(ctx, tx, env.WorkspaceUUID, env.UUID, task.job.ID, task.output.TemplateID, buildSpec)
 		}
 		return nil
 	})
@@ -446,17 +474,17 @@ func samePackages(previous, next *environmentPackages) bool {
 	}
 	other := next.specsByManager()
 	for i, manager := range previous.specsByManager() {
-		if !slices.Equal(distinctSortedSpecs(*manager.specs), distinctSortedSpecs(*other[i].specs)) {
+		if !slices.Equal(sortedSpecs(*manager.specs), sortedSpecs(*other[i].specs)) {
 			return false
 		}
 	}
 	return true
 }
 
-func distinctSortedSpecs(specs []string) []string {
+func sortedSpecs(specs []string) []string {
 	sorted := slices.Clone(specs)
 	slices.Sort(sorted)
-	return slices.Compact(sorted)
+	return sorted
 }
 
 func prebuildProviderKey(cfg config.Config) string {
@@ -504,13 +532,49 @@ const (
 	templateSourceDefault  templateSource = "default"
 )
 
+const (
+	templateFallbackNotBuilt         = "not_built"
+	templateFallbackPackagesChanged  = "packages_changed"
+	templateFallbackBuildSpecUnknown = "build_spec_unknown"
+)
+
+type templateChoice struct {
+	source   templateSource
+	fallback string
+}
+
 func environmentTemplateSource(env db.Environment) templateSource {
 	switch {
+	case env.ResolvedTemplate == "":
+		return templateSourceDefault
+	case env.BuildJobID != nil && (env.ResolvedBuildJobID == nil || *env.ResolvedBuildJobID == *env.BuildJobID):
+		return templateSourceCurrent
 	case env.ResolvedBuildJobID == nil:
 		return templateSourceDefault
-	case env.BuildJobID != nil && *env.BuildJobID == *env.ResolvedBuildJobID:
-		return templateSourceCurrent
 	default:
 		return templateSourcePrevious
 	}
+}
+
+func chooseEnvironmentTemplate(env db.Environment) templateChoice {
+	source := environmentTemplateSource(env)
+	switch {
+	case source == templateSourceDefault && env.BuildJobID != nil:
+		return templateChoice{source: source, fallback: templateFallbackNotBuilt}
+	case source != templateSourcePrevious:
+		return templateChoice{source: source}
+	}
+	snapshot, err := decodeBuildSpecSnapshot(env.ResolvedBuildSpec)
+	if err != nil || snapshot == nil {
+		return templateChoice{source: templateSourceDefault, fallback: templateFallbackBuildSpecUnknown}
+	}
+	packages, err := decodeEnvironmentPackages(env.Config)
+	if err != nil || !samePackages(snapshot.Packages, packages) {
+		return templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}
+	}
+	return templateChoice{source: templateSourcePrevious}
+}
+
+func (choice templateChoice) replacesPrevious() bool {
+	return choice.fallback == templateFallbackPackagesChanged || choice.fallback == templateFallbackBuildSpecUnknown
 }

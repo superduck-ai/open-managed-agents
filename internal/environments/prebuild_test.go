@@ -195,7 +195,7 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 		{"version changes identity", `{"type":"cloud","packages":{"apt":["a=2","b"]}}`, false},
 		{"manager changes identity", `{"type":"cloud","packages":{"pip":["a","b"]}}`, false},
 		{"order within a manager is ignored", `{"type":"cloud","packages":{"apt":["b","a"]}}`, true},
-		{"duplicate entries are ignored", `{"type":"cloud","packages":{"apt":["b","a","a"]}}`, true},
+		{"repeated entries change identity", `{"type":"cloud","packages":{"apt":["b","a","a"]}}`, false},
 		{"added package changes identity", `{"type":"cloud","packages":{"apt":["b","a","c"]}}`, false},
 		{"removed package changes identity", `{"type":"cloud","packages":{"apt":["a"]}}`, false},
 		{"pinned version changes identity", `{"type":"cloud","packages":{"apt":["b","a=1.0"]}}`, false},
@@ -346,23 +346,26 @@ func TestPrebuildReconcileRebuildTriggers(t *testing.T) {
 
 func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
 	active, pending := int64(41), int64(42)
+	snapshot := json.RawMessage(`{"packages":null,"init_script":"a"}`)
 	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
 	for _, tc := range []struct {
 		name         string
 		before       string
 		update       string
 		archived     bool
+		disabled     bool
 		wantTemplate string
 		wantActive   *int64
 	}{
-		{"cleared packages return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":null}`, false, "base", nil},
-		{"archived environment returns to default", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, true, "base", nil},
-		{"packages change keeps previous", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, "tpl-old", &active},
-		{"init script change keeps previous", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, false, "tpl-old", &active},
-		{"init removal keeps previous while packages remain", `{"type":"cloud","packages":{"pip":["a"]},"init_script":"a"}`, `{"type":"cloud","init_script":null}`, false, "tpl-old", &active},
+		{"cleared packages return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":null}`, false, false, "base", nil},
+		{"archived environment returns to default", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, true, false, "base", nil},
+		{"disabled prebuilds return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, true, "base", nil},
+		{"packages change keeps previous", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, false, "tpl-old", &active},
+		{"init script change keeps previous", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, false, false, "tpl-old", &active},
+		{"init removal keeps previous while packages remain", `{"type":"cloud","packages":{"pip":["a"]},"init_script":"a"}`, `{"type":"cloud","init_script":null}`, false, false, "tpl-old", &active},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current := db.Environment{Config: json.RawMessage(tc.before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
+			current := db.Environment{Config: json.RawMessage(tc.before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot}
 			if tc.archived {
 				now := time.Now()
 				current.ArchivedAt = &now
@@ -371,11 +374,49 @@ func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
+			service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: !tc.disabled}}
+			if err := service.reconcilePrebuild(context.Background(), nil, &current, &next); err != nil && !errors.Is(err, errPrebuildUnavailable) {
 				t.Fatal(err)
 			}
 			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) || next.BuildJobID != nil {
 				t.Fatalf("template=%q active=%v job=%v", next.ResolvedTemplate, next.ResolvedBuildJobID, next.BuildJobID)
+			}
+			if wantSnapshot := tc.wantActive != nil; (len(next.ResolvedBuildSpec) > 0) != wantSnapshot {
+				t.Fatalf("build spec snapshot = %s, want present=%v", next.ResolvedBuildSpec, wantSnapshot)
+			}
+		})
+	}
+}
+
+func TestPrebuildReconcileAdoptsTemplateFromOlderInstance(t *testing.T) {
+	jobID := int64(42)
+	before := `{"type":"cloud","packages":{"type":"packages","pip":["b","a"]},"init_script":"make"}`
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
+	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}}
+	for _, tc := range []struct {
+		name        string
+		update      string
+		wantEnqueue bool
+	}{
+		{"unchanged spec records the build in place", `{"environment":{"A":"1"}}`, false},
+		{"changed spec keeps the adopted template during the rebuild", `{"init_script":"make all"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &jobID, ResolvedTemplate: "tpl-legacy"}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
+			if errors.Is(err, errPrebuildUnavailable) != tc.wantEnqueue || (err != nil && !tc.wantEnqueue) {
+				t.Fatalf("reconcile error = %v", err)
+			}
+			if next.ResolvedTemplate != "tpl-legacy" || next.ResolvedBuildJobID == nil || *next.ResolvedBuildJobID != jobID {
+				t.Fatalf("template=%q active=%v", next.ResolvedTemplate, next.ResolvedBuildJobID)
+			}
+			snapshot, err := decodeBuildSpecSnapshot(next.ResolvedBuildSpec)
+			if err != nil || snapshot == nil || snapshot.InitScript != "make" || !reflect.DeepEqual(snapshot.Packages.PIP, []string{"b", "a"}) {
+				t.Fatalf("snapshot = %+v, %v", snapshot, err)
 			}
 		})
 	}
@@ -383,28 +424,114 @@ func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
 
 func TestPrebuildResponseServing(t *testing.T) {
 	active, failed := int64(41), int64(42)
-	task := prebuildTask{job: &river.Job[prebuildJobArgs]{
+	snapshot := json.RawMessage(`{"packages":null}`)
+	failedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
 		JobRow: &rivertype.JobRow{ID: failed, State: rivertype.JobStateDiscarded},
 		Args:   prebuildJobArgs{ProviderKey: "provider"},
 	}}
+	resolvedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: failed, State: rivertype.JobStateCompleted},
+		Args:   prebuildJobArgs{ProviderKey: "provider"},
+	}, output: prebuildJobOutput{ImageRef: "image", TemplateID: "tpl-new"}}
 	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}
 	for _, tc := range []struct {
 		name      string
 		env       db.Environment
+		task      prebuildTask
 		wantState string
 		wantServe string
 		wantStart bool
 	}{
-		{"failed rebuild serves previous", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}, "failed", "previous", true},
-		{"failed first build serves default", db.Environment{BuildJobID: &failed}, "failed", "default", true},
-		{"completed build is ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &failed, ResolvedTemplate: "tpl-new"}, "ready", "current", false},
+		{"failed rebuild serves previous", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot, Config: json.RawMessage(`{"type":"cloud"}`)}, failedTask, "failed", "previous", true},
+		{"failed rebuild without a snapshot serves default", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}, failedTask, "failed", "default", true},
+		{"failed first build serves default", db.Environment{BuildJobID: &failed}, failedTask, "failed", "default", true},
+		{"completed build is ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &failed, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", "current", false},
+		{"template written back by an older instance is ready", db.Environment{BuildJobID: &failed, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", "current", false},
+		{"job result read after a stale environment is not ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot, Config: json.RawMessage(`{"type":"cloud"}`)}, resolvedTask, "running", "previous", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response := service.currentPrebuildResponse(tc.env, task)
+			response := service.currentPrebuildResponse(tc.env, tc.task)
 			if response.State != tc.wantState || response.Serving != tc.wantServe || response.CanStart != tc.wantStart {
 				t.Fatalf("response = %+v", response)
 			}
 		})
+	}
+}
+
+func TestPackageSpecNames(t *testing.T) {
+	for _, tc := range []struct{ manager, spec, want string }{
+		{"apt", "curl=7.88.1-10", "curl"},
+		{"apt", "curl/bookworm-backports", "curl"},
+		{"apt", "libc6:i386", "libc6:i386"},
+		{"pip", "Numpy==2.3.5", "numpy"},
+		{"pip", "zope.interface>=6", "zope-interface"},
+		{"pip", "requests[socks]~=2.32", "requests"},
+		{"pip", "pkg @ git+https://example.com/pkg.git", "pkg"},
+		{"npm", "typescript@5.9.3", "typescript"},
+		{"npm", "@scope/tool@1.0.0", "@scope/tool"},
+		{"npm", "@scope/tool", "@scope/tool"},
+		{"gem", "rake:13.2.1", "rake"},
+		{"cargo", "ripgrep@14.1.1", "ripgrep"},
+		{"go", "golang.org/x/tools/gopls@v0.16.0", "golang.org/x/tools/gopls"},
+	} {
+		if got := packageSpecName(tc.manager, tc.spec); got != tc.want {
+			t.Fatalf("packageSpecName(%q, %q) = %q, want %q", tc.manager, tc.spec, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizePackagesRejectsDuplicateNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, packages, wantError string
+	}{
+		{"repeated go module versions", `{"go":["example.com/tool@v1","example.com/tool@v2"]}`, `config.packages.go must not list package "example.com/tool" more than once`},
+		{"identical repeated entries", `{"apt":["curl","curl"]}`, `config.packages.apt must not list package "curl" more than once`},
+		{"normalized pip names", `{"pip":["Foo_Bar==1","foo-bar"]}`, `config.packages.pip must not list package "foo-bar" more than once`},
+		{"scoped npm versions", `{"npm":["@scope/tool@1","@scope/tool@2"]}`, `config.packages.npm must not list package "@scope/tool" more than once`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := normalizePackages(json.RawMessage(tc.packages)); err == nil || err.Error() != tc.wantError {
+				t.Fatalf("error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
+	if _, err := normalizePackages(json.RawMessage(`{"npm":["tool@1"],"pip":["tool==1"],"go":["example.com/a@v1","example.com/b@v1"]}`)); err != nil {
+		t.Fatalf("distinct packages rejected: %v", err)
+	}
+	handler := &Handler{cfg: config.Config{EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
+	current := db.Environment{Config: json.RawMessage(`{"type":"cloud"}`)}
+	_, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(`{"packages":{"type":"packages","go":["example.com/tool@v1","example.com/tool@v2"]}}`)})
+	var appError *apperr.Error
+	if !errors.As(err, &appError) || appError.Kind != apperr.InvalidArgument || !strings.Contains(appError.PublicMessage, `"example.com/tool"`) {
+		t.Fatalf("update error = %v", err)
+	}
+}
+
+func TestStoredDuplicatePackagesRemainReadable(t *testing.T) {
+	config := json.RawMessage(`{"type":"cloud","packages":{"type":"packages","go":["example.com/tool@v1","example.com/tool@v2"]}}`)
+	if _, err := decodeEnvironmentBuildSpec(config); err != nil {
+		t.Fatalf("decode stored duplicates: %v", err)
+	}
+	if _, provision, err := buildPackageManifest(config); err != nil || !provision {
+		t.Fatalf("manifest = %v, %v", provision, err)
+	}
+}
+
+func TestBuildSpecSnapshotRoundTrip(t *testing.T) {
+	spec, err := decodeEnvironmentBuildSpec(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["a"]},"init_script":"make","resources":{"cpu":2000}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := encodeBuildSpecSnapshot(snapshotBuildSpec(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := decodeBuildSpecSnapshot(raw)
+	if err != nil || snapshot.InitScript != "make" || snapshot.Resources == nil || snapshot.Resources.CPU != 2000 || !samePackages(snapshot.Packages, spec.Packages) {
+		t.Fatalf("snapshot = %+v from %s, %v", snapshot, raw, err)
+	}
+	if raw, err := encodeBuildSpecSnapshot(snapshotBuildSpec(nil)); raw != nil || err != nil {
+		t.Fatalf("empty snapshot = %s, %v", raw, err)
 	}
 }
 
@@ -722,5 +849,27 @@ func TestAliyunFlowLogDownloadCursorRecovery(t *testing.T) {
 				t.Fatalf("requests = %d, want %d", requests, tc.wantRequests)
 			}
 		})
+	}
+}
+
+func TestPrebuildJobArgsCarryBuildSpec(t *testing.T) {
+	spec, err := decodeEnvironmentBuildSpec(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["a"]},"init_script":"make"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(prebuildJobArgs{EnvironmentUUID: "env", BuildSpec: snapshotBuildSpec(spec)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: encoded, Metadata: []byte(`{}`)})
+	if err != nil || task.job.Args.BuildSpec == nil || task.job.Args.BuildSpec.InitScript != "make" || !samePackages(task.job.Args.BuildSpec.Packages, spec.Packages) {
+		t.Fatalf("decoded build spec = %+v, %v", task.job.Args.BuildSpec, err)
+	}
+	legacy, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: []byte(`{"environment_uuid":"env","dockerfile":"FROM base"}`), Metadata: []byte(`{}`)})
+	if err != nil || legacy.job.Args.BuildSpec != nil {
+		t.Fatalf("legacy build spec = %+v, %v", legacy.job.Args.BuildSpec, err)
+	}
+	if raw, err := encodeBuildSpecSnapshot(legacy.job.Args.BuildSpec); raw != nil || err != nil {
+		t.Fatalf("legacy snapshot = %s, %v", raw, err)
 	}
 }

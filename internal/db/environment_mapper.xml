@@ -14,6 +14,7 @@
         provider,
         resolved_template,
         resolved_build_job_id,
+        resolved_build_spec,
         build_job_id,
         created_at,
         updated_at,
@@ -36,6 +37,7 @@
             provider,
             resolved_template,
             resolved_build_job_id,
+            resolved_build_spec,
             build_job_id,
             created_at,
             updated_at
@@ -53,6 +55,7 @@
             #{params.Provider},
             #{params.ResolvedTemplate},
             #{params.ResolvedBuildJobID},
+            CAST(#{params.ResolvedBuildSpec} AS jsonb),
             #{params.BuildJobID},
             #{params.CreatedAt},
             #{params.CreatedAt}
@@ -88,6 +91,7 @@
             scope = #{params.Scope},
             resolved_template = #{params.ResolvedTemplate},
             resolved_build_job_id = #{params.ResolvedBuildJobID},
+            resolved_build_spec = CAST(#{params.ResolvedBuildSpec} AS jsonb),
             build_job_id = #{params.BuildJobID},
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
@@ -100,6 +104,7 @@
             OR scope IS DISTINCT FROM #{params.Scope}
             OR resolved_template IS DISTINCT FROM #{params.ResolvedTemplate}
             OR resolved_build_job_id IS DISTINCT FROM #{params.ResolvedBuildJobID}
+            OR resolved_build_spec IS DISTINCT FROM CAST(#{params.ResolvedBuildSpec} AS jsonb)
             OR build_job_id IS DISTINCT FROM #{params.BuildJobID})
         RETURNING
         <include refid="columns"/>
@@ -167,7 +172,8 @@
     </select>
     <update id="ResolvePrebuild" result="rows">
         UPDATE environments
-        SET resolved_template = #{template}, resolved_build_job_id = #{jobID}, updated_at = NOW()
+        SET resolved_template = #{template}, resolved_build_job_id = #{jobID},
+            resolved_build_spec = CAST(#{buildSpec} AS jsonb), updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{environmentUUID}
         AND build_job_id = #{jobID} AND deleted_at IS NULL
     </update>

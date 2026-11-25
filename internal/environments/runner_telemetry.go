@@ -111,8 +111,11 @@ func (r *runnerRun) begin(ctx context.Context, stage string) context.Context {
 	return ctx
 }
 
-func (r *runnerRun) markTemplateSource(source templateSource) {
-	r.span.SetAttributes(attribute.String("oma.environment.template_source", string(source)))
+func (r *runnerRun) markTemplateSource(choice templateChoice) {
+	r.span.SetAttributes(attribute.String("oma.environment.template_source", string(choice.source)))
+	if choice.fallback != "" {
+		r.span.SetAttributes(attribute.String("oma.environment.template_fallback", choice.fallback))
+	}
 }
 
 func (r *runnerRun) markRecovered(recovered bool) {

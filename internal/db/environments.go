@@ -25,6 +25,7 @@ type Environment struct {
 	Provider            string
 	ResolvedTemplate    string
 	ResolvedBuildJobID  *int64
+	ResolvedBuildSpec   json.RawMessage
 	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -598,7 +599,8 @@ func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
 		BuildJobID: env.BuildJobID, Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
-		ResolvedBuildJobID: env.ResolvedBuildJobID, CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
+		ResolvedBuildJobID: env.ResolvedBuildJobID, ResolvedBuildSpec: agentJSONArg(env.ResolvedBuildSpec),
+		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}
 }
 
@@ -662,7 +664,8 @@ func (r environmentMapperRow) environment() Environment {
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
 		BuildJobID: r.BuildJobID, Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
-		ResolvedBuildJobID: r.ResolvedBuildJobID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		ResolvedBuildJobID: r.ResolvedBuildJobID, ResolvedBuildSpec: bytes.Clone(r.ResolvedBuildSpec),
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

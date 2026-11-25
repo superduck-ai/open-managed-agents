@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -51,12 +52,19 @@ func TestEnvironmentResolvedBuildJobMigrationPostgres(t *testing.T) {
 		}
 	}
 
+	if _, err := migrations.UpTo(ctx, 167); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT resolved_build_spec::text FROM environments WHERE uuid = $1`, prebuildReadyEnvironment).Scan(&snapshot); err != nil || snapshot.Valid {
+		t.Fatalf("existing rows must start without a build spec snapshot: %+v, %v", snapshot, err)
+	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	if _, err := database.ExecContext(ctx, `UPDATE environments SET build_job_id = 43 WHERE uuid = $1`, prebuildReadyEnvironment); err != nil {
 		t.Fatal(err)
 	}
 	err := store.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
-		return store.ResolveEnvironmentPrebuildTx(ctx, tx, prebuildTestWorkspace, prebuildReadyEnvironment, 41, "tpl-stale")
+		return store.ResolveEnvironmentPrebuildTx(ctx, tx, prebuildTestWorkspace, prebuildReadyEnvironment, 41, "tpl-stale", nil)
 	})
 	if !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("stale job resolve error = %v", err)
@@ -98,22 +106,31 @@ func TestEnvironmentResolvePrebuildPostgres(t *testing.T) {
 	if err != nil || created.ResolvedBuildJobID == nil || *created.ResolvedBuildJobID != previous {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
-	resolve := func(jobID int64, template string) error {
+	resolve := func(jobID int64, template string, spec string) error {
 		return store.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
-			return store.ResolveEnvironmentPrebuildTx(ctx, tx, prebuildTestWorkspace, prebuildReadyEnvironment, jobID, template)
+			return store.ResolveEnvironmentPrebuildTx(ctx, tx, prebuildTestWorkspace, prebuildReadyEnvironment, jobID, template, json.RawMessage(spec))
 		})
 	}
-	if err := resolve(previous, "tpl-superseded"); !errors.Is(err, ErrInvalidState) {
+	if err := resolve(previous, "tpl-superseded", `{"packages":null,"init_script":"stale"}`); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("superseded resolve error = %v", err)
 	}
-	if err := resolve(latest, "tpl-new"); err != nil {
+	if err := resolve(latest, "tpl-new", `{"packages":{"type":"packages","pip":["a"]},"init_script":"make"}`); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.GetEnvironmentByUUID(ctx, prebuildTestWorkspace, prebuildReadyEnvironment)
 	if err != nil || current.ResolvedTemplate != "tpl-new" || current.ResolvedBuildJobID == nil || *current.ResolvedBuildJobID != latest {
 		t.Fatalf("resolved environment = %+v, %v", current, err)
 	}
-	current.ResolvedBuildJobID, current.UpdatedAt = nil, time.Now().UTC()
+	var snapshot struct {
+		InitScript string `json:"init_script"`
+		Packages   struct {
+			PIP []string `json:"pip"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(current.ResolvedBuildSpec, &snapshot); err != nil || snapshot.InitScript != "make" || len(snapshot.Packages.PIP) != 1 {
+		t.Fatalf("resolved build spec = %s, %v", current.ResolvedBuildSpec, err)
+	}
+	current.ResolvedBuildJobID, current.ResolvedBuildSpec, current.UpdatedAt = nil, nil, time.Now().UTC()
 	err = store.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
 		_, changed, err := store.UpdateEnvironmentTx(ctx, tx, current)
 		if err == nil && !changed {
@@ -126,6 +143,10 @@ func TestEnvironmentResolvePrebuildPostgres(t *testing.T) {
 	}
 	if _, resolved := readPrebuildEnvironment(t, ctx, database, prebuildReadyEnvironment); resolved.Valid {
 		t.Fatalf("resolved build job = %+v, want NULL", resolved)
+	}
+	var cleared sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT resolved_build_spec::text FROM environments WHERE uuid = $1`, prebuildReadyEnvironment).Scan(&cleared); err != nil || cleared.Valid {
+		t.Fatalf("resolved build spec = %+v, %v, want NULL", cleared, err)
 	}
 }
 

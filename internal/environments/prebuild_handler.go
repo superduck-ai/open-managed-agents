@@ -136,8 +136,7 @@ func (h *Handler) requestPrebuild(r *http.Request) (db.Environment, prebuildTask
 }
 
 func (svc *Prebuilds) currentPrebuildResponse(env db.Environment, task prebuildTask) *prebuildResponse {
-	source := environmentTemplateSource(env)
-	result := &prebuildResponse{Stage: task.stage(), State: task.state(), Message: task.output.Message, Serving: string(source)}
+	result := &prebuildResponse{Stage: task.stage(), State: task.state(), Message: task.output.Message, Serving: string(chooseEnvironmentTemplate(env).source)}
 	mutable := svc != nil && svc.cfg.Enabled && env.ArchivedAt == nil
 	providerMatches := svc != nil && task.job != nil && task.job.Args.ProviderKey == svc.providerKey
 	if task.job == nil {
@@ -155,12 +154,19 @@ func (svc *Prebuilds) currentPrebuildResponse(env db.Environment, task prebuildT
 		result.HasTemplateLogs = available && svc.templates.Capabilities().Logs && task.output.TemplateJobRef != ""
 	}
 	result.CanCancel = mutable && providerMatches && task.active() && !task.output.Submitting && !task.output.CancelRequested && (task.ref() == "" || svc.capabilities(task.stage()).Cancel)
-	if source == templateSourceCurrent {
+	applyEnvironmentReadiness(result, env, task)
+	result.CanStart = mutable && !task.active() && result.State != "ready" && task.output.TemplateID == ""
+	return result
+}
+
+func applyEnvironmentReadiness(result *prebuildResponse, env db.Environment, task prebuildTask) {
+	switch {
+	case environmentTemplateSource(env) == templateSourceCurrent:
 		result.State, result.Stage = "ready", "template"
 		result.CanCancel = false
+	case result.State == "ready":
+		result.State, result.Stage = "running", "template"
 	}
-	result.CanStart = mutable && !task.active() && result.State != "ready"
-	return result
 }
 
 func (h *Handler) getPrebuild(w http.ResponseWriter, r *http.Request) error {
@@ -175,7 +181,7 @@ func (h *Handler) getPrebuild(w http.ResponseWriter, r *http.Request) error {
 			return prebuildError(err)
 		}
 		if spec != nil {
-			result = &prebuildResponse{State: "idle", Serving: string(environmentTemplateSource(env)), CanStart: h.prebuilds != nil && h.prebuilds.cfg.Enabled && env.ArchivedAt == nil}
+			result = &prebuildResponse{State: "idle", Serving: string(chooseEnvironmentTemplate(env).source), CanStart: h.prebuilds != nil && h.prebuilds.cfg.Enabled && env.ArchivedAt == nil}
 		}
 	} else {
 		result = h.prebuilds.currentPrebuildResponse(env, task)

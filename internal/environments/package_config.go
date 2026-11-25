@@ -93,6 +93,9 @@ func normalizePackages(raw json.RawMessage) (*environmentPackages, error) {
 	if err := packages.validate(); err != nil {
 		return nil, err
 	}
+	if err := packages.rejectDuplicateNames(); err != nil {
+		return nil, err
+	}
 	packages.ensureLists()
 	if err := packages.checkManifestSize(); err != nil {
 		return nil, err

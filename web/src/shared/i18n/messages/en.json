@@ -2342,6 +2342,8 @@
   "environmentPrebuild.stages": "Build stages",
   "environmentPrebuild.expired": "Run details are no longer available.",
   "environmentPrebuild.logsUnsupported": "Logs are unavailable for this stage.",
+  "environmentPrebuild.servingPrevious": "New sessions use the last prepared template.",
+  "environmentPrebuild.servingDefault": "New sessions use the default template until preparation succeeds.",
   "managedAgents.deployments.configuration": "Configuration",
   "managedAgents.deployments.configurationHelp": "Choose the agent, environment, and instructions for every run.",
   "managedAgents.deployments.resources": "Resources",

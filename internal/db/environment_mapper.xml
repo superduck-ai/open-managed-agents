@@ -13,6 +13,7 @@
         scope,
         provider,
         resolved_template,
+        resolved_build_job_id,
         build_job_id,
         created_at,
         updated_at,
@@ -34,6 +35,7 @@
             scope,
             provider,
             resolved_template,
+            resolved_build_job_id,
             build_job_id,
             created_at,
             updated_at
@@ -50,6 +52,7 @@
             #{params.Scope},
             #{params.Provider},
             #{params.ResolvedTemplate},
+            #{params.ResolvedBuildJobID},
             #{params.BuildJobID},
             #{params.CreatedAt},
             #{params.CreatedAt}
@@ -84,6 +87,7 @@
             metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
             scope = #{params.Scope},
             resolved_template = #{params.ResolvedTemplate},
+            resolved_build_job_id = #{params.ResolvedBuildJobID},
             build_job_id = #{params.BuildJobID},
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
@@ -95,6 +99,7 @@
             OR metadata IS DISTINCT FROM CAST(#{params.Metadata,sensitive=true} AS jsonb)
             OR scope IS DISTINCT FROM #{params.Scope}
             OR resolved_template IS DISTINCT FROM #{params.ResolvedTemplate}
+            OR resolved_build_job_id IS DISTINCT FROM #{params.ResolvedBuildJobID}
             OR build_job_id IS DISTINCT FROM #{params.BuildJobID})
         RETURNING
         <include refid="columns"/>
@@ -161,7 +166,8 @@
         FOR UPDATE
     </select>
     <update id="ResolvePrebuild" result="rows">
-        UPDATE environments SET resolved_template = #{template}, updated_at = NOW()
+        UPDATE environments
+        SET resolved_template = #{template}, resolved_build_job_id = #{jobID}, updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{environmentUUID}
         AND build_job_id = #{jobID} AND deleted_at IS NULL
     </update>

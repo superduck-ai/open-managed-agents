@@ -50,6 +50,18 @@ export function PrebuildLabel({ state }: { state: PrebuildState }) {
   );
 }
 
+const servingMessages = {
+  previous: ['environmentPrebuild.servingPrevious', 'New sessions use the last prepared template.'],
+  default: ['environmentPrebuild.servingDefault', 'New sessions use the default template until preparation succeeds.'],
+} as const;
+
+export function PrebuildServingNote({ prebuild }: { prebuild: EnvironmentPrebuild }) {
+  const { msg } = useI18n();
+  if (prebuild.serving === 'current' || prebuild.state === 'idle') return null;
+  const [id, fallback] = servingMessages[prebuild.serving];
+  return <p className="text-xs text-muted-foreground">{msg(id, fallback)}</p>;
+}
+
 export function PrebuildTime({ prebuild }: { prebuild: EnvironmentPrebuild }) {
   const { locale } = useI18n();
   if (!prebuild.createdAt) return null;

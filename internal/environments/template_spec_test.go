@@ -1,8 +1,9 @@
 package environments
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -201,34 +202,33 @@ func TestResourceOnlyPrebuildStartsAtTemplateStage(t *testing.T) {
 	}
 }
 
-func TestResolveEnvironmentSandboxRequiresPrebuiltTemplate(t *testing.T) {
-	jobID := int64(7)
+func TestResolveEnvironmentSandboxTemplateSource(t *testing.T) {
+	previous, latest := int64(7), int64(8)
 	runner := &Runner{provider: e2bruntime.NewProvider(config.E2BConfig{Template: "base"})}
+	script := json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test","CLAUDE_FLAG":"on","ANTHROPIC_ENVIRONMENT_ID":"spoofed"}}`)
+	resources := json.RawMessage(`{"type":"cloud","resources":{"cpu":2000}}`)
 	for _, tc := range []struct {
-		name string
-		env  db.Environment
+		name         string
+		env          db.Environment
+		wantTemplate string
+		wantSource   templateSource
 	}{
-		{"script without build", db.Environment{Config: json.RawMessage(`{"type":"cloud","init_script":"make"}`), ResolvedTemplate: "base"}},
-		{"resources while building", db.Environment{Config: json.RawMessage(`{"type":"cloud","resources":{"cpu":2000}}`), BuildJobID: &jobID}},
+		{"script never built uses configured default", db.Environment{Config: script, ResolvedTemplate: "base"}, "base", templateSourceDefault},
+		{"first build pending follows configured default", db.Environment{Config: script, BuildJobID: &latest}, "base", templateSourceDefault},
+		{"resources first build failed uses configured default", db.Environment{Config: resources, BuildJobID: &latest}, "base", templateSourceDefault},
+		{"rebuild serves previous template", db.Environment{Config: script, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old"}, "tpl-old", templateSourcePrevious},
+		{"completed build serves current template", db.Environment{Config: script, BuildJobID: &previous, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old"}, "tpl-old", templateSourceCurrent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := runner.resolveEnvironmentSandbox(tc.env, nil); !errors.Is(err, errEnvironmentTemplateNotReady) {
-				t.Fatalf("error = %v", err)
+			resolution, source, err := runner.resolveEnvironmentSandbox(tc.env, nil)
+			if err != nil || source != tc.wantSource || resolution.Template != tc.wantTemplate {
+				t.Fatalf("resolution = %+v source=%q err=%v", resolution, source, err)
 			}
 		})
 	}
-	env := db.Environment{
-		ExternalID:       "env_1",
-		Config:           json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test","CLAUDE_FLAG":"on","ANTHROPIC_ENVIRONMENT_ID":"spoofed"}}`),
-		BuildJobID:       &jobID,
-		ResolvedTemplate: "built",
-	}
-	resolution, preinstalled, err := runner.resolveEnvironmentSandbox(env, nil)
-	if err != nil || !preinstalled || resolution.Template != "built" {
-		t.Fatalf("resolution = %+v preinstalled=%v err=%v", resolution, preinstalled, err)
-	}
-	if resolution.Envs["MODE"] != "test" || resolution.Envs["CLAUDE_FLAG"] != "on" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
-		t.Fatalf("envs = %+v", resolution.Envs)
+	resolution, _, err := runner.resolveEnvironmentSandbox(db.Environment{ExternalID: "env_1", Config: script}, nil)
+	if err != nil || resolution.Envs["MODE"] != "test" || resolution.Envs["CLAUDE_FLAG"] != "on" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
+		t.Fatalf("envs = %+v err=%v", resolution.Envs, err)
 	}
 }
 
@@ -260,5 +260,50 @@ func TestPlatformResponseNetworkingDefaultsToUnrestricted(t *testing.T) {
 		if err := json.Unmarshal(platformEnvironmentConfigForResponse(json.RawMessage(raw)), &response); err != nil || response.Networking.Type != want {
 			t.Fatalf("networking type for %s = %q, %v, want %q", raw, response.Networking.Type, err, want)
 		}
+	}
+}
+
+func TestReportTemplateSourceWarnsWhenSpecNotApplied(t *testing.T) {
+	jobID := int64(7)
+	work := &db.EnvironmentWork{ExternalID: "work_1", SessionExternalID: "sesn_1"}
+	for _, tc := range []struct {
+		name   string
+		config string
+		source templateSource
+		warns  bool
+	}{
+		{"default with init script warns", `{"type":"cloud","init_script":"make"}`, templateSourceDefault, true},
+		{"default with resources warns", `{"type":"cloud","resources":{"cpu":2000}}`, templateSourceDefault, true},
+		{"default with packages only is silent", `{"type":"cloud","packages":{"pip":["a"]}}`, templateSourceDefault, false},
+		{"previous template is silent", `{"type":"cloud","init_script":"make"}`, templateSourcePrevious, false},
+		{"current template is silent", `{"type":"cloud","init_script":"make"}`, templateSourceCurrent, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &prebuildLogRecorder{}
+			runner := &Runner{logger: slog.New(recorder)}
+			env := db.Environment{ExternalID: "env_1", WorkspaceUUID: "ws-1", Config: json.RawMessage(tc.config), BuildJobID: &jobID}
+			ctx, run := startSandboxRun(context.Background(), *work, runnerTriggerLazyMCP)
+			runner.reportTemplateSource(ctx, run, env, work, "base", tc.source)
+			run.end(ctx, nil)
+			if !tc.warns {
+				if len(recorder.records) != 0 {
+					t.Fatalf("log records = %+v, want none", recorder.records)
+				}
+				return
+			}
+			if len(recorder.records) != 1 {
+				t.Fatalf("log records = %+v, want one", recorder.records)
+			}
+			record := recorder.records[0]
+			if record.level != slog.LevelWarn || record.message != "environment template spec not applied" {
+				t.Fatalf("log record = %+v", record)
+			}
+			want := map[string]any{"environment_id": "env_1", "workspace_id": "ws-1", "work_id": "work_1", "session_id": "sesn_1", "template": "base", "template_source": "default"}
+			for key, value := range want {
+				if record.attrs[key] != value {
+					t.Fatalf("log record %q = %v, want %v", key, record.attrs[key], value)
+				}
+			}
+		})
 	}
 }

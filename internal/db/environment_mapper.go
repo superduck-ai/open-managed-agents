@@ -20,6 +20,7 @@ type environmentMapperRow struct {
 	Scope               *string    `db:"scope"`
 	Provider            string     `db:"provider"`
 	ResolvedTemplate    string     `db:"resolved_template"`
+	ResolvedBuildJobID  *int64     `db:"resolved_build_job_id"`
 	BuildJobID          *int64     `db:"build_job_id"`
 	CreatedAt           time.Time  `db:"created_at"`
 	UpdatedAt           time.Time  `db:"updated_at"`
@@ -40,6 +41,7 @@ type environmentWriteParams struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	ResolvedBuildJobID  *int64
 	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time

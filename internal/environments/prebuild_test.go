@@ -194,7 +194,11 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 	}{
 		{"version changes identity", `{"type":"cloud","packages":{"apt":["a=2","b"]}}`, false},
 		{"manager changes identity", `{"type":"cloud","packages":{"pip":["a","b"]}}`, false},
-		{"order changes identity", `{"type":"cloud","packages":{"apt":["b","a"]}}`, false},
+		{"order within a manager is ignored", `{"type":"cloud","packages":{"apt":["b","a"]}}`, true},
+		{"duplicate entries are ignored", `{"type":"cloud","packages":{"apt":["b","a","a"]}}`, true},
+		{"added package changes identity", `{"type":"cloud","packages":{"apt":["b","a","c"]}}`, false},
+		{"removed package changes identity", `{"type":"cloud","packages":{"apt":["a"]}}`, false},
+		{"pinned version changes identity", `{"type":"cloud","packages":{"apt":["b","a=1.0"]}}`, false},
 		{"empty lists and unrelated settings are ignored", `{"type":"cloud","packages":{"apt":["a","b"],"pip":[]},"environment_variables":{"LANG":"en"}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,25 +214,27 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 }
 
 func TestPrebuildTemplateBinding(t *testing.T) {
-	jobID := int64(42)
+	jobID, nextJobID := int64(42), int64(43)
 	provider := e2bruntime.NewProvider(config.E2BConfig{Template: "new-base"})
 	for _, tc := range []struct {
 		name     string
 		jobID    *int64
+		resolved *int64
 		template string
-		resolved string
-		ready    bool
+		want     string
+		source   templateSource
 	}{
-		{"unbuilt environment retains its base", nil, "old-base", "old-base", false},
-		{"pending uses provider fallback", &jobID, "", "new-base", false},
-		{"ready template survives base change", &jobID, "built-template", "built-template", true},
+		{"unbuilt environment retains its base", nil, nil, "old-base", "old-base", templateSourceDefault},
+		{"pending first build uses provider fallback", &jobID, nil, "", "new-base", templateSourceDefault},
+		{"ready template survives base change", &jobID, &jobID, "built-template", "built-template", templateSourceCurrent},
+		{"rebuild keeps previous template", &nextJobID, &jobID, "built-template", "built-template", templateSourcePrevious},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env := db.Environment{BuildJobID: tc.jobID, ResolvedTemplate: tc.template}
-			ready := hasPrebuiltTemplate(env)
+			env := db.Environment{BuildJobID: tc.jobID, ResolvedBuildJobID: tc.resolved, ResolvedTemplate: tc.template}
+			source := environmentTemplateSource(env)
 			resolution, err := provider.Resolve(env, nil)
-			if err != nil || ready != tc.ready || resolution.Template != tc.resolved {
-				t.Fatalf("template=%q ready=%v error=%v", resolution.Template, ready, err)
+			if err != nil || source != tc.source || resolution.Template != tc.want {
+				t.Fatalf("template=%q source=%q error=%v", resolution.Template, source, err)
 			}
 		})
 	}
@@ -250,7 +256,7 @@ func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 		{"completed prebuild keeps its template", `{"type":"cloud","packages":{"pip":["requests"]}}`, &jobID, "built-template", "built-template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current := db.Environment{Config: json.RawMessage(tc.config), BuildJobID: tc.jobID, ResolvedTemplate: tc.storedTemplate}
+			current := db.Environment{Config: json.RawMessage(tc.config), BuildJobID: tc.jobID, ResolvedBuildJobID: tc.jobID, ResolvedTemplate: tc.storedTemplate}
 			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(`{"type":"cloud"}`)})
 			if err != nil {
 				t.Fatal(err)
@@ -269,9 +275,10 @@ func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 func TestPrebuildReconcileRepairsInvalidStoredPackages(t *testing.T) {
 	jobID := int64(42)
 	current := db.Environment{
-		Config:           json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`),
-		BuildJobID:       &jobID,
-		ResolvedTemplate: "old-template",
+		Config:             json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`),
+		BuildJobID:         &jobID,
+		ResolvedBuildJobID: &jobID,
+		ResolvedTemplate:   "old-template",
 	}
 	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base-b"}}}
 	next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{
@@ -283,7 +290,7 @@ func TestPrebuildReconcileRepairsInvalidStoredPackages(t *testing.T) {
 	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
 		t.Fatal(err)
 	}
-	if next.BuildJobID != nil || next.ResolvedTemplate != "base-b" {
+	if next.BuildJobID != nil || next.ResolvedBuildJobID != nil || next.ResolvedTemplate != "base-b" {
 		t.Fatalf("repaired environment kept stale prebuild: job=%v template=%q", next.BuildJobID, next.ResolvedTemplate)
 	}
 }
@@ -293,6 +300,111 @@ func TestPrebuildReconcileRejectsInvalidReplacementPackages(t *testing.T) {
 	next := db.Environment{Config: json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`)}
 	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err == nil {
 		t.Fatal("invalid replacement packages accepted")
+	}
+}
+
+func TestPrebuildReconcileRebuildTriggers(t *testing.T) {
+	active, pending := int64(41), int64(42)
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true, Template: config.TemplateBuildConfig{MaxResources: config.TemplateResourceLimit{CPU: 8000}}}}}
+	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}}
+	before := `{"type":"cloud","packages":{"type":"packages","pip":["a","b"]},"init_script":"make","resources":{"cpu":1000},"environment":{"A":"1"}}`
+	for _, tc := range []struct {
+		name         string
+		update       string
+		wantEnqueue  bool
+		wantTemplate string
+		wantActive   *int64
+	}{
+		{"environment variables only keep the build", `{"environment":{"A":"2"}}`, false, "tpl-old", &active},
+		{"networking only keeps the build", `{"networking":{"type":"limited","allowed_hosts":["example.com"]}}`, false, "tpl-old", &active},
+		{"package order only keeps the build", `{"packages":{"type":"packages","pip":["b","a"]}}`, false, "tpl-old", &active},
+		{"package change rebuilds", `{"packages":{"type":"packages","pip":["a","b","c"]}}`, true, "tpl-old", &active},
+		{"package version change rebuilds", `{"packages":{"type":"packages","pip":["a==1.0","b"]}}`, true, "tpl-old", &active},
+		{"init script change rebuilds", `{"init_script":"make all"}`, true, "tpl-old", &active},
+		{"resources change rebuilds", `{"resources":{"cpu":2000}}`, true, "tpl-old", &active},
+		{"clearing the build spec returns to default", `{"packages":null,"init_script":null,"resources":null}`, false, "base", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
+			if enqueued := errors.Is(err, errPrebuildUnavailable); enqueued != tc.wantEnqueue || (err != nil && !enqueued) {
+				t.Fatalf("reconcile error = %v, want enqueue=%v", err, tc.wantEnqueue)
+			}
+			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) {
+				t.Fatalf("template=%q active=%v", next.ResolvedTemplate, next.ResolvedBuildJobID)
+			}
+			if !tc.wantEnqueue && tc.wantActive != nil && !reflect.DeepEqual(next.BuildJobID, current.BuildJobID) {
+				t.Fatalf("build job changed to %v", next.BuildJobID)
+			}
+		})
+	}
+}
+
+func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
+	active, pending := int64(41), int64(42)
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
+	for _, tc := range []struct {
+		name         string
+		before       string
+		update       string
+		archived     bool
+		wantTemplate string
+		wantActive   *int64
+	}{
+		{"cleared packages return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":null}`, false, "base", nil},
+		{"archived environment returns to default", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, true, "base", nil},
+		{"packages change keeps previous", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, "tpl-old", &active},
+		{"init script change keeps previous", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, false, "tpl-old", &active},
+		{"init removal keeps previous while packages remain", `{"type":"cloud","packages":{"pip":["a"]},"init_script":"a"}`, `{"type":"cloud","init_script":null}`, false, "tpl-old", &active},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(tc.before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
+			if tc.archived {
+				now := time.Now()
+				current.ArchivedAt = &now
+			}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
+				t.Fatal(err)
+			}
+			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) || next.BuildJobID != nil {
+				t.Fatalf("template=%q active=%v job=%v", next.ResolvedTemplate, next.ResolvedBuildJobID, next.BuildJobID)
+			}
+		})
+	}
+}
+
+func TestPrebuildResponseServing(t *testing.T) {
+	active, failed := int64(41), int64(42)
+	task := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: failed, State: rivertype.JobStateDiscarded},
+		Args:   prebuildJobArgs{ProviderKey: "provider"},
+	}}
+	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}
+	for _, tc := range []struct {
+		name      string
+		env       db.Environment
+		wantState string
+		wantServe string
+		wantStart bool
+	}{
+		{"failed rebuild serves previous", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}, "failed", "previous", true},
+		{"failed first build serves default", db.Environment{BuildJobID: &failed}, "failed", "default", true},
+		{"completed build is ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &failed, ResolvedTemplate: "tpl-new"}, "ready", "current", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := service.currentPrebuildResponse(tc.env, task)
+			if response.State != tc.wantState || response.Serving != tc.wantServe || response.CanStart != tc.wantStart {
+				t.Fatalf("response = %+v", response)
+			}
+		})
 	}
 }
 

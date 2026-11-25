@@ -260,11 +260,13 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
-	resolution, preinstalled, err := r.resolveEnvironmentSandbox(env, work)
+	resolution, source, err := r.resolveEnvironmentSandbox(env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
+	r.reportTemplateSource(ctx, run, env, work, resolution.Template, source)
+	preinstalled := source == templateSourceCurrent
 
 	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
 	// rclone 与 Environment Manager 的启动数据。非 Cloud Environment 不进入

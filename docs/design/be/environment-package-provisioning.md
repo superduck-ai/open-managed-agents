@@ -115,11 +115,18 @@ flowchart TD
 
 模板绑定遵循以下规则：
 
-- 仅修改名称、描述、网络或环境变量时保留原构建；清空软件包时解除绑定并恢复基础模板。
+- 构建规格由 `packages`、`init_script`、`resources` 组成，任何一项有实质变化都重新入队预构建；仅修改名称、描述、网络或环境变量时保留当前构建与模板。同一包管理器内只调换顺序或出现完全重复的条目不算变化，比较时按去重排序后的列表判断，保存的配置保持用户原样；增删条目或改动版本写法（如 `pkg==1.0`）仍视为变化。三项全部清空时不构建，解除绑定并恢复配置默认模板。
 - 不带 `config` 的更新不解析已存配置，也不协调预构建，因此名称、描述等字段仍可在旧配置中的软件包格式无效时更新。带 `config` 的更新必须产生有效的新配置；若旧软件包无法解析，则将其视为变化，允许有效配置修复旧数据并解除旧任务绑定。
-- 已成功的模板继续复用，不因构建开关、基础镜像或服务商设置变化而重建。新建环境、修改软件包及显式重试使用当前配置。
-- Runner 通过 `build_job_id != nil && resolved_template != ""` 选择已完成模板并跳过启动时安装；待构建或失败时使用当前基础模板并临时安装。配置了 `init_script` 或 `resources` 的环境没有启动期降级，模板未就绪时 Runner 以 `errEnvironmentTemplateNotReady` 拒绝创建 Sandbox。
+- 已成功的模板继续复用，不因构建开关、基础镜像或服务商设置变化而重建。新建环境、修改构建规格及显式重试使用当前配置。
+- `resolved_template` 表示新 Sandbox 使用的模板，`resolved_build_job_id` 记录产出该模板的 River job（为空表示不是预构建模板），`build_job_id` 表示当前配置对应的最新构建。构建成功时 `ResolvePrebuild` 在 `build_job_id` 仍等于该 job 的条件下同时写入两列，因此只有最新构建能切换模板，被取代的构建即使远端成功也不会写回。
+- Runner 按模板来源选择模板，不再因模板未就绪拒绝创建 Sandbox：
+  - `current`：`resolved_build_job_id == build_job_id`，使用当前配置的构建产物并跳过启动期安装。
+  - `previous`：`resolved_build_job_id` 非空但不等于 `build_job_id`，即重建进行中、失败、被取消或被取代，使用上一次成功构建的模板。
+  - `default`：从未成功构建，使用配置默认模板（`e2b.template`，为空时 `DefaultE2BTemplate`）；`init_script` 与 `resources` 此时不生效。
+  - 后两种来源下，只要配置了 `packages`，就在启动期按当前完整清单安装，安装发生在模板内容（包括旧 `init_script` 的产物）之后。
+- 修改构建规格时，有成功模板就保留它直至新构建成功；入队时只有没有成功模板的环境才清空 `resolved_template`，使运行时跟随当前配置默认模板。归档环境的配置更新解除绑定。
 - 没有关联任务的环境继续使用基础模板与启动期安装；保存包含 `config` 的更新时，按当前 E2B 配置刷新基础模板，手动开始预构建后才建立任务关联。
+- 可观测性：prebuild 响应返回 `serving`（`current`、`previous`、`default`）；Runner span 记录 `oma.environment.template_source`；使用默认模板而配置了 `init_script` 或 `resources` 时记录 Warn 日志 `environment template spec not applied`，属性包含 `environment_id`、`workspace_id`、`work_id`、`session_id`、`template` 与 `template_source`。
 - River 清理任务记录不影响成功模板，因此 `build_job_id` 不设外键；详情过期后不再返回 job ID、时间或日志。
 
 ### 模板规格：初始化脚本、资源与环境变量
@@ -136,11 +143,11 @@ Cloud Environment 的 `config` 在 `packages` 之外接受三个字段，构成�
 }
 ```
 
-| 字段 | 生效位置 | 是否触发重建 | 模板未就绪时 |
+| 字段 | 生效位置 | 是否触发重建 | 当前构建未完成时 |
 | --- | --- | --- | --- |
-| `packages` | Dockerfile `RUN`，按 apt → cargo → gem → go → npm → pip | 是 | 启动期安装 |
-| `init_script` | 软件包之后追加 `RUN ["bash","-eo","pipefail","-c", script]`，以 root 在 `/home/user` 执行，脚本作为 JSON 数据传入 | 是 | 拒绝启动 |
-| `resources` | CubeSandbox 模板的 `cpu`（毫核）、`memory`（MiB）、`writableLayerSize`（`disk` GiB） | 是 | 拒绝启动 |
+| `packages` | Dockerfile `RUN`，按 apt → cargo → gem → go → npm → pip | 是（同一包管理器内调换顺序或重复条目除外） | 在上次成功模板或默认模板上启动期安装 |
+| `init_script` | 软件包之后追加 `RUN ["bash","-eo","pipefail","-c", script]`，以 root 在 `/home/user` 执行，脚本作为 JSON 数据传入 | 是 | 沿用上次成功模板中的旧脚本产物；从未成功时不生效 |
+| `resources` | CubeSandbox 模板的 `cpu`（毫核）、`memory`（MiB）、`writableLayerSize`（`disk` GiB） | 是 | 沿用上次成功模板的规格；从未成功时使用默认模板规格 |
 | `environment` | 创建 Sandbox 时的 `envVars`，与平台注入变量同名时平台值优先 | 否 | 直接生效 |
 
 校验在 HTTP 边界完成，Runner 与预构建解码时重复校验以防数据库被直接改写：
@@ -161,7 +168,19 @@ flowchart LR
     NeedImage -->|是| Image["镜像阶段：Dockerfile → 镜像"]
     NeedImage -->|否| Template["模板阶段：基础镜像 + 资源"]
     Image --> Template
-    Template --> Bind["绑定 resolved_template"]
+    Template --> Bind["绑定 resolved_template 与 resolved_build_job_id"]
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Default: 新建或从未构建成功
+    Default --> Current: 构建成功
+    Current --> Previous: 修改构建规格
+    Previous --> Current: 最新构建成功
+    Previous --> Previous: 构建失败、取消、被取代或再次修改
+    Default --> Default: 构建失败或再次修改
+    Current --> Default: 清空构建规格
+    Previous --> Default: 清空构建规格
 ```
 
 ### 配置与服务商合同

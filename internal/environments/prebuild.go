@@ -199,7 +199,9 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		return err
 	}
 	env.BuildJobID = &result.Job.ID
-	env.ResolvedTemplate = ""
+	if env.ResolvedBuildJobID == nil {
+		env.ResolvedTemplate = ""
+	}
 	return nil
 }
 
@@ -210,17 +212,19 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 	}
 	if current != nil {
 		previous, err := decodeEnvironmentBuildSpec(current.Config)
-		// A valid replacement can repair malformed packages already stored in the row.
-		// In that case the old prebuild must be treated as superseded.
 		if err == nil && sameBuildSpec(previous, spec) {
 			next.BuildJobID = current.BuildJobID
-			if current.BuildJobID != nil {
-				next.ResolvedTemplate = current.ResolvedTemplate
+			if current.BuildJobID != nil || current.ResolvedBuildJobID != nil {
+				next.ResolvedTemplate, next.ResolvedBuildJobID = current.ResolvedTemplate, current.ResolvedBuildJobID
 			}
 			return nil
 		}
 	}
 	next.BuildJobID = nil
+	next.ResolvedBuildJobID = nil
+	if current != nil && current.ResolvedBuildJobID != nil && spec != nil && next.ArchivedAt == nil {
+		next.ResolvedTemplate, next.ResolvedBuildJobID = current.ResolvedTemplate, current.ResolvedBuildJobID
+	}
 	if spec == nil || next.ArchivedAt != nil || svc == nil || !svc.cfg.Enabled {
 		return nil
 	}
@@ -277,7 +281,7 @@ func (svc *Prebuilds) persistCheckpoint(ctx context.Context, task *prebuildTask)
 
 func (svc *Prebuilds) StartOrRetryPrebuild(ctx context.Context, env db.Environment) error {
 	return svc.withLockedEnvironment(ctx, env, func(tx *yourbatis.Tx, current db.Environment) error {
-		if hasPrebuiltTemplate(current) {
+		if environmentTemplateSource(current) == templateSourceCurrent {
 			return nil
 		}
 		task, err := svc.loadCurrentPrebuild(ctx, tx, current)
@@ -436,18 +440,23 @@ func packageInstallEnvironment(key, value string, command []string) []string {
 	return append([]string{"env", key + "=" + value}, command...)
 }
 
-// Decoding normalizes absent/empty packages; installation order remains significant.
 func samePackages(previous, next *environmentPackages) bool {
 	if previous == nil || next == nil {
 		return previous == next
 	}
 	other := next.specsByManager()
 	for i, manager := range previous.specsByManager() {
-		if !slices.Equal(*manager.specs, *other[i].specs) {
+		if !slices.Equal(distinctSortedSpecs(*manager.specs), distinctSortedSpecs(*other[i].specs)) {
 			return false
 		}
 	}
 	return true
+}
+
+func distinctSortedSpecs(specs []string) []string {
+	sorted := slices.Clone(specs)
+	slices.Sort(sorted)
+	return slices.Compact(sorted)
 }
 
 func prebuildProviderKey(cfg config.Config) string {
@@ -487,8 +496,21 @@ func prebuildProviderKey(cfg config.Config) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// The environment owns its completed template, independently of current build settings.
-// Environments without a build retain runtime package installation.
-func hasPrebuiltTemplate(env db.Environment) bool {
-	return env.BuildJobID != nil && env.ResolvedTemplate != ""
+type templateSource string
+
+const (
+	templateSourceCurrent  templateSource = "current"
+	templateSourcePrevious templateSource = "previous"
+	templateSourceDefault  templateSource = "default"
+)
+
+func environmentTemplateSource(env db.Environment) templateSource {
+	switch {
+	case env.ResolvedBuildJobID == nil:
+		return templateSourceDefault
+	case env.BuildJobID != nil && *env.BuildJobID == *env.ResolvedBuildJobID:
+		return templateSourceCurrent
+	default:
+		return templateSourcePrevious
+	}
 }

@@ -222,7 +222,7 @@ Pass the environment ID as a string when [creating a session](/docs/en/sessions)
 
 ### Packages
 
-The `packages` field pre-installs packages into the sandbox before the agent starts. Packages are installed by their respective package managers. When prebuilds are enabled, a built template can be reused; a packages-only environment can install packages at sandbox startup while its template is not ready. When multiple package managers are specified, they run in alphabetical order (apt, cargo, gem, go, npm, pip). You can optionally pin specific versions. Unpinned packages install the latest version.
+The `packages` field pre-installs packages into the sandbox before the agent starts. Packages are installed by their respective package managers. When prebuilds are enabled, a built template can be reused. While a rebuild is running or after it fails, new sessions use the last successfully built template and install the current packages at sandbox startup; an environment that has never built successfully uses the default template and installs packages at startup. Reordering packages within one manager or repeating an entry does not trigger a rebuild. When multiple package managers are specified, they run in alphabetical order (apt, cargo, gem, go, npm, pip). You can optionally pin specific versions. Unpinned packages install the latest version.
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
@@ -408,7 +408,7 @@ Cloud environment `config` also supports:
 - `resources` sets template CPU (millicores), memory (MiB), and writable disk (GiB). Each value must be a positive integer; availability and limits depend on deployment configuration.
 - `environment` contains string variables injected at sandbox creation, limited to 64 entries and 64 KiB total for names and values. Names must match `[A-Za-z_][A-Za-z0-9_]*`; values cannot contain NUL. Platform variables take precedence on name collisions. Values appear in API responses; do not store secrets here.
 
-A nonempty `init_script` or `resources` requires environment prebuilds to be enabled, otherwise creation or update returns 400. Changing packages, script, or resources triggers a rebuild; changing only environment variables does not. Environments requiring a template cannot start a sandbox until it is ready. On update, each field replaces the previous value; omission preserves it, while `null`, an empty string (script), or an empty object (resources or variables) clears it.
+A nonempty `init_script` or `resources` requires environment prebuilds to be enabled, otherwise creation or update returns 400. Changing packages, script, or resources triggers a rebuild; changing only environment variables, networking, name, or description does not. Clearing all three returns the environment to the default template. During a rebuild, and after a failed or canceled one, new sessions keep using the last successfully built template, including its previous script results and resource sizes. Before the first successful build, sandboxes start from the default template and `init_script` and `resources` do not apply. The prebuild status reports which template new sessions use in `serving` (`current`, `previous`, or `default`). On update, each field replaces the previous value; omission preserves it, while `null`, an empty string (script), or an empty object (resources or variables) clears it.
 
 ### Networking
 

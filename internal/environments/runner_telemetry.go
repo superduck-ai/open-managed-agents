@@ -111,6 +111,10 @@ func (r *runnerRun) begin(ctx context.Context, stage string) context.Context {
 	return ctx
 }
 
+func (r *runnerRun) markTemplateSource(source templateSource) {
+	r.span.SetAttributes(attribute.String("oma.environment.template_source", string(source)))
+}
+
 func (r *runnerRun) markRecovered(recovered bool) {
 	if r.trigger == runnerTriggerLazyMCP || r.trigger == runnerTriggerPrewarm {
 		recovered = false

@@ -6,6 +6,7 @@ import { environmentQueryKey } from './data';
 import { packageManagers } from './model';
 
 export type PrebuildStage = 'image' | 'template';
+export type PrebuildServing = 'current' | 'previous' | 'default';
 export type PrebuildState =
   'idle' | 'queued' | 'submitting' | 'running' | 'canceling' | 'cancelled' | 'failed' | 'unknown' | 'ready' | 'skipped';
 
@@ -19,6 +20,7 @@ type PrebuildRecord = {
   image_logs: boolean;
   template_logs: boolean;
   image_skipped?: boolean;
+  serving?: PrebuildServing;
   created_at?: string | null;
   finished_at?: string | null;
 };
@@ -40,6 +42,7 @@ function parsePrebuild({ build: prebuild }: PrebuildResponse) {
       hasImageLogs: prebuild.image_logs,
       hasTemplateLogs: prebuild.template_logs,
       imageSkipped: prebuild.image_skipped === true,
+      serving: prebuild.serving ?? 'default',
     }
   );
 }

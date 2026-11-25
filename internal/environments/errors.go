@@ -20,7 +20,6 @@ var (
 	errPrebuildCursor              = errors.New("invalid build log cursor")
 	errPrebuildLogCursorExpired    = errors.New("Build log changed; reload logs from the beginning")
 	errPrebuildMissingOutput       = errors.New("successful build is missing its output")
-	errEnvironmentTemplateNotReady = errors.New("environment template is not ready; wait for the environment prebuild to succeed before starting sessions")
 	errTemplateResourceNotPositive = errors.New("resource values must be positive")
 	// errPrebuildMissingBuildRef reports a provider that accepted the submission
 	// without returning a reference, so remote work may have started unobserved.

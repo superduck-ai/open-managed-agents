@@ -24,6 +24,7 @@ type Environment struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	ResolvedBuildJobID  *int64
 	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -597,7 +598,7 @@ func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
 		BuildJobID: env.BuildJobID, Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
-		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
+		ResolvedBuildJobID: env.ResolvedBuildJobID, CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}
 }
 
@@ -661,7 +662,8 @@ func (r environmentMapperRow) environment() Environment {
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
 		BuildJobID: r.BuildJobID, Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
+		ResolvedBuildJobID: r.ResolvedBuildJobID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
 

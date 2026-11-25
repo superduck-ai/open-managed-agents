@@ -2342,8 +2342,6 @@
   "environmentPrebuild.stages": "构建阶段",
   "environmentPrebuild.expired": "运行记录已过期。",
   "environmentPrebuild.logsUnsupported": "此阶段不提供日志。",
-  "environmentPrebuild.servingPrevious": "新会话使用上次准备好的模板。",
-  "environmentPrebuild.servingDefault": "准备成功前，新会话使用默认模板。",
   "managedAgents.deployments.configuration": "配置",
   "managedAgents.deployments.configurationHelp": "选择 Agent、运行环境，以及每次运行时执行的指令。",
   "managedAgents.deployments.resources": "资源",

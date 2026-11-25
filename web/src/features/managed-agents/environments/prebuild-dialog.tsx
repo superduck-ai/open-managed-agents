@@ -4,14 +4,7 @@ import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../shared/ui/dialog';
 import { prebuildIsActive, prebuildStepState, type PrebuildStage, type EnvironmentPrebuild } from './prebuild';
-import {
-  PrebuildIcon,
-  PrebuildLabel,
-  PrebuildTime,
-  PrebuildDuration,
-  PrebuildServingNote,
-  PrebuildStateText,
-} from './prebuild-display';
+import { PrebuildIcon, PrebuildLabel, PrebuildTime, PrebuildDuration, PrebuildStateText } from './prebuild-display';
 import { EnvironmentPrebuildLogs } from './prebuild-logs';
 
 type PrebuildActions = {
@@ -53,9 +46,6 @@ export function EnvironmentPrebuildDialog({
           ) : null}
         </div>
         <PrebuildAction {...actions} />
-      </div>
-      <div className="shrink-0 px-5 pb-3 empty:hidden">
-        <PrebuildServingNote prebuild={prebuild} />
       </div>
       <PrebuildNotice {...actions} />
       <PrebuildRun

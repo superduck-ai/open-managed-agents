@@ -113,6 +113,7 @@ func receiveHarnessReply(t *testing.T, ctx context.Context, events <-chan chatEv
 	t.Helper()
 	var requestID, previewID string
 	var final chatEvent
+	var inputConfirmed bool
 	fragments := make(map[int]string)
 	thinking := make(map[string]bool)
 	for {
@@ -124,7 +125,12 @@ func receiveHarnessReply(t *testing.T, ctx context.Context, events <-chan chatEv
 				t.Fatal("Harness SSE ended before model_request_end")
 			}
 			switch event.Type {
+			case "user.message":
+				inputConfirmed = inputConfirmed || event.Processed != nil
 			case "span.model_request_start":
+				if !inputConfirmed {
+					t.Fatal("model started before the input confirmation reached SSE")
+				}
 				requestID = event.ID
 			case "event_start":
 				if !wantsPreview || requestID == "" || event.Event.ID == "" || event.ID != "" || event.Processed != nil {

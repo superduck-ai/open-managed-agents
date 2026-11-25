@@ -20,6 +20,16 @@ const harnessControlSessionID = "sesn_claim_1"
 
 func newHarnessControlTurn(t *testing.T) (context.Context, *sql.DB, *DB, HarnessTurnClaim) {
 	t.Helper()
+	ctx, database, store, ref := newHarnessControlInput(t)
+	claim, err := store.ClaimHarnessTurn(ctx, ref, HarnessTurnDelivery{}, "initial-hash", time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx, database, store, claim
+}
+
+func newHarnessControlInput(t *testing.T) (context.Context, *sql.DB, *DB, HarnessTurnRef) {
+	t.Helper()
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	codeID := seedClaimCodeSession(t, ctx, database, 1, sessioncontract.CloudHarnessRuntime, "running")
 	sessionUUID := "53000000-0000-0000-0001-000000000001"
@@ -27,12 +37,8 @@ func newHarnessControlTurn(t *testing.T) (context.Context, *sql.DB, *DB, Harness
 	execClaimTest(t, ctx, database, `UPDATE code_sessions SET status = 'active' WHERE external_id = $1`, codeID)
 	execClaimTest(t, ctx, database, `INSERT INTO session_threads (external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, agent_snapshot, status)
   VALUES ('sthr_harness', $1, $2, $3, $4, '{}', 'running')`, claimTestOrganization, claimTestWorkspace, sessionUUID, harnessControlSessionID)
-	ref := seedHarnessToolInput(t, database, sessionUUID, harnessControlSessionID, "sevt_harness_input")
-	claim, err := store.ClaimHarnessTurn(ctx, ref, HarnessTurnDelivery{}, "initial-hash", time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ctx, database, store, claim
+	ref := appendHarnessTestInput(t, store, sessionUUID, harnessControlSessionID, "sevt_harness_input")
+	return ctx, database, store, ref
 }
 
 func completeHarnessControlModel(t *testing.T, store *DB, claim HarnessTurnClaim, tool HarnessTool, events ...SessionEvent) []SessionEvent {

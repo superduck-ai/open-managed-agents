@@ -89,19 +89,18 @@ func (h *Handler) harnessModelCompletion(ctx context.Context, ref db.HarnessTurn
 	if err != nil || task.Kind != "" {
 		return completion, err
 	}
-	event, err := h.db.GetSessionEventByUUID(ctx, ref.WorkspaceUUID, ref.SessionUUID, ref.UUID)
+	input, found, err := h.db.FindHarnessInput(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	event, err = h.eventPayloads.RestorePublic(ctx, event)
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	inputMessage, err := h.eventPayloads.RestoreHarnessInput(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	input, err := sessioncontract.ParseHarnessUserInput(event.Payload)
-	if err != nil {
-		return nil, err
-	}
-	completion.UserText = input.ModelText()
+	completion.UserText = inputMessage.Text
 	return completion, nil
 }
 

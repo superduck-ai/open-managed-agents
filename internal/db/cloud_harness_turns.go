@@ -66,6 +66,15 @@ func (r harnessTurnRow) reference() HarnessTurnRef {
 	return HarnessTurnRef{UUID: r.UUID, OrganizationUUID: r.OrganizationUUID, WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID}
 }
 
+func (r harnessTurnRow) active() bool {
+	switch r.State {
+	case "pending", "running", HarnessWaitingChoice, HarnessWaitingTool:
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *DB) HarnessTurnState(ctx context.Context, ref HarnessTurnRef) (string, error) {
 	turn, found, err := NewCloudHarnessMapper(d.mapperDB).Find(ctx, ref)
 	if err == nil && !found {
@@ -103,18 +112,8 @@ func claimHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, ref Ha
 		return HarnessTurnClaim{}, err
 	}
 	mapper := NewCloudHarnessMapper(executor)
-	earlier, err := mapper.HasEarlierPendingInput(ctx, ref, ref.UUID)
+	row, err := lockHarnessDelivery(ctx, mapper, NewHarnessInputMapper(executor), ref, delivery)
 	if err != nil {
-		return HarnessTurnClaim{}, err
-	}
-	if earlier {
-		return HarnessTurnClaim{}, ErrWorkerEpochMismatch
-	}
-	row, found, err := lockHarnessDelivery(ctx, mapper, ref, delivery)
-	if err != nil || !found {
-		if err == nil {
-			err = ErrNotFound
-		}
 		return HarnessTurnClaim{}, err
 	}
 	if row.State == "completed" || row.State == "failed" || row.State == HarnessWaitingChoice || row.State == HarnessInterrupted {
@@ -173,13 +172,38 @@ func claimHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, ref Ha
 	return HarnessTurnClaim{Lease: lease, CodeSession: code.session(), State: "running", LegacyInput: legacyInput, InputEventUUID: row.historyInputID(), Subagent: subagent, Task: task}, nil
 }
 
-func lockHarnessDelivery(ctx context.Context, mapper CloudHarnessMapper, ref HarnessTurnRef, delivery HarnessTurnDelivery) (harnessTurnRow, bool, error) {
-	if delivery.TaskUUID == "" {
-		if err := mapper.CreateForInput(ctx, ref); err != nil {
-			return harnessTurnRow{}, false, err
+func lockHarnessDelivery(ctx context.Context, mapper CloudHarnessMapper, inputs HarnessInputMapper, ref HarnessTurnRef, delivery HarnessTurnDelivery) (harnessTurnRow, error) {
+	current, found, err := mapper.LockCurrentTurn(ctx, ref)
+	if err != nil || found && current.UUID == ref.UUID {
+		return current, err
+	}
+	if delivery.TaskUUID != "" {
+		return harnessTurnRow{}, ErrNotFound
+	}
+	if !current.active() {
+		first, pending, err := inputs.FindFirstPendingInput(ctx, ref)
+		if err != nil {
+			return harnessTurnRow{}, err
+		}
+		if !pending {
+			return harnessTurnRow{}, ErrNotFound
+		}
+		if first == ref.UUID {
+			row, err := mapper.CreateForInput(ctx, ref)
+			if err != nil {
+				return harnessTurnRow{}, mapNoRows(err)
+			}
+			return row, requireHarnessLease(inputs.SetQueuedState(ctx, ref, harnessInputClaimed))
 		}
 	}
-	return mapper.Lock(ctx, ref)
+	input, found, err := inputs.Find(ctx, ref)
+	if err != nil {
+		return harnessTurnRow{}, err
+	}
+	if found && input.State == harnessInputQueued {
+		return harnessTurnRow{}, ErrWorkerEpochMismatch
+	}
+	return harnessTurnRow{}, ErrNotFound
 }
 
 func harnessSessionMatches(session Session, ref HarnessTurnRef) bool {
@@ -257,9 +281,19 @@ func recordHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, lea
 		return nil, ErrWorkerEpochMismatch
 	}
 
+	var confirmed []SessionEvent
+	if phase == HarnessModelStart && row.TaskKind == "" {
+		confirmed, err = confirmHarnessModelInputTx(ctx, executor, session, row, events)
+		if err != nil {
+			return nil, err
+		}
+	}
 	batch, err := insertSessionHistoryTx(ctx, executor, session, events)
-	if err != nil || phase == HarnessModelStart {
-		return batch.Events, err
+	if err != nil {
+		return nil, err
+	}
+	if phase == HarnessModelStart {
+		return append(confirmed, batch.Events...), nil
 	}
 	if phase == HarnessModelEnd {
 		if completion == nil {
@@ -282,6 +316,21 @@ func recordHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, lea
 		return append(batch.Events, extra...), err
 	}
 	return finishHarnessEventsTx(ctx, executor, session, lease, row, phase, batch.Events)
+}
+
+func confirmHarnessModelInputTx(ctx context.Context, executor yourbatis.Executor, session Session, row harnessTurnRow, events []SessionEvent) ([]SessionEvent, error) {
+	mapper := NewSessionEventMapper(executor)
+	input, err := mapper.FindByUUID(ctx, session.WorkspaceUUID, session.UUID, row.InputEventUUID)
+	if err != nil {
+		return nil, err
+	}
+	index := slices.IndexFunc(events, func(event SessionEvent) bool {
+		return event.EventType == "span.model_request_start" && !event.ProcessedAt.IsZero()
+	})
+	if index >= 0 {
+		return confirmHarnessInputTx(ctx, mapper, input, events[index].ProcessedAt)
+	}
+	return confirmHarnessInputTx(ctx, mapper, input, time.Now().UTC())
 }
 
 func finishHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, lease HarnessTurnLease, row harnessTurnRow, phase HarnessModelPhase, stored []SessionEvent) ([]SessionEvent, error) {
@@ -309,24 +358,20 @@ func finishHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if stopReason == "" {
 		return stored, nil
 	}
-	settled, err := settleHarnessInputTx(ctx, executor, session, row, stopReason)
+	settled, err := settleHarnessInputTx(ctx, executor, session, row.InputEventUUID, stopReason)
 	return append(stored, settled...), err
 }
 
-func settleHarnessInputTx(ctx context.Context, executor yourbatis.Executor, session Session, row harnessTurnRow, stopReason string) ([]SessionEvent, error) {
+func settleHarnessInputTx(ctx context.Context, executor yourbatis.Executor, session Session, inputUUID, stopReason string) ([]SessionEvent, error) {
 	mapper := NewSessionEventMapper(executor)
-	input, err := mapper.FindByUUID(ctx, session.WorkspaceUUID, session.UUID, row.InputEventUUID)
+	input, err := mapper.FindByUUID(ctx, session.WorkspaceUUID, session.UUID, inputUUID)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	processed, applied, err := mapper.MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, input.ExternalID, now)
+	result, err := confirmHarnessInputTx(ctx, mapper, input, now)
 	if err != nil {
 		return nil, err
-	}
-	var result []SessionEvent
-	if applied {
-		result = append(result, processed.event())
 	}
 	payload, err := json.Marshal(sessionStatusPayload{StopReason: &sessionStopReason{Type: stopReason}})
 	if err != nil {
@@ -337,4 +382,15 @@ func settleHarnessInputTx(ctx context.Context, executor yourbatis.Executor, sess
 		EventType: "session.status_idle", Payload: payload, CreatedAt: now, ProcessedAt: now,
 	}})
 	return append(result, batch.Events...), err
+}
+
+func confirmHarnessInputTx(ctx context.Context, mapper SessionEventMapper, input sessionEventRow, at time.Time) ([]SessionEvent, error) {
+	if input.ProcessedAt != nil {
+		return nil, nil
+	}
+	processed, applied, err := mapper.MarkInputProcessed(ctx, input.WorkspaceUUID, input.SessionExternalID, input.ExternalID, at)
+	if err != nil || !applied {
+		return nil, err
+	}
+	return []SessionEvent{processed.event()}, nil
 }

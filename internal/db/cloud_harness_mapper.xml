@@ -31,28 +31,20 @@
         AND CAST(execution->>'worker_epoch' AS bigint) = #{params.Lease.Epoch}
         AND execution->>'state' = 'running' AND CAST(execution->>'lease_until' AS timestamptz) &gt; NOW()
     </sql>
-    <insert id="CreateForInput" result="exec">
-        INSERT INTO harness_thread_state AS state (
+    <insert id="CreateForInput" result="returning" resultType="harnessTurnRow">
+        INSERT INTO harness_thread_state AS t (
             organization_uuid, workspace_uuid, session_uuid, thread_uuid, execution_input_uuid, execution)
-        SELECT e.organization_uuid, e.workspace_uuid, e.session_uuid, e.session_uuid, e.uuid,
+        SELECT s.organization_uuid, s.workspace_uuid, s.uuid, s.uuid, i.input_uuid,
             jsonb_build_object('state', 'pending', 'worker_epoch', 0, 'attempts', 0, 'task_kind', '')
-        FROM session_events e
-        WHERE e.uuid = #{ref.UUID} AND e.organization_uuid = #{ref.OrganizationUUID}
-          AND e.workspace_uuid = #{ref.WorkspaceUUID} AND e.session_uuid = #{ref.SessionUUID}
-          AND e.event_type = 'user.message' AND e.processed_at IS NULL AND e.deleted_at IS NULL
+        FROM harness_inputs i JOIN sessions s ON s.uuid = i.session_uuid
+        WHERE i.input_uuid = #{ref.UUID} AND s.organization_uuid = #{ref.OrganizationUUID}
+          AND s.workspace_uuid = #{ref.WorkspaceUUID} AND s.uuid = #{ref.SessionUUID} AND i.state = 'queued'
         ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid)
         DO UPDATE SET execution_input_uuid = EXCLUDED.execution_input_uuid, execution = EXCLUDED.execution
-        WHERE state.execution_input_uuid IS DISTINCT FROM EXCLUDED.execution_input_uuid
-          AND (state.execution IS NULL OR state.execution->>'state' IN ('completed', 'failed', 'interrupted'))
+        WHERE t.execution_input_uuid IS DISTINCT FROM EXCLUDED.execution_input_uuid
+          AND (t.execution IS NULL OR t.execution->>'state' IN ('completed', 'failed', 'interrupted'))
+        RETURNING <include refid="turnColumns"/>
     </insert>
-
-    <select id="FindFirstPendingInput" result="optional" resultType="string">
-        SELECT uuid FROM session_events
-        WHERE organization_uuid = #{ref.OrganizationUUID} AND workspace_uuid = #{ref.WorkspaceUUID}
-          AND session_uuid = #{ref.SessionUUID} AND event_type = 'user.message'
-          AND processed_at IS NULL AND deleted_at IS NULL
-        ORDER BY id LIMIT 1
-    </select>
 
     <update id="InterruptTurn" result="rows">
         UPDATE harness_thread_state
@@ -80,6 +72,15 @@
         SELECT <include refid="turnColumns"/>
         FROM harness_thread_state t
         WHERE <include refid="scopedRef"/>
+        FOR UPDATE OF t
+    </select>
+
+    <select id="LockCurrentTurn" resultType="harnessTurnRow" result="optional">
+        SELECT <include refid="turnColumns"/>
+        FROM harness_thread_state t
+        WHERE t.organization_uuid = #{ref.OrganizationUUID} AND t.workspace_uuid = #{ref.WorkspaceUUID}
+          AND t.session_uuid = #{ref.SessionUUID} AND t.thread_uuid = t.session_uuid
+          AND t.execution_input_uuid IS NOT NULL
         FOR UPDATE OF t
     </select>
 
@@ -143,19 +144,6 @@
         WHERE <include refid="scopedRef"/> AND t.execution->>'resume_input_uuid' = #{inputUUID}
           AND t.execution->>'wake_pending' = 'true'
     </update>
-
-    <select id="HasEarlierPendingInput" result="scalar">
-        SELECT EXISTS (
-            SELECT 1 FROM session_events current
-            JOIN session_events earlier
-              ON earlier.organization_uuid = current.organization_uuid AND earlier.workspace_uuid = current.workspace_uuid
-             AND earlier.session_uuid = current.session_uuid AND earlier.id &lt; current.id
-             AND earlier.session_external_id = current.session_external_id
-            WHERE current.uuid = #{inputUUID} AND current.organization_uuid = #{ref.OrganizationUUID}
-              AND current.workspace_uuid = #{ref.WorkspaceUUID} AND current.session_uuid = #{ref.SessionUUID}
-              AND earlier.event_type = 'user.message' AND earlier.processed_at IS NULL AND earlier.deleted_at IS NULL
-        ) AS has_earlier_pending_input
-    </select>
 
     <update id="GrantModelLease" result="returning" resultType="int64">
         UPDATE code_sessions

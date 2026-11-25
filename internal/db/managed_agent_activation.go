@@ -12,6 +12,7 @@ type ManagedAgentActivationTx struct {
 	codeSessionMapper  CodeSessionMapper
 	sessionMapper      SessionMapper
 	sessionEventMapper SessionEventMapper
+	harnessInputMapper HarnessInputMapper
 }
 
 // WithManagedAgentActivationTx owns the database transaction lifecycle while
@@ -25,8 +26,17 @@ func (d *DB) WithManagedAgentActivationTx(
 			codeSessionMapper:  NewCodeSessionMapper(executor),
 			sessionMapper:      NewSessionMapper(executor),
 			sessionEventMapper: NewSessionEventMapper(executor),
+			harnessInputMapper: NewHarnessInputMapper(executor),
 		})
 	})
+}
+
+func (tx ManagedAgentActivationTx) ListUnpublishedHarnessInputs(ctx context.Context, session Session) ([]HarnessInput, error) {
+	return decodeHarnessInputs(tx.harnessInputMapper.ListUnpublishedForSession(ctx, harnessInputRef(session, "")))
+}
+
+func (tx ManagedAgentActivationTx) MarkHarnessUserInputPublished(ctx context.Context, ref HarnessTurnRef) error {
+	return tx.harnessInputMapper.MarkPublished(ctx, ref)
 }
 
 // WithLockedActiveCodeSession serializes direct JetStream publication with

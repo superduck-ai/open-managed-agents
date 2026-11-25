@@ -14,6 +14,31 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+func TestHarnessInterruptFirstQueuedInputPostgres(t *testing.T) {
+	ctx, _, store, first := newHarnessControlInput(t)
+	second := appendHarnessTestInput(t, store, first.SessionUUID, harnessControlSessionID, "sevt_harness_queued_second")
+	until := time.Now().Add(time.Minute)
+	if _, err := store.ClaimHarnessTurn(ctx, second, HarnessTurnDelivery{}, "second-hash", until); !errors.Is(err, ErrWorkerEpochMismatch) {
+		t.Fatalf("later input bypassed the queue: %v", err)
+	}
+	interrupt := newHarnessInterruptTestEvent(nil)
+	if _, err := store.AppendSessionUserEvents(ctx, first.WorkspaceUUID, harnessControlSessionID, []SessionEvent{interrupt}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if input, found, err := store.FindHarnessInput(ctx, first); err != nil || !found || input.State != harnessInputCancelled {
+		t.Fatalf("first queued input was not cancelled: %q, %t, %v", input.State, found, err)
+	}
+	if _, err := store.HarnessTurnState(ctx, first); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("queued cancellation created a turn: %v", err)
+	}
+	if _, err := store.ClaimHarnessTurn(ctx, second, HarnessTurnDelivery{}, "second-hash", until); err != nil {
+		t.Fatalf("second input could not run after interrupt: %v", err)
+	}
+	if _, err := store.ClaimHarnessTurn(ctx, first, HarnessTurnDelivery{}, "stale-hash", until); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale delivery was not recognized after the next claim: %v", err)
+	}
+}
+
 func TestHarnessInterruptSubagentResumesParentPostgres(t *testing.T) {
 	ctx, _, store, parent := newHarnessControlTurn(t)
 	ref := parent.Lease.Ref

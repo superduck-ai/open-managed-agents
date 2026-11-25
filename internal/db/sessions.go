@@ -308,6 +308,11 @@ func (d *DB) CreateSessionWithEvents(ctx context.Context, input CreateSessionInp
 			return txErr
 		}
 		created = batch.Events
+		for _, event := range created {
+			if err := enqueueHarnessInputTx(ctx, NewHarnessInputMapper(executor), session, event); err != nil {
+				return err
+			}
+		}
 		row, found, txErr := NewSessionMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
 		if txErr == nil && !found {
 			return ErrNotFound
@@ -514,6 +519,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 			return err
 		}
 		if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+			if err := NewHarnessInputMapper(executor).DeleteBySession(ctx, harnessInputRef(session, "")); err != nil {
+				return err
+			}
 			return deleteHarnessConversation(ctx, executor, session)
 		}
 		return nil

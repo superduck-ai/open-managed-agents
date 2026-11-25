@@ -11,6 +11,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUUID string, events []db.SessionEvent) ([]db.SessionEvent, error) {
@@ -82,6 +83,22 @@ func (s *Store) RestorePublic(ctx context.Context, event db.SessionEvent) (db.Se
 		}
 	}
 	return event, nil
+}
+
+func (s *Store) RestoreHarnessInput(ctx context.Context, input db.HarnessInput) (db.HarnessInputMessage, error) {
+	message := input.Message
+	if message.PayloadBlobUUID == nil && len(message.LegacyEvent) == 0 {
+		return message, nil
+	}
+	payload, err := s.restore(ctx, input.Ref.WorkspaceUUID, message.LegacyEvent, message.PayloadBlobUUID)
+	if err != nil {
+		return db.HarnessInputMessage{}, err
+	}
+	user, err := sessioncontract.ParseHarnessUserInput(payload)
+	if err != nil {
+		return db.HarnessInputMessage{}, err
+	}
+	return db.HarnessInputMessage{Text: user.ModelText(), Metadata: user.Metadata}, nil
 }
 
 func assistantEchoKey(raw json.RawMessage, eventType string) (requestID, source, key string, err error) {

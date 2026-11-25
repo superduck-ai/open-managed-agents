@@ -30,9 +30,16 @@ func insertHarnessInterruptTx(ctx context.Context, executor yourbatis.Executor, 
 	}
 	events := []SessionEvent{write.Event}
 	childOnly := event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID
-	row, found, err := lockHarnessInterruptTurn(ctx, executor, *session, childOnly)
-	if err != nil || !found {
+	row, found, err := NewCloudHarnessMapper(executor).LockCurrentTurn(ctx, harnessInputRef(*session, ""))
+	if err != nil {
 		return events, err
+	}
+	if !found || !row.active() {
+		if childOnly {
+			return events, nil
+		}
+		stopped, err := cancelQueuedHarnessInputTx(ctx, executor, *session)
+		return append(events, stopped...), err
 	}
 	child, err := harnessSubagentThread(ctx, executor, row)
 	if err != nil {
@@ -45,21 +52,18 @@ func insertHarnessInterruptTx(ctx context.Context, executor yourbatis.Executor, 
 	return append(events, stopped...), err
 }
 
-func lockHarnessInterruptTurn(ctx context.Context, executor yourbatis.Executor, session Session, childOnly bool) (harnessTurnRow, bool, error) {
-	ref := HarnessTurnRef{OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID}
-	mapper := NewCloudHarnessMapper(executor)
+func cancelQueuedHarnessInputTx(ctx context.Context, executor yourbatis.Executor, session Session) ([]SessionEvent, error) {
+	ref := harnessInputRef(session, "")
+	mapper := NewHarnessInputMapper(executor)
 	inputUUID, exists, err := mapper.FindFirstPendingInput(ctx, ref)
 	if err != nil || !exists {
-		return harnessTurnRow{}, false, err
+		return nil, err
 	}
 	ref.UUID = inputUUID
-	if !childOnly {
-		if err := mapper.CreateForInput(ctx, ref); err != nil {
-			return harnessTurnRow{}, false, err
-		}
+	if err := requireHarnessLease(mapper.SetQueuedState(ctx, ref, harnessInputCancelled)); err != nil {
+		return nil, err
 	}
-	row, found, err := mapper.Lock(ctx, ref)
-	return row, found && (row.State == "pending" || row.State == "running" || row.State == HarnessWaitingChoice || row.State == HarnessWaitingTool), err
+	return settleHarnessInputTx(ctx, executor, session, inputUUID, "interrupted")
 }
 
 func interruptHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, row harnessTurnRow, child *SessionThread, childOnly bool, at time.Time) ([]SessionEvent, error) {
@@ -109,7 +113,7 @@ func interruptHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, se
 	if err != nil || childOnly {
 		return batch.Events, err
 	}
-	final, err := settleHarnessInputTx(ctx, executor, session, row, "interrupted")
+	final, err := settleHarnessInputTx(ctx, executor, session, row.InputEventUUID, "interrupted")
 	return append(batch.Events, final...), err
 }
 

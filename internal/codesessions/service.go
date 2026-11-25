@@ -165,9 +165,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		return nil
 	}
 	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
-		return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", nil, func(_ db.CodeSession) error {
-			return s.publishHarnessInputs(ctx, session, events)
-		})
+		return s.publishHarnessInputs(ctx, session, events)
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	queued := false

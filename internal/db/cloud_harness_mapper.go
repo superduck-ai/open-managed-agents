@@ -93,18 +93,17 @@ type harnessToolResultParams struct {
 }
 
 type CloudHarnessMapper interface {
-	CreateForInput(ctx context.Context, ref HarnessTurnRef) error
-	FindFirstPendingInput(ctx context.Context, ref HarnessTurnRef) (string, bool, error)
+	CreateForInput(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, error)
 	InterruptTurn(ctx context.Context, params harnessInterruptParams) (int64, error)
 	Find(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
 	Lock(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
+	LockCurrentTurn(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
 	LockWaitingChoice(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
 	FindResumeWork(ctx context.Context, ref HarnessTurnRef, kind string) (harnessTurnRow, bool, error)
 	ResumeChoice(ctx context.Context, ref HarnessTurnRef, taskUUID string) (int64, error)
 	ParkTool(ctx context.Context, params harnessLeaseParams, toolUUID string) (int64, error)
 	ListReadyInputs(ctx context.Context, limit int) ([]harnessWakeRow, error)
 	MarkInputPublished(ctx context.Context, ref HarnessTurnRef, inputUUID string) error
-	HasEarlierPendingInput(ctx context.Context, ref HarnessTurnRef, inputUUID string) (bool, error)
 	GrantModelLease(ctx context.Context, params harnessClaimParams) (int64, error)
 	Claim(ctx context.Context, params harnessLeaseParams) (int64, error)
 	RenewTurn(ctx context.Context, params harnessLeaseParams) (int64, error)

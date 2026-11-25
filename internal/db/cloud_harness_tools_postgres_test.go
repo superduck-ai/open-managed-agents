@@ -24,7 +24,7 @@ func TestHarnessToolTaskCheckpointPostgres(t *testing.T) {
 	execClaimTest(t, ctx, database, `UPDATE code_sessions SET status = 'active' WHERE external_id = $1`, codeID)
 	execClaimTest(t, ctx, database, `INSERT INTO session_threads (external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, agent_snapshot, status)
 		VALUES ('sthr_harness', $1, $2, $3, $4, '{}', 'running')`, claimTestOrganization, claimTestWorkspace, sessionUUID, sessionID)
-	ref := seedHarnessToolInput(t, database, sessionUUID, sessionID, "sevt_harness_input")
+	ref := appendHarnessTestInput(t, store, sessionUUID, sessionID, "sevt_harness_input")
 	until := time.Now().Add(time.Minute)
 
 	initial, err := store.ClaimHarnessTurn(ctx, ref, HarnessTurnDelivery{}, "initial-hash", until)
@@ -51,7 +51,7 @@ func TestHarnessToolTaskCheckpointPostgres(t *testing.T) {
 	if err != nil || !stale.Superseded || stale.Task.Kind != HarnessToolTask {
 		t.Fatalf("redelivery lost the pending tool task: %+v, %v", stale, err)
 	}
-	nextRef := seedHarnessToolInput(t, database, sessionUUID, sessionID, "sevt_harness_next")
+	nextRef := appendHarnessTestInput(t, store, sessionUUID, sessionID, "sevt_harness_next")
 	if _, err := store.ClaimHarnessTurn(ctx, nextRef, HarnessTurnDelivery{}, "out-of-order-hash", until); !errors.Is(err, ErrWorkerEpochMismatch) {
 		t.Fatalf("later input displaced the outstanding execution: %v", err)
 	}
@@ -182,5 +182,17 @@ func seedHarnessToolInput(t *testing.T, database *sql.DB, sessionUUID, sessionID
 	execClaimTest(t, t.Context(), database, `INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload)
 		VALUES ($1, $2, $3, $4, $5, $6, 'user.message', '{"content":[{"type":"text","text":"read"}]}')`,
 		ref.UUID, eventID, ref.OrganizationUUID, ref.WorkspaceUUID, ref.SessionUUID, sessionID)
+	return ref
+}
+
+func appendHarnessTestInput(t *testing.T, store *DB, sessionUUID, sessionID, eventID string) HarnessTurnRef {
+	t.Helper()
+	ref := HarnessTurnRef{UUID: uuid.NewString(), OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, SessionUUID: sessionUUID}
+	if _, err := store.AppendSessionUserEvents(t.Context(), ref.WorkspaceUUID, sessionID, []SessionEvent{{
+		UUID: ref.UUID, ExternalID: eventID, EventType: "user.message", CreatedAt: time.Now().UTC(),
+		Payload: json.RawMessage(`{"content":[{"type":"text","text":"read"}]}`),
+	}}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	return ref
 }

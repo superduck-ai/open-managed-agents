@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="HarnessInputMapper">
+    <sql id="sessionScope">
+        s.organization_uuid = #{ref.OrganizationUUID} AND s.workspace_uuid = #{ref.WorkspaceUUID}
+        AND s.uuid = #{ref.SessionUUID}
+    </sql>
+    <sql id="columns">
+        i.input_uuid, i.session_uuid, s.organization_uuid, s.workspace_uuid,
+        i.input_message, i.state, i.published_at
+    </sql>
+    <insert id="Insert" result="exec">
+        INSERT INTO harness_inputs (input_uuid, session_uuid, input_message, created_at)
+        SELECT #{ref.UUID}, s.uuid, #{inputMessage,sensitive=true}, #{createdAt}
+        FROM sessions s WHERE <include refid="sessionScope"/>
+    </insert>
+    <select id="Find" result="optional" resultType="harnessInputRow">
+        SELECT <include refid="columns"/>
+        FROM harness_inputs i JOIN sessions s ON s.uuid = i.session_uuid
+        WHERE <include refid="sessionScope"/> AND i.input_uuid = #{ref.UUID}
+    </select>
+    <select id="FindFirstPendingInput" result="optional" resultType="string">
+        SELECT i.input_uuid
+        FROM harness_inputs i JOIN sessions s ON s.uuid = i.session_uuid
+        WHERE <include refid="sessionScope"/> AND i.state = 'queued'
+        ORDER BY i.id LIMIT 1
+    </select>
+    <select id="ListUnpublished" resultType="harnessInputRow">
+        SELECT <include refid="columns"/>
+        FROM harness_inputs i JOIN sessions s ON s.uuid = i.session_uuid
+        WHERE i.state = 'queued' AND i.published_at IS NULL
+          AND s.deleted_at IS NULL AND s.archived_at IS NULL AND s.status &lt;&gt; 'terminated'
+          AND (
+              SELECT c.status FROM code_sessions c
+              WHERE c.session_uuid = s.uuid AND c.workspace_uuid = s.workspace_uuid
+                AND c.organization_uuid = s.organization_uuid AND c.deleted_at IS NULL
+              ORDER BY c.created_at DESC, c.uuid DESC LIMIT 1
+          ) = 'active'
+        ORDER BY i.id LIMIT #{limit}
+    </select>
+    <select id="ListUnpublishedForSession" resultType="harnessInputRow">
+        SELECT <include refid="columns"/>
+        FROM harness_inputs i JOIN sessions s ON s.uuid = i.session_uuid
+        WHERE <include refid="sessionScope"/> AND i.state = 'queued' AND i.published_at IS NULL
+        ORDER BY i.id
+    </select>
+    <update id="MarkPublished" result="exec">
+        UPDATE harness_inputs i SET published_at = now()
+        FROM sessions s WHERE s.uuid = i.session_uuid AND <include refid="sessionScope"/>
+          AND i.input_uuid = #{ref.UUID} AND i.published_at IS NULL
+    </update>
+    <update id="SetQueuedState" result="rows">
+        UPDATE harness_inputs i SET state = #{state}
+        FROM sessions s WHERE s.uuid = i.session_uuid AND <include refid="sessionScope"/>
+          AND i.input_uuid = #{ref.UUID} AND i.state = 'queued'
+    </update>
+    <delete id="DeleteBySession" result="exec">
+        DELETE FROM harness_inputs i USING sessions s
+        WHERE s.uuid = i.session_uuid AND <include refid="sessionScope"/>
+    </delete>
+</mapper>

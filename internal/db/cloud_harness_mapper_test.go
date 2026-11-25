@@ -15,17 +15,17 @@ func TestHarnessCreateTurnAndOrderBindings(t *testing.T) {
 		statement: cloudHarnessMapperCreateForInputStatement, bound: create,
 		wantID: "CloudHarnessMapper.CreateForInput", wantKind: yourbatis.StatementInsert,
 		wantArgumentNames: []string{"ref.UUID", "ref.OrganizationUUID", "ref.WorkspaceUUID", "ref.SessionUUID"},
-		wantSQLFragments:  []string{"INSERT INTO harness_thread_state", "e.processed_at IS NULL", "state.execution_input_uuid IS DISTINCT FROM EXCLUDED.execution_input_uuid"},
+		wantSQLFragments:  []string{"INSERT INTO harness_thread_state", "FROM harness_inputs i JOIN sessions s", "i.state = 'queued'", "RETURNING t.execution_input_uuid AS uuid"},
 	})
-	earlier := buildCloudHarnessMapperHasEarlierPendingInput(yourbatis.DialectPostgres, ref, ref.UUID)
+	current := buildCloudHarnessMapperLockCurrentTurn(yourbatis.DialectPostgres, ref)
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: cloudHarnessMapperHasEarlierPendingInputStatement, bound: earlier,
-		wantID: "CloudHarnessMapper.HasEarlierPendingInput", wantKind: yourbatis.StatementSelect,
-		wantArgumentNames: []string{"inputUUID", "ref.OrganizationUUID", "ref.WorkspaceUUID", "ref.SessionUUID"},
-		wantSQLFragments:  []string{"earlier.id < current.id", "earlier.processed_at IS NULL", "current.uuid = $1"},
+		statement: cloudHarnessMapperLockCurrentTurnStatement, bound: current,
+		wantID: "CloudHarnessMapper.LockCurrentTurn", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"ref.OrganizationUUID", "ref.WorkspaceUUID", "ref.SessionUUID"},
+		wantSQLFragments:  []string{"t.thread_uuid = t.session_uuid", "t.execution_input_uuid IS NOT NULL", "FOR UPDATE OF t"},
 	})
 	want := []any{"input", "org", "workspace", "session"}
-	if !reflect.DeepEqual(create.Values(), want) || !reflect.DeepEqual(earlier.Values(), want) {
+	if !reflect.DeepEqual(create.Values(), want) || !reflect.DeepEqual(current.Values(), want[1:]) {
 		t.Fatal("input scope parameters are out of order")
 	}
 }
@@ -154,13 +154,6 @@ func TestHarnessSubagentTaskBindings(t *testing.T) {
 
 func TestHarnessInterruptTurnBindings(t *testing.T) {
 	ref := HarnessTurnRef{UUID: "turn", OrganizationUUID: "org", WorkspaceUUID: "workspace", SessionUUID: "session"}
-	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: cloudHarnessMapperFindFirstPendingInputStatement,
-		bound:     buildCloudHarnessMapperFindFirstPendingInput(yourbatis.DialectPostgres, ref),
-		wantID:    "CloudHarnessMapper.FindFirstPendingInput", wantKind: yourbatis.StatementSelect,
-		wantArgumentNames: []string{"ref.OrganizationUUID", "ref.WorkspaceUUID", "ref.SessionUUID"},
-		wantSQLFragments:  []string{"processed_at IS NULL", "ORDER BY id LIMIT 1"},
-	})
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: cloudHarnessMapperInterruptTurnStatement,
 		bound:     buildCloudHarnessMapperInterruptTurn(yourbatis.DialectPostgres, harnessInterruptParams{Ref: ref, State: HarnessInterrupted}),

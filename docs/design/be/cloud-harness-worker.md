@@ -11,14 +11,15 @@ sequenceDiagram
     participant N as JetStream
     participant W as 单次投递 Worker
     participant M as OMA 模型网关
-    C->>D: 提交公开用户事件
+    C->>D: 同事务提交公开用户事件和内部输入
     C->>N: InputSender 发布完整输入，等待 PubAck
     W->>N: Fetch(1)
-    W->>D: 创建或领取回合租约
+    W->>D: 确认内部队首并领取回合租约
     W->>D: 读取已提交的线程历史
     W->>W: 在内存合入本次输入
     W->>M: Fantasy 发起模型请求
-    M->>D: 提交 span.model_request_start
+    M->>D: 同事务确认用户输入并提交 span.model_request_start
+    M-->>C: SSE 先发布用户输入确认，再发布模型开始事件
     M-->>C: SSE 发布 event_start 和 event_delta
     M->>D: 同事务提交输入、助手消息、公开回复和回合终态
     M-->>C: SSE 发布已提交事件
@@ -31,9 +32,15 @@ Worker 按平台规则、Environment、Agent 或 specialist 指令、工作目�
 
 版本 4 的新投递包括用户文本、选择响应引用和沙箱工具结果引用。订阅回调使用用户输入格式。各类投递都带组织、工作区和会话范围。用户输入的 `Nats-Msg-Id` 使用公开事件 UUID，选择响应用 `choice_response:<event_uuid>`，异步工具完成用 `tool_result:<tool_uuid>`。
 
-Session 激活时持有 Session 与 Code Session 行锁，从已提交的历史读取未处理输入，取得所有 PubAck 后切换到 active。在激活前提交的输入由这条路径交付。active Session 的 Events API 在数据库提交后直接调用 `InputSender`。发布失败时返回 503，客户端使用相同的 `Idempotency-Key` 重试，服务端复用原事件 UUID。后端在提交后、PubAck 前退出也由客户端重试恢复。
+Session API 在同一个事务中写入公开用户事件和内部输入。Session 激活时持有 Session 与 Code Session 行锁，从内部队列读取待发布的输入，取得所有 PubAck 后切换到 active。active Session 的 Events API 在提交后立即尝试通过 `InputSender` 投递。发布失败时返回 503，客户端使用相同的 `Idempotency-Key` 重试，服务端复用原事件 UUID。Harness 输入维护循环也会补发 active Session 已提交但未记录 PubAck 的输入，包括进程在提交和投递之间退出的情况。
 
-Worker 领取时在 `harness_thread_state` 的根线程行记录当前执行。`execution_input_uuid` 指向原始用户事件，`execution` 记录回合状态、当前阶段、租约、重试次数和恢复输入的身份。每个 Session 复用这个执行位置。较早的公开用户消息尚未处理时，后续投递延迟重试。领取时增加 worker epoch，有效租约内才允许开始和提交模型请求。回复、输入完成标记、空闲状态和回合终态由同一个事务提交。模型请求失败会重试，达到尝试上限时进入 `failed`。重投时，Worker 从当前已提交的阶段继续。回合结算或挂起后会确认当前输入。模型请求可能在外部调用成功但提交前中断时重新发出，公开回复只能由有效租约提交一次。
+Worker 领取时锁定 `harness_thread_state` 的根线程回合。`execution_input_uuid` 指向原始输入，`execution` 记录回合状态、当前阶段、租约、重试次数和恢复输入的身份。当前回合未结束时，后续输入延迟重试。没有活跃回合时，Worker 只为 `harness_inputs` 的队首创建回合，并在同一事务中将输入转为 `claimed`。领取时增加 worker epoch，有效租约内才允许确认输入和开始模型请求。
+
+`harness_inputs` 通过 `session_uuid` 关联会话，并复用公开事件 UUID 作为 `input_uuid` 和 JetStream 去重键。新输入的 `input_message` 保存正文和可选 metadata，外置内容沿用已有对象引用。队列按数据库内部 `id` 排序，PubAck 更新 `published_at`，领取前取消将状态改为 `cancelled`。已取消的输入重复投递时直接确认。迁移 `00178` 将现有待领取和活跃回合的输入带入内部队列。删除会话时清理对应输入。
+
+服务端接受输入时返回并实时发布 `processed_at=null` 的接收回执。Worker 发起首个模型请求时，模型网关在现有启动事务中为同一条用户事件写入 `processed_at` 并记录模型开始。两条事件共用本次启动时间，提交后按用户输入确认、模型开始的顺序发布。模型重试沿用首次确认时间。
+
+回复、空闲状态和回合终态在同一个事务提交。模型请求失败会重试，达到尝试上限时进入 `failed`。重投时，Worker 从当前已提交的阶段继续。回合结算或挂起后，Worker 确认队列投递。模型请求可能在外部调用成功但提交前中断时重新发出，公开回复只能由有效租约提交一次。
 
 每个 Worker 进程由外部启动。它只领取一条投递，完成、挂起或归还该输入后退出。等待用户选择或长时间执行的沙箱工具时，Worker 确认本次投递并退出，下一条外部结果输入恢复原回合。
 
@@ -46,7 +53,7 @@ Worker 领取时在 `harness_thread_state` 的根线程行记录当前执行。`
 - `harness_compaction_summaries` 用行内 `id` 作主键，按线程和 `up_to_seq` 保存摘要。`up_to_seq` 是该摘要覆盖的最后一个消息序号。读取历史时支持祖先截止位置、fresh-context 边界和摘要后的消息。调度器尚未自动触发上下文压缩。
 - `harness_thread_state` 按线程保存运行状态，使用与 Infinity DynamoDB 一致的 `metadata`、`active_subscriptions` 和 `pending_user_choices`。`version` 用于生成助手历史的消息标识。元数据存于根线程。
 
-Worker 在持有租约时读取已提交的历史，并按稳定的消息 ID 将尚未写入的输入合入模型请求。模型网关成功提交时，在一个事务内追加本次输入和助手消息、写入公开事件并推进执行阶段。线程行锁保护历史去重和消息计数。Session 删除时清理对应的四张表。公开 API、SSE 与 Webhook 从 `session_events` 的公共事件字段读取。执行检查点只供 Worker 和网关使用。
+Worker 在持有租约时读取已提交的历史，并按稳定的消息 ID 将尚未写入的输入合入模型请求。模型网关成功提交时，从内部输入记录读取正文，在一个事务内追加本次输入和助手消息、写入公开事件并推进执行阶段。线程行锁保护历史去重和消息计数。Session 删除时清理对应的四张表。公开 API、SSE 与 Webhook 从 `session_events` 的公共事件字段读取。执行检查点只供 Worker 和网关使用。
 
 输入在模型成功前可由原 NATS 投递、已保存的工具结果或子线程委派事件重新构造。模型失败且仍可重试时，Worker 归还原投递，下一次领取时重建同一步。模型成功时，历史键使用原输入事件 UUID、`<tool_uuid>:result` 或委派工具 UUID。用户选择回答只保存工具结果和唤醒引用，等续跑的模型成功后再追加到模型历史。回合中断或模型耗尽重试时，提交可用的工具结果以闭合已提交的工具调用。若没有结果且回合被中断，使用中断结果。兼容升级前已写入的暂存输入，回滚时按当前线程及 `turn_uuid` 清除尚无助手结果的历史。
 
@@ -127,7 +134,7 @@ Harness 读取 Code Session 已固定的 `subagents` 配置，遵守 inline 开�
 
 ## 停止执行
 
-控制台的停止按钮通过 Session Events API 提交 `user.interrupt`，立即在 PG 结算当前回合。请求指定子线程的 `session_thread_id` 时，只停止该子线程，父模型收到中断工具结果后继续。省略线程 ID 或指定主线程时，停止整个当前回合，包括它的活跃子线程。待答问卷随回合中断清除。
+控制台的停止按钮通过 Session Events API 提交 `user.interrupt`，从根线程状态定位并结算当前回合。请求指定子线程的 `session_thread_id` 时，只停止该子线程，父模型收到中断工具结果后继续。省略线程 ID 或指定主线程时，停止整个当前回合，包括它的活跃子线程。如果还没有活跃回合，则取消第一条待领取的用户输入。待答问卷随回合中断清除。
 
 中断事务撤销当前租约，结算已打开的模型请求和待处理的工具调用，并写入空闲事件。Worker 在下一次续租失败时取消模型请求。排队的沙箱调用直接取消，运行中的调用由现有沙箱取消协议停止。子线程中断后父线程按 PG 检查点恢复。当前输入仍在处理时由同一 Worker 继续。子线程已因沙箱工具挂起时，API 发布已挂起的恢复输入，唤醒 Worker 继续父线程。重复停止已经空闲的子线程不会推进父任务。已停止的子线程可以通过 `send_message` 接受新任务。
 
@@ -137,7 +144,7 @@ Harness 读取 Code Session 已固定的 `subagents` 配置，遵守 inline 开�
 
 ## SSE 预览
 
-Harness 的历史分页和 SSE 重放用原始接收时间排列 `user.message`，并用数据库写入顺序处理相同时间。用户输入结算时更新 `processed_at`，分页位置继续使用其接收时间。API 和 SSE 为 Harness 用户消息返回 `received_at`，控制台用它排列中断后的会话记录和显示用户消息时间。历史请求的时间筛选仍比较 `processed_at`。
+Harness 的历史分页和 SSE 重放用原始接收时间排列 `user.message`，并用数据库写入顺序处理相同时间。API 和 SSE 为 Harness 用户消息返回 `received_at`，控制台用它排列中断后的会话记录和显示用户消息时间。历史请求的时间筛选比较 `processed_at`。
 
 Session 和主 Thread 的 SSE 连接可以通过 `event_deltas[]=agent.message` 请求文本预览。有文本输出时，事件顺序为 `span.model_request_start`、`event_start`、按内容块索引发送的 `event_delta`、最终 `agent.message`、`span.model_request_end`。文本预览和最终回复共用同一事件 ID，ID 由模型请求派生。新增的块索引按正文首次出现的顺序分配，最终回复沿用这些索引。请求 `event_deltas[]=agent.thinking` 时，模型开始 thinking 块会触发 `event_start`，完成后发布只含状态的 `agent.thinking`。
 

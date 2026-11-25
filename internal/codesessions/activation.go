@@ -63,12 +63,14 @@ func (s *Service) activateHarnessSession(ctx context.Context, codeSession db.Cod
 		if _, err := tx.LockInitializingCodeSession(ctx, codeSession.WorkspaceUUID, codeSession.UUID); err != nil {
 			return err
 		}
-		events, err := tx.ListSessionEventsForActivation(ctx, session)
+		inputs, err := tx.ListUnpublishedHarnessInputs(ctx, session)
 		if err != nil {
 			return err
 		}
-		if err := s.publishHarnessInputs(ctx, session, events); err != nil {
-			return err
+		for _, input := range inputs {
+			if err := s.publishHarnessUserInput(ctx, input, tx.MarkHarnessUserInputPublished); err != nil {
+				return err
+			}
 		}
 		activated, err := tx.ActivateCodeSession(ctx, codeSession.UUID, time.Now().UTC())
 		if err == nil && !activated {

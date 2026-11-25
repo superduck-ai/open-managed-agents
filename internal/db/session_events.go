@@ -79,6 +79,9 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 				return sessionEventBatchResult{}, err
 			}
 			if write.Inserted {
+				if err := enqueueHarnessInputTx(ctx, NewHarnessInputMapper(executor), session, write.Event); err != nil {
+					return sessionEventBatchResult{}, err
+				}
 				result.Events = append(result.Events, write.Event)
 				if settled {
 					result.SettledInputEventIDs = append(result.SettledInputEventIDs, write.Event.ExternalID)

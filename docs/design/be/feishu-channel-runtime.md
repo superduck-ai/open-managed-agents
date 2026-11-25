@@ -63,6 +63,8 @@ flowchart LR
 
 App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工作区移动密文无法解密；列表与更新响应不回显密钥，编辑时留空保留原值。
 
+同一飞书 App ID 在整个 OMA 实例内只能绑定一个未删除的渠道，停用渠道仍保留绑定。创建或编辑渠道时遇到重复绑定，保存接口返回 HTTP 409 和 `conflict_error`，控制台提示该 App ID 已绑定到其他渠道。
+
 ## 渠道运行身份
 
 创建、保存渠道以及发起扫码授权时，在当前已认证用户的请求中准备工作区专用凭据，并传递 `Principal.RuntimeUserUUID()`。普通成员使用用户 UUID，API Key 和平台组织管理员使用稳定账号 UUID；创建者审计与运行身份分别保存。

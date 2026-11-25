@@ -138,3 +138,32 @@ func TestNativeChannelRoutesRejectForeignOrArchivedAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelSaveReportsAppAlreadyBound(t *testing.T) {
+	store := &fakeLocalStore{
+		createErr: db.ErrChannelAppAlreadyBound,
+		updateErr: db.ErrChannelAppAlreadyBound,
+		records:   []db.ChannelRecord{{ExternalID: "chnl_existing"}},
+	}
+	handler := newLocalHandler(testLocalService(store, nil, nil, nil), nil)
+	router := chi.NewRouter()
+	router.Mount("/agents/{agent_id}/channels", handler.agentRouter())
+	for _, path := range []string{"/agents/agent/channels", "/agents/agent/channels/chnl_existing"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(auth.WithPrincipal(t.Context(), auth.Principal{
+				OrganizationUUID: "org",
+				WorkspaceUUID:    "ws",
+				CredentialType:   auth.CredentialTypePlatformSession,
+			}), http.MethodPost, path, strings.NewReader(`{"name":"渠道"}`))
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "test-session"})
+			request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken("test-session"))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusConflict ||
+				!strings.Contains(response.Body.String(), `"type":"conflict_error"`) ||
+				!strings.Contains(response.Body.String(), "飞书 App ID 已绑定到其他渠道，请使用未绑定的飞书应用。") {
+				t.Fatalf("渠道保存应返回应用绑定冲突，status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}

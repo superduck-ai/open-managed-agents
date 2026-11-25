@@ -54,6 +54,13 @@ func unavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "渠道服务暂不可用，请稍后重试", cause)
 }
 
+func channelRecordWriteError(cause error) error {
+	if errors.Is(cause, db.ErrChannelAppAlreadyBound) {
+		return apperr.New(apperr.Conflict, "飞书 App ID 已绑定到其他渠道，请使用未绑定的飞书应用。", cause)
+	}
+	return unavailable(cause)
+}
+
 func unauthenticated() error {
 	return apperr.New(apperr.Unauthenticated, "请先登录", nil)
 }

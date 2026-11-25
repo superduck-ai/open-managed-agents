@@ -63,7 +63,7 @@ flowchart LR
 
 App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工作区移动密文无法解密；列表与更新响应不回显密钥，编辑时留空保留原值。
 
-同一飞书 App ID 在整个 OMA 实例内只能绑定一个未删除的渠道，停用渠道仍保留绑定。创建或编辑渠道时遇到重复绑定，保存接口返回 HTTP 409 和 `conflict_error`，控制台提示该 App ID 已绑定到其他渠道。
+同一飞书 App ID 在整个 OMA 实例内只能绑定一个未删除的渠道，停用渠道仍保留绑定。创建或编辑渠道时遇到重复绑定，保存接口返回 HTTP 409、错误类型 `conflict_error` 和错误码 `channel_app_already_bound`。控制台根据错误码使用当前界面语言展示提示。
 
 ## 渠道运行身份
 

@@ -25,7 +25,7 @@ import { listChannelEnvironments } from './channelEnvironments';
 import { listAllWorkspaceAgents } from './workspaceChannels';
 import { channelDetailPath, channelsListPath } from './paths';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
-import { errorMessage } from '../utils';
+import { errorMessage, toRecord } from '../utils';
 
 function WizardStepFields({
   step,
@@ -232,7 +232,14 @@ export function ChannelWizardFormPage({
       void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
       onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
     } catch (err) {
-      setError(errorMessage(err));
+      setError(
+        toRecord(err)?.code === 'channel_app_already_bound'
+          ? msg(
+              'managedAgents.channels.appAlreadyBound',
+              'This Feishu App ID is already bound to another channel. Use an unused Feishu app.',
+            )
+          : errorMessage(err),
+      );
     } finally {
       setSaving(false);
     }

@@ -3807,6 +3807,7 @@
   "managedAgents.channels.notMounted": "不挂载",
   "managedAgents.channels.nextStep": "下一步",
   "managedAgents.channels.saveConfig": "保存配置",
+  "managedAgents.channels.appAlreadyBound": "飞书 App ID 已绑定到其他渠道，请使用未绑定的飞书应用。",
   "managedAgents.channels.agentRequired": "请选择智能体",
   "managedAgents.channels.bindRequired": "请先完成飞书授权，再保存渠道",
   "managedAgents.channels.notFound": "未找到该渠道",

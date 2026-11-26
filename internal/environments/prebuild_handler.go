@@ -104,7 +104,6 @@ type prebuildResponse struct {
 	HasImageLogs    bool       `json:"image_logs"`
 	HasTemplateLogs bool       `json:"template_logs"`
 	ImageSkipped    bool       `json:"image_skipped"`
-	Serving         string     `json:"serving"`
 }
 
 func (h *Handler) requestPrebuildEnvironment(r *http.Request) (db.Environment, error) {
@@ -136,7 +135,7 @@ func (h *Handler) requestPrebuild(r *http.Request) (db.Environment, prebuildTask
 }
 
 func (svc *Prebuilds) currentPrebuildResponse(env db.Environment, task prebuildTask) *prebuildResponse {
-	result := &prebuildResponse{Stage: task.stage(), State: task.state(), Message: task.output.Message, Serving: string(chooseEnvironmentTemplate(env).source)}
+	result := &prebuildResponse{Stage: task.stage(), State: task.state(), Message: task.output.Message}
 	mutable := svc != nil && svc.cfg.Enabled && env.ArchivedAt == nil
 	providerMatches := svc != nil && task.job != nil && task.job.Args.ProviderKey == svc.providerKey
 	if task.job == nil {
@@ -181,7 +180,7 @@ func (h *Handler) getPrebuild(w http.ResponseWriter, r *http.Request) error {
 			return prebuildError(err)
 		}
 		if spec != nil {
-			result = &prebuildResponse{State: "idle", Serving: string(chooseEnvironmentTemplate(env).source), CanStart: h.prebuilds != nil && h.prebuilds.cfg.Enabled && env.ArchivedAt == nil}
+			result = &prebuildResponse{State: "idle", CanStart: h.prebuilds != nil && h.prebuilds.cfg.Enabled && env.ArchivedAt == nil}
 		}
 	} else {
 		result = h.prebuilds.currentPrebuildResponse(env, task)

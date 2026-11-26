@@ -54,7 +54,7 @@ func updateRegisteredEnvironmentTemplate(ctx context.Context, database *db.DB, w
 		if err != nil {
 			return err
 		}
-		if environment.Provider != "e2b" || (!isDefaultSandboxTemplate(environment.ResolvedTemplate) && environment.ResolvedTemplate != registered.Template) || environment.BuildJobID != nil || environment.ResolvedBuildJobID != nil {
+		if environment.Provider != "e2b" || (!isDefaultSandboxTemplate(environment.ResolvedTemplate) && environment.ResolvedTemplate != registered.Template) || environment.BuildJobID != nil {
 			return nil
 		}
 		environment.ResolvedTemplate = template

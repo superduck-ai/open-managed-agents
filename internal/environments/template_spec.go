@@ -81,42 +81,6 @@ func (s *environmentBuildSpec) needsImage() bool {
 	return s != nil && (s.Packages != nil || s.InitScript != "")
 }
 
-type buildSpecSnapshot struct {
-	Packages   *environmentPackages `json:"packages"`
-	InitScript string               `json:"init_script,omitempty"`
-	Resources  *templateResources   `json:"resources,omitempty"`
-}
-
-func snapshotBuildSpec(spec *environmentBuildSpec) *buildSpecSnapshot {
-	if spec == nil {
-		return nil
-	}
-	snapshot := &buildSpecSnapshot{Packages: spec.Packages, InitScript: spec.InitScript}
-	if !spec.Resources.empty() {
-		resources := spec.Resources
-		snapshot.Resources = &resources
-	}
-	return snapshot
-}
-
-func encodeBuildSpecSnapshot(snapshot *buildSpecSnapshot) (json.RawMessage, error) {
-	if snapshot == nil {
-		return nil, nil
-	}
-	return json.Marshal(snapshot)
-}
-
-func decodeBuildSpecSnapshot(raw json.RawMessage) (*buildSpecSnapshot, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return nil, nil
-	}
-	var snapshot buildSpecSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return nil, fmt.Errorf("decode resolved build spec: %w", err)
-	}
-	return &snapshot, nil
-}
-
 func decodeEnvironmentBuildSpec(raw json.RawMessage) (*environmentBuildSpec, error) {
 	packages, err := decodeEnvironmentPackages(raw)
 	if err != nil {

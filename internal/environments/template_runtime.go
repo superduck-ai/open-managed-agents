@@ -13,9 +13,7 @@ func (r *Runner) resolveEnvironmentSandbox(env db.Environment, work *db.Environm
 		return e2bruntime.Resolution{}, templateChoice{}, err
 	}
 	choice := chooseEnvironmentTemplate(env)
-	if choice.replacesPrevious() {
-		env.ResolvedTemplate = ""
-	}
+	env.ResolvedTemplate = choice.template
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		return e2bruntime.Resolution{}, templateChoice{}, err
@@ -36,5 +34,5 @@ func (r *Runner) reportTemplateSource(ctx context.Context, run *runnerRun, env d
 	r.logger.WarnContext(ctx, "environment template spec not applied",
 		"environment_id", env.ExternalID, "workspace_id", env.WorkspaceUUID,
 		"work_id", work.ExternalID, "session_id", work.SessionExternalID,
-		"template", template, "template_source", string(choice.source), "template_fallback", choice.fallback)
+		"template", template, "template_source", string(choice.source), "template_fallback", string(choice.fallback))
 }

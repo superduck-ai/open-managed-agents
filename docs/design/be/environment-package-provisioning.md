@@ -119,16 +119,17 @@ flowchart TD
 - 保存配置时，同一包管理器内不允许同一个包名出现多次（重复条目或不同版本都返回 400 `invalid_request_error`，错误文案给出包名），否则调换顺序会改变最终安装的版本。包名按包管理器解析：apt 截至 `=` 或 `/`（保留 `:arch`），pip 截至版本约束、extras、`;`、`@` 或空白并按 PEP 503 规范化（小写，`-_.` 连续段合并为 `-`），npm 截至版本前的 `@`（保留 `@scope/`），gem 截至 `:`，cargo 与 go 截至 `@`；含 `://` 的 URL 形式以整串比较（pip 的 `name @ url` 取 `name`）。校验只在写路径执行，存量配置中已有的重复条目在读取、构建和启动期安装时不报错。
 - 不带 `config` 的更新不解析已存配置，也不协调预构建，因此名称、描述等字段仍可在旧配置中的软件包格式无效时更新。带 `config` 的更新必须产生有效的新配置；若旧软件包无法解析，则将其视为变化，允许有效配置修复旧数据并解除旧任务绑定。
 - 已成功的模板继续复用，不因构建开关、基础镜像或服务商设置变化而重建。新建环境、修改构建规格及显式重试使用当前配置。
-- `resolved_template` 表示新 Sandbox 使用的模板，`resolved_build_job_id` 记录产出该模板的 River job（为空表示不是预构建模板），`resolved_build_spec` 记录该模板的构建规格快照（`packages`、`init_script`、`resources`），`build_job_id` 表示当前配置对应的最新构建。入队时规格快照写入 River args 的 `build_spec`；构建成功时 `ResolvePrebuild` 在 `build_job_id` 仍等于该 job 的条件下，把模板、job ID 与该 job args 中的快照原子写入，不读取环境当前配置。因此只有最新构建能切换模板，被取代的构建即使远端成功也不会写回。
+- `resolved_template` 表示新 Sandbox 使用的模板，`resolved_build_job_id` 记录产出该模板的 River job（为空表示不是预构建模板），`resolved_packages` 记录该模板安装的软件包，`build_job_id` 表示当前配置对应的最新构建。`resolved_packages` 只保存规范化后的 `packages` 对象（`type` 与六个包管理器列表齐全，没有软件包时各列表为空，保留用户顺序），为空表示来源未知。入队时把同一格式写入 River args 的 `packages`；构建成功时 `ResolvePrebuild` 在 `build_job_id` 仍等于该 job 的条件下，把模板、job ID 与 args 中的软件包原子写入，不读取环境当前配置。因此只有最新构建能切换模板，被取代的构建即使远端成功也不会写回。
 - Runner 按模板来源选择模板，不再因模板未就绪拒绝创建 Sandbox：
   - `current`：`resolved_build_job_id == build_job_id`，使用当前配置的构建产物并跳过启动期安装。
-  - `previous`：`resolved_build_job_id` 非空但不等于 `build_job_id`（重建进行中、失败、被取消或被取代），且快照中的 `packages` 与当前配置相同（与 `sameBuildSpec` 相同的比较规则）。使用上一次成功构建的模板并跳过启动期安装；`init_script` 与 `resources` 沿用旧模板中的内容。
-  - `default`：从未成功构建（`template_fallback=not_built`）；或上一次成功模板的 `packages` 与当前配置不同（`packages_changed`）；或该模板没有规格快照（`build_spec_unknown`，例如升级前构建的模板在过渡期）。使用配置默认模板（`e2b.template`，为空时 `DefaultE2BTemplate`），有 `packages` 时按当前完整清单启动期安装；`init_script` 与 `resources` 不生效。不在旧模板上补装新清单，因为旧模板里已安装的版本可能导致 apt 降级失败（exit 100），被删除的包也会残留。
-- 修改构建规格时，预构建已启用且有成功模板，就保留模板、job ID 与快照，直至新构建成功；入队时只有没有成功模板的环境才清空 `resolved_template`，使运行时跟随当前配置默认模板。预构建关闭或环境已归档时，规格变化解除绑定，回到配置默认模板。
-- 滚动升级兼容：新代码不会写出 `build_job_id` 非空、`resolved_template` 非空而 `resolved_build_job_id` 为空的组合，这种组合视为旧实例写回的成功构建，按 `current` 处理。下一次协调写入时补齐 `resolved_build_job_id = build_job_id`；规格快照缺失时由当前配置补齐，因为 `current` 意味着当前配置的构建规格就是该模板的规格。升级前已在过渡期的模板没有快照，按 `build_spec_unknown` 退回默认模板。
-- 预构建状态接口：`ready` 只由环境行上的模板来源判断（`current`）。环境与 River job 分两次读取，若 job 已有模板而环境读取时尚未绑定，接口返回 `running` 且 `can_start=false`，下次轮询即为 `ready`。
+  - `previous`：`resolved_build_job_id` 非空但不等于 `build_job_id`（重建进行中、失败、被取消或被取代），且 `resolved_packages` 与当前配置的 `packages` 相同（与 `sameBuildSpec` 相同的比较规则，忽略同一包管理器内的顺序）。使用上一次成功构建的模板并跳过启动期安装；`init_script` 与 `resources` 沿用旧模板中的内容。
+  - `default`：从未成功构建（`template_fallback=not_built`）；或上一次成功模板的软件包与当前配置不同（`packages_changed`）；或 `resolved_packages` 为空（`packages_unknown`，例如部署窗口内由旧版本入队、新版本写回的构建）。使用配置默认模板（`e2b.template`，为空时 `DefaultE2BTemplate`），有 `packages` 时按当前完整清单启动期安装；`init_script` 与 `resources` 不生效。不在旧模板上补装新清单，因为旧模板里已安装的版本可能导致 apt 降级失败（exit 100），被删除的包也会残留。
+- 修改构建规格时，预构建已启用且有成功模板，就保留模板、job ID 与 `resolved_packages`，直至新构建成功；入队时只有没有成功模板的环境才清空 `resolved_template`，使运行时跟随当前配置默认模板。预构建关闭或环境已归档时，规格变化解除绑定，回到配置默认模板。
+- 迁移 `00166_environment_resolved_build_job.sql` 新增两列，并对已绑定模板的行（`build_job_id` 与 `resolved_template` 都非空）回填 `resolved_build_job_id = build_job_id`，以及按上述规范化格式从 `config->'packages'` 回填 `resolved_packages`（缺失或非数组的列表写成 `[]`）。这些行在迁移时处于当前构建状态，当前配置的软件包就是模板中的软件包。
+- 滚动升级兼容集中在 `withLegacyResolution`：部署窗口内旧版本实例绑定构建时只写 `resolved_template`，留下 `build_job_id` 与 `resolved_template` 非空而 `resolved_build_job_id` 为空的行。新代码不会写出这种组合，因此把它视为当前构建，避免这些环境的会话退回默认模板；下一次协调写入时补齐 `resolved_build_job_id = build_job_id` 与 `resolved_packages`。
+- 预构建状态接口：`ready` 只由环境行上的模板来源判断（`current`）。环境与 River job 分两次读取，若 job 已有模板而环境读取时尚未绑定，接口返回 `running` 且 `can_start=false`，下次轮询即为 `ready`。状态接口不返回新会话使用哪个模板。
 - 没有关联任务的环境继续使用基础模板与启动期安装；保存包含 `config` 的更新时，按当前 E2B 配置刷新基础模板，手动开始预构建后才建立任务关联。
-- 可观测性：prebuild 响应返回 `serving`（`current`、`previous`、`default`，与 Runner 的选择一致）；Runner span 记录 `oma.environment.template_source`，退回默认模板时另记 `oma.environment.template_fallback`；使用默认模板而配置了 `init_script` 或 `resources` 时记录 Warn 日志 `environment template spec not applied`，属性包含 `environment_id`、`workspace_id`、`work_id`、`session_id`、`template`、`template_source` 与 `template_fallback`。
+- 可观测性：Runner span 记录 `oma.environment.template_source`（`current`、`previous`、`default`），退回默认模板时另记 `oma.environment.template_fallback`；使用默认模板而配置了 `init_script` 或 `resources` 时记录 Warn 日志 `environment template spec not applied`，属性包含 `environment_id`、`workspace_id`、`work_id`、`session_id`、`template`、`template_source` 与 `template_fallback`。
 - River 清理任务记录不影响成功模板，因此 `build_job_id` 不设外键；详情过期后不再返回 job ID、时间或日志。
 
 ### 模板规格：初始化脚本、资源与环境变量
@@ -170,7 +171,7 @@ flowchart LR
     NeedImage -->|是| Image["镜像阶段：Dockerfile → 镜像"]
     NeedImage -->|否| Template["模板阶段：基础镜像 + 资源"]
     Image --> Template
-    Template --> Bind["绑定 resolved_template、resolved_build_job_id 与 resolved_build_spec"]
+    Template --> Bind["绑定 resolved_template、resolved_build_job_id 与 resolved_packages"]
 ```
 
 ```mermaid

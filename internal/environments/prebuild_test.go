@@ -213,33 +213,6 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 	}
 }
 
-func TestPrebuildTemplateBinding(t *testing.T) {
-	jobID, nextJobID := int64(42), int64(43)
-	provider := e2bruntime.NewProvider(config.E2BConfig{Template: "new-base"})
-	for _, tc := range []struct {
-		name     string
-		jobID    *int64
-		resolved *int64
-		template string
-		want     string
-		source   templateSource
-	}{
-		{"unbuilt environment retains its base", nil, nil, "old-base", "old-base", templateSourceDefault},
-		{"pending first build uses provider fallback", &jobID, nil, "", "new-base", templateSourceDefault},
-		{"ready template survives base change", &jobID, &jobID, "built-template", "built-template", templateSourceCurrent},
-		{"rebuild keeps previous template", &nextJobID, &jobID, "built-template", "built-template", templateSourcePrevious},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env := db.Environment{BuildJobID: tc.jobID, ResolvedBuildJobID: tc.resolved, ResolvedTemplate: tc.template}
-			source := environmentTemplateSource(env)
-			resolution, err := provider.Resolve(env, nil)
-			if err != nil || source != tc.source || resolution.Template != tc.want {
-				t.Fatalf("template=%q source=%q error=%v", resolution.Template, source, err)
-			}
-		})
-	}
-}
-
 func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 	jobID := int64(42)
 	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base-b"}}}
@@ -303,69 +276,34 @@ func TestPrebuildReconcileRejectsInvalidReplacementPackages(t *testing.T) {
 	}
 }
 
-func TestPrebuildReconcileRebuildTriggers(t *testing.T) {
+func TestPrebuildReconcileTemplateTransition(t *testing.T) {
 	active, pending := int64(41), int64(42)
 	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true, Template: config.TemplateBuildConfig{MaxResources: config.TemplateResourceLimit{CPU: 8000}}}}}
-	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}}
 	before := `{"type":"cloud","packages":{"type":"packages","pip":["a","b"]},"init_script":"make","resources":{"cpu":1000},"environment":{"A":"1"}}`
+	packages := json.RawMessage(`{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":["a","b"]}`)
 	for _, tc := range []struct {
 		name         string
 		update       string
+		archived     bool
+		disabled     bool
 		wantEnqueue  bool
 		wantTemplate string
 		wantActive   *int64
 	}{
-		{"environment variables only keep the build", `{"environment":{"A":"2"}}`, false, "tpl-old", &active},
-		{"networking only keeps the build", `{"networking":{"type":"limited","allowed_hosts":["example.com"]}}`, false, "tpl-old", &active},
-		{"package order only keeps the build", `{"packages":{"type":"packages","pip":["b","a"]}}`, false, "tpl-old", &active},
-		{"package change rebuilds", `{"packages":{"type":"packages","pip":["a","b","c"]}}`, true, "tpl-old", &active},
-		{"package version change rebuilds", `{"packages":{"type":"packages","pip":["a==1.0","b"]}}`, true, "tpl-old", &active},
-		{"init script change rebuilds", `{"init_script":"make all"}`, true, "tpl-old", &active},
-		{"resources change rebuilds", `{"resources":{"cpu":2000}}`, true, "tpl-old", &active},
-		{"clearing the build spec returns to default", `{"packages":null,"init_script":null,"resources":null}`, false, "base", nil},
+		{"environment variables only keep the build", `{"environment":{"A":"2"}}`, false, false, false, "tpl-old", &active},
+		{"networking only keeps the build", `{"networking":{"type":"limited","allowed_hosts":["example.com"]}}`, false, false, false, "tpl-old", &active},
+		{"package order only keeps the build", `{"packages":{"type":"packages","pip":["b","a"]}}`, false, false, false, "tpl-old", &active},
+		{"package change rebuilds and keeps the previous template", `{"packages":{"type":"packages","pip":["a","b","c"]}}`, false, false, true, "tpl-old", &active},
+		{"package version change rebuilds", `{"packages":{"type":"packages","pip":["a==1.0","b"]}}`, false, false, true, "tpl-old", &active},
+		{"init script change rebuilds", `{"init_script":"make all"}`, false, false, true, "tpl-old", &active},
+		{"init script removal rebuilds while packages remain", `{"init_script":null}`, false, false, true, "tpl-old", &active},
+		{"resources change rebuilds", `{"resources":{"cpu":2000}}`, false, false, true, "tpl-old", &active},
+		{"clearing the build spec returns to default", `{"packages":null,"init_script":null,"resources":null}`, false, false, false, "base", nil},
+		{"archived environment returns to default", `{"init_script":"make all"}`, true, false, false, "base", nil},
+		{"disabled prebuilds return to default", `{"packages":{"type":"packages","pip":["c"]}}`, false, true, false, "base", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
-			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
-			if enqueued := errors.Is(err, errPrebuildUnavailable); enqueued != tc.wantEnqueue || (err != nil && !enqueued) {
-				t.Fatalf("reconcile error = %v, want enqueue=%v", err, tc.wantEnqueue)
-			}
-			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) {
-				t.Fatalf("template=%q active=%v", next.ResolvedTemplate, next.ResolvedBuildJobID)
-			}
-			if !tc.wantEnqueue && tc.wantActive != nil && !reflect.DeepEqual(next.BuildJobID, current.BuildJobID) {
-				t.Fatalf("build job changed to %v", next.BuildJobID)
-			}
-		})
-	}
-}
-
-func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
-	active, pending := int64(41), int64(42)
-	snapshot := json.RawMessage(`{"packages":null,"init_script":"a"}`)
-	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
-	for _, tc := range []struct {
-		name         string
-		before       string
-		update       string
-		archived     bool
-		disabled     bool
-		wantTemplate string
-		wantActive   *int64
-	}{
-		{"cleared packages return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":null}`, false, false, "base", nil},
-		{"archived environment returns to default", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, true, false, "base", nil},
-		{"disabled prebuilds return to default", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, true, "base", nil},
-		{"packages change keeps previous", `{"type":"cloud","packages":{"pip":["a"]}}`, `{"type":"cloud","packages":{"pip":["b"]}}`, false, false, "tpl-old", &active},
-		{"init script change keeps previous", `{"type":"cloud","init_script":"a"}`, `{"type":"cloud","init_script":"b"}`, false, false, "tpl-old", &active},
-		{"init removal keeps previous while packages remain", `{"type":"cloud","packages":{"pip":["a"]},"init_script":"a"}`, `{"type":"cloud","init_script":null}`, false, false, "tpl-old", &active},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			current := db.Environment{Config: json.RawMessage(tc.before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot}
+			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedPackages: packages}
 			if tc.archived {
 				now := time.Now()
 				current.ArchivedAt = &now
@@ -375,14 +313,15 @@ func TestPrebuildReconcileRetainsPreviousTemplate(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: !tc.disabled}}
-			if err := service.reconcilePrebuild(context.Background(), nil, &current, &next); err != nil && !errors.Is(err, errPrebuildUnavailable) {
-				t.Fatal(err)
+			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
+			if enqueued := errors.Is(err, errPrebuildUnavailable); enqueued != tc.wantEnqueue || (err != nil && !enqueued) {
+				t.Fatalf("reconcile error = %v, want enqueue=%v", err, tc.wantEnqueue)
 			}
-			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) || next.BuildJobID != nil {
-				t.Fatalf("template=%q active=%v job=%v", next.ResolvedTemplate, next.ResolvedBuildJobID, next.BuildJobID)
+			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) || (len(next.ResolvedPackages) > 0) != (tc.wantActive != nil) {
+				t.Fatalf("template=%q active=%v packages=%s", next.ResolvedTemplate, next.ResolvedBuildJobID, next.ResolvedPackages)
 			}
-			if wantSnapshot := tc.wantActive != nil; (len(next.ResolvedBuildSpec) > 0) != wantSnapshot {
-				t.Fatalf("build spec snapshot = %s, want present=%v", next.ResolvedBuildSpec, wantSnapshot)
+			if !tc.wantEnqueue && tc.wantActive != nil && !reflect.DeepEqual(next.BuildJobID, current.BuildJobID) {
+				t.Fatalf("build job changed to %v", next.BuildJobID)
 			}
 		})
 	}
@@ -414,44 +353,41 @@ func TestPrebuildReconcileAdoptsTemplateFromOlderInstance(t *testing.T) {
 			if next.ResolvedTemplate != "tpl-legacy" || next.ResolvedBuildJobID == nil || *next.ResolvedBuildJobID != jobID {
 				t.Fatalf("template=%q active=%v", next.ResolvedTemplate, next.ResolvedBuildJobID)
 			}
-			snapshot, err := decodeBuildSpecSnapshot(next.ResolvedBuildSpec)
-			if err != nil || snapshot == nil || snapshot.InitScript != "make" || !reflect.DeepEqual(snapshot.Packages.PIP, []string{"b", "a"}) {
-				t.Fatalf("snapshot = %+v, %v", snapshot, err)
+			packages, known := decodePackagesSnapshot(next.ResolvedPackages)
+			if !known || packages == nil || !reflect.DeepEqual(packages.PIP, []string{"b", "a"}) {
+				t.Fatalf("packages snapshot = %s", next.ResolvedPackages)
 			}
 		})
 	}
 }
 
-func TestPrebuildResponseServing(t *testing.T) {
-	active, failed := int64(41), int64(42)
-	snapshot := json.RawMessage(`{"packages":null}`)
+func TestPrebuildResponseReadiness(t *testing.T) {
+	active, jobID := int64(41), int64(42)
 	failedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
-		JobRow: &rivertype.JobRow{ID: failed, State: rivertype.JobStateDiscarded},
+		JobRow: &rivertype.JobRow{ID: jobID, State: rivertype.JobStateDiscarded},
 		Args:   prebuildJobArgs{ProviderKey: "provider"},
 	}}
 	resolvedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
-		JobRow: &rivertype.JobRow{ID: failed, State: rivertype.JobStateCompleted},
+		JobRow: &rivertype.JobRow{ID: jobID, State: rivertype.JobStateCompleted},
 		Args:   prebuildJobArgs{ProviderKey: "provider"},
 	}, output: prebuildJobOutput{ImageRef: "image", TemplateID: "tpl-new"}}
 	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}
+	transition := db.Environment{BuildJobID: &jobID, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
 	for _, tc := range []struct {
 		name      string
 		env       db.Environment
 		task      prebuildTask
 		wantState string
-		wantServe string
 		wantStart bool
 	}{
-		{"failed rebuild serves previous", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot, Config: json.RawMessage(`{"type":"cloud"}`)}, failedTask, "failed", "previous", true},
-		{"failed rebuild without a snapshot serves default", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}, failedTask, "failed", "default", true},
-		{"failed first build serves default", db.Environment{BuildJobID: &failed}, failedTask, "failed", "default", true},
-		{"completed build is ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &failed, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", "current", false},
-		{"template written back by an older instance is ready", db.Environment{BuildJobID: &failed, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", "current", false},
-		{"job result read after a stale environment is not ready", db.Environment{BuildJobID: &failed, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedBuildSpec: snapshot, Config: json.RawMessage(`{"type":"cloud"}`)}, resolvedTask, "running", "previous", false},
+		{"failed rebuild can be retried", transition, failedTask, "failed", true},
+		{"completed build is ready", db.Environment{BuildJobID: &jobID, ResolvedBuildJobID: &jobID, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", false},
+		{"template written back by an older instance is ready", db.Environment{BuildJobID: &jobID, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", false},
+		{"job result read after a stale environment is not ready", transition, resolvedTask, "running", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := service.currentPrebuildResponse(tc.env, tc.task)
-			if response.State != tc.wantState || response.Serving != tc.wantServe || response.CanStart != tc.wantStart {
+			if response.State != tc.wantState || response.CanStart != tc.wantStart {
 				t.Fatalf("response = %+v", response)
 			}
 		})
@@ -514,24 +450,6 @@ func TestStoredDuplicatePackagesRemainReadable(t *testing.T) {
 	}
 	if _, provision, err := buildPackageManifest(config); err != nil || !provision {
 		t.Fatalf("manifest = %v, %v", provision, err)
-	}
-}
-
-func TestBuildSpecSnapshotRoundTrip(t *testing.T) {
-	spec, err := decodeEnvironmentBuildSpec(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["a"]},"init_script":"make","resources":{"cpu":2000}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := encodeBuildSpecSnapshot(snapshotBuildSpec(spec))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := decodeBuildSpecSnapshot(raw)
-	if err != nil || snapshot.InitScript != "make" || snapshot.Resources == nil || snapshot.Resources.CPU != 2000 || !samePackages(snapshot.Packages, spec.Packages) {
-		t.Fatalf("snapshot = %+v from %s, %v", snapshot, raw, err)
-	}
-	if raw, err := encodeBuildSpecSnapshot(snapshotBuildSpec(nil)); raw != nil || err != nil {
-		t.Fatalf("empty snapshot = %s, %v", raw, err)
 	}
 }
 
@@ -852,24 +770,33 @@ func TestAliyunFlowLogDownloadCursorRecovery(t *testing.T) {
 	}
 }
 
-func TestPrebuildJobArgsCarryBuildSpec(t *testing.T) {
-	spec, err := decodeEnvironmentBuildSpec(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["a"]},"init_script":"make"}`))
+func TestPrebuildPackagesSnapshot(t *testing.T) {
+	packages, err := decodeEnvironmentPackages(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["b","a"],"npm":null,"go":["example.com/tool@v1"]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(prebuildJobArgs{EnvironmentUUID: "env", BuildSpec: snapshotBuildSpec(spec)})
+	encoded, err := json.Marshal(prebuildJobArgs{EnvironmentUUID: "env", Packages: resolvedPackagesArg(packages)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	task, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: encoded, Metadata: []byte(`{}`)})
-	if err != nil || task.job.Args.BuildSpec == nil || task.job.Args.BuildSpec.InitScript != "make" || !samePackages(task.job.Args.BuildSpec.Packages, spec.Packages) {
-		t.Fatalf("decoded build spec = %+v, %v", task.job.Args.BuildSpec, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := encodePackagesSnapshot(task.job.Args.Packages)
+	want := `{"type":"packages","apt":[],"cargo":[],"gem":[],"go":["example.com/tool@v1"],"npm":[],"pip":["b","a"]}`
+	if err != nil || string(snapshot) != want {
+		t.Fatalf("snapshot = %s, %v; must match the migration backfill format %s", snapshot, err, want)
+	}
+	empty, err := encodePackagesSnapshot(resolvedPackagesArg(nil))
+	if err != nil || string(empty) != `{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}` {
+		t.Fatalf("empty snapshot = %s, %v", empty, err)
+	}
+	if decoded, known := decodePackagesSnapshot(empty); !known || decoded != nil {
+		t.Fatalf("empty snapshot decoded to %+v, known=%v", decoded, known)
 	}
 	legacy, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: []byte(`{"environment_uuid":"env","dockerfile":"FROM base"}`), Metadata: []byte(`{}`)})
-	if err != nil || legacy.job.Args.BuildSpec != nil {
-		t.Fatalf("legacy build spec = %+v, %v", legacy.job.Args.BuildSpec, err)
-	}
-	if raw, err := encodeBuildSpecSnapshot(legacy.job.Args.BuildSpec); raw != nil || err != nil {
-		t.Fatalf("legacy snapshot = %s, %v", raw, err)
+	if err != nil || legacy.job.Args.Packages != nil {
+		t.Fatalf("legacy args packages = %+v, %v", legacy.job.Args.Packages, err)
 	}
 }

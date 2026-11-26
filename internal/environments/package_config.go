@@ -147,6 +147,27 @@ func isPackageManagerOption(spec string) bool {
 	return strings.HasPrefix(strings.TrimSpace(spec), "-")
 }
 
+func encodePackagesSnapshot(packages *environmentPackages) (json.RawMessage, error) {
+	if packages == nil {
+		packages = emptyPackages()
+	}
+	return json.Marshal(packages)
+}
+
+func decodePackagesSnapshot(raw json.RawMessage) (*environmentPackages, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var packages environmentPackages
+	if err := json.Unmarshal(raw, &packages); err != nil {
+		return nil, false
+	}
+	if packages.empty() {
+		return nil, true
+	}
+	return packages.normalized(), true
+}
+
 func (p *environmentPackages) empty() bool {
 	return lo.EveryBy(p.specsByManager(), func(entry managerSpecs) bool {
 		return len(*entry.specs) == 0

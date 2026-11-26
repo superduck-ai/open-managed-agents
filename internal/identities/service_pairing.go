@@ -114,13 +114,13 @@ func (s *Service) completeByID(ctx context.Context, principal auth.Principal, id
 	if err != nil {
 		return nil, mapStore(err, "配对不存在")
 	}
-	if err := s.activatePairing(ctx, principal, row, identity, input); err != nil {
+	if err := s.activatePairing(ctx, principal, row, identity, input, nil); err != nil {
 		return nil, err
 	}
 	return s.GetPairing(ctx, principal, row.ExternalID)
 }
 
-func (s *Service) activatePairing(ctx context.Context, principal auth.Principal, row db.ScopePairingRecord, identity db.IdentityRecord, input PairingWrite) error {
+func (s *Service) activatePairing(ctx context.Context, principal auth.Principal, row db.ScopePairingRecord, identity db.IdentityRecord, input PairingWrite, resume *db.ChannelOAuthResume) error {
 	_, changed, activateErr := ActivateWithID(pairingFromRecord(row), identity.UUID, input.AgentID, input.AgentVersion)
 	if activateErr != nil {
 		return conflict("过期或已解除的配对不能被重新激活", activateErr)
@@ -128,7 +128,7 @@ func (s *Service) activatePairing(ctx context.Context, principal auth.Principal,
 	if changed {
 		if err := s.store.ActivateScopePairingByID(ctx, db.ActivateScopePairingParams{
 			WorkspaceUUID: principal.WorkspaceUUID, ExternalID: row.ExternalID, IdentityUUID: identity.UUID,
-			AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion,
+			AgentExternalID: input.AgentID, AgentVersion: input.AgentVersion, ResumeOAuth: resume,
 		}); err != nil {
 			if errors.Is(err, db.ErrInvalidState) {
 				current, findErr := s.store.FindScopePairing(ctx, principal.WorkspaceUUID, row.ExternalID)

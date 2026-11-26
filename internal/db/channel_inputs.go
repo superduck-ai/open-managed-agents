@@ -35,6 +35,13 @@ type ChannelPairingResume struct {
 	PairingID string
 }
 
+type ChannelOAuthResume struct {
+	Scope    ChannelInputScope
+	ActorID  string
+	ChatID   string
+	Provider string
+}
+
 type ChannelInputBatch struct {
 	MessageIDs []string
 	ScopeKey   string

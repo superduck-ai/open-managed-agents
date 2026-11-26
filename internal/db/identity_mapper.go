@@ -160,6 +160,7 @@ type ActivateScopePairingParams struct {
 	AgentVersion    *int
 	CodeHash        string
 	Now             time.Time
+	ResumeOAuth     *ChannelOAuthResume
 }
 
 type RebindScopePairingParams struct {

@@ -164,10 +164,13 @@ func (s *Service) CompletePairingOAuth(ctx context.Context, workspace string, c 
 	if v := parseChannelMounts(t.Scope.Channel.Mounts).AgentVersion; v > 0 {
 		version = &v
 	}
-	if err = s.supervisor.ingress.ConfirmSelfPairing(ctx, channelIngress(t.Scope.Channel, msg, row.ScopeKey), receipt.PairingID, version); err != nil {
+	ingress := channelIngress(t.Scope.Channel, msg, row.ScopeKey)
+	resume := db.ChannelOAuthResume{Scope: w.inputScope(), ActorID: msg.UserID, ChatID: msg.ChatID, Provider: t.Request.Provider}
+	ingress.ResumeOAuth = &resume
+	if err = s.supervisor.ingress.ConfirmSelfPairing(ctx, ingress, receipt.PairingID, version); err != nil {
 		return err
 	}
-	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ActorID: msg.UserID, PairingID: receipt.PairingID}, msg.ChatID, t.Request.Provider)
+	waiters, err := s.store.ResumeOAuthWaiters(ctx, resume.Scope, db.ChannelPairingResume{ActorID: resume.ActorID, PairingID: receipt.PairingID}, resume.ChatID, resume.Provider)
 	if err != nil {
 		return err
 	}

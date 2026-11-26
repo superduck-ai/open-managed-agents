@@ -270,15 +270,20 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := database.ExecContext(t.Context(), `UPDATE channel_pairings SET status='active' WHERE external_id='pair'`); err != nil {
+	if err := store.ActivateScopePairingByID(t.Context(), ActivateScopePairingParams{
+		WorkspaceUUID: scope.WorkspaceUUID, ExternalID: "pair", IdentityUUID: uuid.NewV4().String(), AgentExternalID: "agent_fixture",
+		ResumeOAuth: &ChannelOAuthResume{Scope: scope, ActorID: "actor", ChatID: "chat", Provider: "client"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	match := ChannelPairingResume{ActorID: "actor", PairingID: "pair"}
-	rows, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
+	rows, err := store.ListRecoverableChannelInputs(t.Context(), scope)
 	if err != nil || len(rows) != 2 || rows[0].MessageID != "one" || rows[1].MessageID != "two" {
-		t.Fatalf("等待消息不匹配：%+v %v", rows, err)
+		t.Fatalf("激活后首次恢复前退出，等待消息不匹配：%+v %v", rows, err)
 	}
 	for _, row := range rows {
+		if row.ScopeKey != "thread:chat:"+row.MessageID || row.State != "received" {
+			t.Fatalf("等待消息恢复到了错误的作用域或状态：%+v", row)
+		}
 		if _, ok, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "restart"); err != nil || !ok {
 			t.Fatalf("恢复的消息无法认领：%v", err)
 		}
@@ -293,7 +298,7 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 	if row, ok, err := store.ClaimChannelInput(t.Context(), scope, lateInput.UUID, "restart"); err != nil || !ok || row.State != "buffering" {
 		t.Fatalf("新进程无法认领授权后登记的消息：%+v %v", row, err)
 	}
-	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
+	again, err := store.ResumeOAuthWaiters(t.Context(), scope, ChannelPairingResume{ActorID: "actor", PairingID: "pair"}, "chat", "client")
 	if err != nil || len(again) != 0 {
 		t.Fatalf("重复回调恢复了已受理的消息：%+v %v", again, err)
 	}

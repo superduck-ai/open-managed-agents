@@ -202,14 +202,24 @@ func (d *DB) ActivateScopePairingByCode(ctx context.Context, params ActivateScop
 }
 
 func (d *DB) ActivateScopePairingByID(ctx context.Context, params ActivateScopePairingParams) error {
-	count, err := NewIdentityMapper(d.mapperDB).ActivateScopePairingByID(ctx, params)
-	if err != nil {
+	activate := func(executor yourbatis.Executor) error {
+		count, err := NewIdentityMapper(executor).ActivateScopePairingByID(ctx, params)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrInvalidState
+		}
+		if resume := params.ResumeOAuth; resume != nil {
+			_, err = NewChannelInputMapper(executor).ResumeOAuthWaiters(ctx, resume.Scope,
+				ChannelPairingResume{ActorID: resume.ActorID, PairingID: params.ExternalID}, resume.ChatID, resume.Provider)
+		}
 		return err
 	}
-	if count == 0 {
-		return ErrInvalidState
+	if params.ResumeOAuth != nil {
+		return d.mapperDB.Transaction(ctx, activate)
 	}
-	return nil
+	return activate(d.mapperDB)
 }
 
 func (d *DB) RebindScopePairing(ctx context.Context, params RebindScopePairingParams) error {

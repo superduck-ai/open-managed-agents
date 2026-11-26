@@ -2,6 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import { I18nProvider } from '../../../shared/i18n';
+import { WorkspaceContext } from '../../../shared/workspaces/context';
+import { defaultNativeCapabilities } from '../../../shared/workspaces/runtime';
+import { budgetUpdateBody, entityBudgetDisplay, entityBudgetUsdInput } from './budget';
 import { initialFormValues } from './model';
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { DeploymentFormFields } = await import('./deployment-form-fields');
@@ -78,4 +81,74 @@ test('allows clearing and typing two-digit minutes in hourly schedule mode witho
   fireEvent.change(minute, { target: { value: '53' } });
   expect(minute.value).toBe('53');
   expect(changes).toEqual([{ cronExpression: '' }, { cronExpression: '5 * * * *' }, { cronExpression: '53 * * * *' }]);
+});
+
+test('uses credits budget and hides credential vaults when runtime disables credential_vaults', () => {
+  resetTestDom('https://oma.duck.ai/workspaces/qoder/deployments');
+  const qoderWorkspace = {
+    id: 'wrkspc_qoder',
+    name: 'Qoder Space',
+    display_color: '#2563eb',
+    is_default: false,
+    created_at: '2026-11-27T00:00:00Z',
+    runtime: {
+      profile_uuid: '00000000-0000-4000-8000-000000000099',
+      profile_id: 'rprof_qoder',
+      profile_name: 'Qoder Cloud CN',
+      provider_kind: 'qoder_cloud',
+      capabilities: {
+        ...defaultNativeCapabilities,
+        deployments: true,
+        memory_stores: true,
+        credential_vaults: false,
+        session_budget: 'credits' as const,
+      },
+    },
+  };
+  const values = { ...initialFormValues('deployments'), budgetMode: 'credits' as const };
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider
+          value={{
+            orgUuid: 'org-1',
+            workspaces: [qoderWorkspace],
+            activeWorkspace: qoderWorkspace,
+            activeWorkspaceId: qoderWorkspace.id,
+            isLoading: false,
+            error: null,
+            selectWorkspace: () => undefined,
+            createWorkspace: async () => qoderWorkspace,
+            refreshWorkspaces: async () => undefined,
+          }}
+        >
+          <DeploymentFormFields
+            values={values}
+            workspaceId={qoderWorkspace.id}
+            environments={[]}
+            vaults={[]}
+            memoryStores={[]}
+            loadingOptions={false}
+            editing={false}
+            onChange={() => {}}
+          />
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+
+  expect(screen.getByLabelText(/Budget \(Credits\)/)).toBeTruthy();
+  expect(screen.queryByText('Credential vaults')).toBeNull();
+
+  const creditEntity = { budget: { type: 'limit', max_credit_cost: '42.50' } };
+  expect(entityBudgetUsdInput(creditEntity)).toBe('42.50');
+  expect(entityBudgetDisplay(creditEntity as never)).toBe('42.50 Credits');
+  expect(
+    budgetUpdateBody({
+      ...initialFormValues('deployments'),
+      budgetMode: 'credits',
+      originalBudgetUsd: '42.50',
+      budgetUsd: '100',
+    }),
+  ).toEqual({ type: 'limit', max_credit_cost: '100.00' });
 });

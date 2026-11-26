@@ -97,7 +97,7 @@ func DefaultCapabilities(kind ProviderKind) CapabilitySet {
 			OTLPTraces:             false,
 			ObservabilityDashboard: false,
 			BYOKLLMProviders:       false,
-			Deployments:            false,
+			Deployments:            true,
 			SessionWebhooks:        false,
 			SessionBudget:          BudgetModeCredits,
 			SessionAgentOverrides:  false,

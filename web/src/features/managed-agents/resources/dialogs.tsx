@@ -1,6 +1,7 @@
 import { toast } from '../../../shared/ui/sonner';
 import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceCapabilities } from '../../../shared/workspaces/context';
 import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
 import { useAuth } from '../../../shared/auth/context';
 import { listAllWorkspaceMCPServers, type WorkspaceMCPServer } from '../../../shared/api/workspaceMCPServers';
@@ -889,6 +890,7 @@ function GenericManagedEntityDialog({
   onSubmit,
 }: ManagedEntityDialogProps) {
   const { msg } = useI18n();
+  const capabilities = useWorkspaceCapabilities();
   const [open, setOpen] = useState(true);
   const dialogProps = {
     open,
@@ -900,9 +902,10 @@ function GenericManagedEntityDialog({
   const initialValues = useMemo<ManagedEntityFormValues>(
     () => ({
       ...initialFormValues(section, entity),
+      ...(section === 'deployments' ? { budgetMode: capabilities.session_budget } : {}),
       ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
     }),
-    [entity, lockedAgent, section],
+    [capabilities.session_budget, entity, lockedAgent, section],
   );
   const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
   const [submitError, setSubmitError] = useState<string | null>(null);

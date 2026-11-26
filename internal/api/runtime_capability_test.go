@@ -214,7 +214,6 @@ func TestRequireCapabilityMiddleware(t *testing.T) {
 
 	for _, capKey := range []string{
 		agentruntime.CapabilityMCPTunnels,
-		agentruntime.CapabilityDeployments,
 		agentruntime.CapabilitySessionWebhooks,
 		agentruntime.CapabilityObservabilityDashboard,
 		agentruntime.CapabilityMCPServers,
@@ -246,6 +245,20 @@ func TestRequireCapabilityMiddleware(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("allows qoder on deployments", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/deployments", nil)
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
+			OrganizationUUID: orgUUID,
+			WorkspaceUUID:    qoderWsUUID,
+			RuntimeProvider:  agentruntime.ProviderQoderCloud.String(),
+		}))
+		server.requireCapability(agentruntime.CapabilityDeployments)(okHandler).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
 
 	t.Run("allows qoder on memory_stores", func(t *testing.T) {
 		rec := httptest.NewRecorder()

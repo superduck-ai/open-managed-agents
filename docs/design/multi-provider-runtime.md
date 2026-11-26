@@ -61,7 +61,7 @@ flowchart TB
     end
 
     subgraph ControlPlane["2. 控制面与资源外观层"]
-        Resources["资源外观 (sessions / agents / environments / files / models / memory)"]
+        Resources["资源外观 (sessions / agents / environments / files / models / memory / deployments)"]
         Admin["平台超管与组织白名单 (platformadmin / platformapi / admin)"]
         NativeFast["oma_native 原生路径 (各资源包既有本地实现，零搬迁)"]
     end
@@ -102,7 +102,7 @@ flowchart TB
 ### 包边界与依赖不变量
 
 - `internal/agentruntime` 仅依赖标准库及基础包（`apperr`、`auth`、`db`、`ids`、`logging`、`secrets`），不导入 `internal/api`、`internal/httpapi` 或任何资源 Handler 包。
-- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models`、`internal/memory` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`（其中 `internal/memory` 委托 `MemoryRuntime`）。
+- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models`、`internal/memory`、`internal/deployments` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`（其中 `internal/memory` 委托 `MemoryRuntime`，`internal/deployments` 委托 `DeploymentRuntime`）。
 - `internal/agentruntime/qoder` 依赖 `internal/agentruntime`，仅在 `internal/api/server.go` 启动组装阶段注册进 `Registry`。
 - `internal/db` 不导入 `internal/agentruntime`、`internal/api` 或任何业务包，所有新增表严格遵循 Yourbatis 三文件拆分（`xxx.go` / `xxx_mapper.go` / `xxx_mapper.xml`），UUID 参数直接以 `string` 绑定。
 
@@ -242,7 +242,7 @@ CREATE INDEX provider_usage_scope_time_idx
 | `port_preview` | `true` | `false` | 隐藏端口预览按钮并拦截 `/ports/{port}` |
 | `otlp_traces` / `observability_dashboard` | 按配置 | `false` | 隐藏工作空间级 Observability、Agent 详情 `<ObservabilityPage>` 与 `SessionInspector` `<SessionTrajectory>`；**保留组织级 `/settings/telemetry`** |
 | `byok_llm_providers` | `true` | `false` | Qoder 空间跳过 `CanonicalModelID`、不弹 `LLMProviderRequired`；**保留组织级 `/settings/llm`** |
-| `deployments` | `true` | `false`（建议首期关闭，待拍板） | 避免首期拆改 `deployments` `NOT NULL` 表与定时事务 |
+| `deployments` | `true` | `true` | 路线 A 接入 Qoder `/deployments` 与 `/deployment_runs`，以 `runtime_resource_bindings`（`00167` 扩展 `deployment` / `deployment_run`）隔离并自动认领产出 `session_id` |
 | `session_webhooks` | `true` | `false`（建议首期关闭，待拍板） | 避免按需 SSE 下 11 类 Session Webhook 静默漏发 |
 | `session_budget` / `session_agent_overrides` | `usd` / `true` | `credits` / `false` | `budget` 升级为 `BudgetMode`（OMA 用 USD，Qoder 原生支持 `max_credit_cost`）；`agent_with_overrides` 实测 400 拒绝，入口拦截 |
 | `channels` / `evaluations` | `true` | `false`（首期关闭，PR-5/PR-6 解耦后开启） | 避免首期在 Qoder 空间误操作未解耦的原生 Channel 与 Evaluation 表 |
@@ -294,6 +294,10 @@ CREATE INDEX provider_usage_scope_time_idx
   - 支持 `ListMemories` 的 `depth` 目录扫描与分页，并按 `view=full` 并发补齐 Memory 及 Version 的正文内容。
 - **Session 资源挂载双向映射（`internal/sessions/runtime_dispatch.go`、`internal/agentruntime/qoder/sessions.go`）**：
   - 创建 Session 与 `AddResource` 时解析 `memory_store_id`，在进入 Qoder 前经 `runtime_resource_bindings` 重写为远端 Store ID；回显 Session Resource 时再反向映射为 OMA 外部 `memory_store_id`。
+- **Deployments 外部运行时适配（路线 A，`internal/deployments/runtime_dispatch.go`、`internal/agentruntime/qoder/deployments.go`）**：
+  - Migration `00167_add_deployment_binding_types.sql` 扩展 `runtime_resource_bindings.resource_type` 支持 `'deployment'` 与 `'deployment_run'`。
+  - `agentruntime.DeploymentRuntime` 覆盖 Deployment 全生命周期（Create/Get/List/Update/Archive/Pause/Unpause/Run）与 Deployment Runs（Get/List）；`Handler` 与 `RunsHandler` 均在 `oma_native` 保持原路径、在外部运行时按 `runtime_resource_bindings` 强制租户归属隔离并完成 Agent/Environment/File/MemoryStore/Vault ID 双向映射。
+  - `RunDeployment` 与 `ListDeploymentRuns` 幂等认领远端生成的 `drun_...` 与 `session_id` 到当前 Workspace，确保手动运行和 Qoder 定时调度产生的会话可直接被 `/v1/sessions/{id}` 与前端详情页访问；前端 `DeploymentFormFields` 与 `budget.ts` 同步支持 Credits 预算的创建、编辑与回显，并按 `credential_vaults` 能力控制 Vault 选择器展示。
 
 ### 4.5 能力守卫、Overview、Quickstart/Builder、文件旁路与 Admin API 收口（修复 F9、F10）
 

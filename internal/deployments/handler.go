@@ -16,6 +16,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
@@ -35,18 +36,20 @@ const (
 )
 
 type Handler struct {
-	secretService *secrets.Service
-	db            *db.DB
-	deployments   *Store
-	billing       *billing.Calculator
-	errorAdapter  *httpapi.ErrorAdapter
-	router        chi.Router
+	secretService   *secrets.Service
+	db              *db.DB
+	deployments     *Store
+	billing         *billing.Calculator
+	runtimeResolver *agentruntime.Resolver
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
 }
 
 type RunsHandler struct {
-	db           *db.DB
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	db              *db.DB
+	runtimeResolver *agentruntime.Resolver
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
 }
 
 type deploymentResponse struct {
@@ -292,6 +295,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.createExternal(w, r, principal)
+	}
 	body, err := httpapi.DecodeObjectBodyAs[deploymentMutationRequest](w, r, maxDeploymentBodySize)
 	if err != nil {
 		return invalidRequest(err)
@@ -400,6 +406,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
+	}
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
 		return invalidRequest(err)
@@ -464,6 +473,9 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, deploymentID)
+	}
 	record, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
@@ -477,6 +489,13 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.updateExternal(w, r, principal, deploymentID)
+	}
+	return h.updateNative(w, r, principal, deploymentID)
+}
+
+func (h *Handler) updateNative(w http.ResponseWriter, r *http.Request, principal auth.Principal, deploymentID string) error {
 	body, err := httpapi.DecodeObjectBodyAs[deploymentMutationRequest](w, r, maxDeploymentBodySize)
 	if err != nil {
 		return invalidRequest(err)
@@ -583,6 +602,9 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.archiveExternal(w, r, principal, deploymentID)
+	}
 	archived, err := h.deployments.Archive(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
@@ -596,6 +618,9 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.pauseExternal(w, r, principal, deploymentID)
+	}
 	reason := json.RawMessage(`{"type":"manual"}`)
 	paused, err := h.deployments.Pause(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
@@ -610,6 +635,9 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.unpauseExternal(w, r, principal, deploymentID)
+	}
 	unpaused, err := h.deployments.Unpause(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
@@ -623,6 +651,9 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
+	if isExternalRuntime(principal) {
+		return h.runExternal(w, r, principal, deploymentID)
+	}
 	deployment, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
@@ -794,6 +825,9 @@ func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	runID := chi.URLParam(r, "deployment_run_id")
+	if isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, runID)
+	}
 	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceUUID, runID)
 	if err != nil {
 		return deploymentRunLoadError(err, runID)
@@ -805,6 +839,9 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, err := requireWorkspaceCredential(r)
 	if err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
 	}
 	limit, err := httpapi.ParseLimit(r, 1000)
 	if err != nil {

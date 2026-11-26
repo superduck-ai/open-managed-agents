@@ -45,6 +45,7 @@ var (
 	_ agentruntime.EnvironmentRuntime  = (*Runtime)(nil)
 	_ agentruntime.FileRuntime         = (*Runtime)(nil)
 	_ agentruntime.MemoryRuntime       = (*Runtime)(nil)
+	_ agentruntime.DeploymentRuntime   = (*Runtime)(nil)
 	_ agentruntime.SessionRuntime      = (*Runtime)(nil)
 	_ agentruntime.HealthChecker       = (*Runtime)(nil)
 )

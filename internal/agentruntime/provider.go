@@ -103,3 +103,16 @@ type MemoryRuntime interface {
 	GetMemoryVersion(ctx context.Context, scope Scope, storeID string, versionID string, query GetMemoryVersionQuery) (MemoryVersion, error)
 	RedactMemoryVersion(ctx context.Context, scope Scope, storeID string, versionID string) (MemoryVersion, error)
 }
+
+type DeploymentRuntime interface {
+	CreateDeployment(ctx context.Context, scope Scope, input CreateDeploymentInput) (Deployment, error)
+	GetDeployment(ctx context.Context, scope Scope, deploymentID string) (Deployment, error)
+	ListDeployments(ctx context.Context, scope Scope, query ListDeploymentsQuery) (Page[Deployment], error)
+	UpdateDeployment(ctx context.Context, scope Scope, deploymentID string, input UpdateDeploymentInput) (Deployment, error)
+	ArchiveDeployment(ctx context.Context, scope Scope, deploymentID string) (Deployment, error)
+	PauseDeployment(ctx context.Context, scope Scope, deploymentID string) (Deployment, error)
+	UnpauseDeployment(ctx context.Context, scope Scope, deploymentID string) (Deployment, error)
+	RunDeployment(ctx context.Context, scope Scope, deploymentID string) (DeploymentRun, error)
+	GetDeploymentRun(ctx context.Context, scope Scope, runID string) (DeploymentRun, error)
+	ListDeploymentRuns(ctx context.Context, scope Scope, query ListDeploymentRunsQuery) (Page[DeploymentRun], error)
+}

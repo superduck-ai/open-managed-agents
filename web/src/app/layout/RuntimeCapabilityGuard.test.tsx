@@ -334,3 +334,49 @@ test('memory-stores route and navigation stay accessible on external runtime whe
   );
   expect(screen.getByText('Memory Stores Body')).toBeTruthy();
 });
+
+test('deployments route and navigation stay accessible on external runtime when deployments is enabled', () => {
+  const deploymentsEnabledCaps: RuntimeCapabilities = {
+    ...externalCaps,
+    deployments: true,
+    memory_stores: true,
+  };
+  const mainHrefs = visibleConsoleNavigation(deploymentsEnabledCaps).flatMap((item) =>
+    item.type === 'link' ? [item.href] : item.children.map((child) => child.href),
+  );
+  expect(mainHrefs).toContain('/deployments');
+  expect(allowedResourceSources(deploymentsEnabledCaps)).toContain('deployments');
+
+  const deploymentsEnabledWorkspace: Workspace = {
+    ...externalWorkspace,
+    runtime: {
+      ...externalWorkspace.runtime!,
+      capabilities: deploymentsEnabledCaps,
+    },
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider
+          value={{
+            orgUuid: 'org-1',
+            workspaces: [defaultWorkspace, deploymentsEnabledWorkspace],
+            activeWorkspace: deploymentsEnabledWorkspace,
+            activeWorkspaceId: deploymentsEnabledWorkspace.id,
+            isLoading: false,
+            error: null,
+            selectWorkspace: () => undefined,
+            createWorkspace: async () => deploymentsEnabledWorkspace,
+            refreshWorkspaces: async () => undefined,
+          }}
+        >
+          <RuntimeCapabilityGuard currentPath="/workspaces/wrkspc_qoder/deployments">
+            <div>Deployments Enabled Body</div>
+          </RuntimeCapabilityGuard>
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText('Deployments Enabled Body')).toBeTruthy();
+});

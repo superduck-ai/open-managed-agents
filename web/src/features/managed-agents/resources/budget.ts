@@ -55,16 +55,29 @@ export function budgetCreateBody(values: ManagedEntityFormValues): BudgetWire | 
   return values.budgetMode === 'credits' ? budgetCreditsWireBody(parsed.cents) : budgetWireBody(parsed.cents);
 }
 
-/** Body fragment for update requests: sent only when edited, null clears. */
 export function budgetUpdateBody(values: ManagedEntityFormValues): BudgetWire | null | undefined {
   const parsed = parseBudgetUsdInput(values.budgetUsd);
   const original = parseBudgetUsdInput(values.originalBudgetUsd);
   if (parsed.ok && original.ok && parsed.cents === original.cents) return undefined;
-  return parsed.ok && parsed.cents !== null ? budgetWireBody(parsed.cents) : null;
+  if (!parsed.ok || parsed.cents === null) return null;
+  return values.budgetMode === 'credits' ? budgetCreditsWireBody(parsed.cents) : budgetWireBody(parsed.cents);
 }
 
 export function budgetValid(values: ManagedEntityFormValues): boolean {
   return parseBudgetUsdInput(values.budgetUsd).ok;
+}
+
+function entityBudgetCreditsCents(entity: unknown): number | null {
+  const budget = (entity as { budget?: unknown } | null | undefined)?.budget;
+  if (!budget || typeof budget !== 'object') {
+    return null;
+  }
+  const raw = (budget as { max_credit_cost?: unknown }).max_credit_cost;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const parsed = parseBudgetUsdInput(raw);
+  return parsed.ok ? parsed.cents : null;
 }
 
 function entityBudgetCents(entity: unknown): number | null {
@@ -77,9 +90,8 @@ function entityBudgetCents(entity: unknown): number | null {
   return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
-/** Populates the form dollars input from an entity budget (empty when unset). */
 export function entityBudgetUsdInput(entity: unknown): string {
-  const cents = entityBudgetCents(entity);
+  const cents = entityBudgetCents(entity) ?? entityBudgetCreditsCents(entity);
   return cents === null ? '' : formatUsdCentsPlain(cents);
 }
 
@@ -97,7 +109,6 @@ export type SessionBudgetState = {
   reached: boolean;
 };
 
-/** Derives budget vs. spend from the session API payload; null when unbudgeted. */
 export function sessionBudgetState(session: SessionApiResponse): SessionBudgetState | null {
   const budgetCents = entityBudgetCents(session);
   if (budgetCents === null) {
@@ -112,10 +123,12 @@ export function sessionBudgetState(session: SessionApiResponse): SessionBudgetSt
   };
 }
 
-/** Detail-row display value for a deployment/session budget. */
 export function entityBudgetDisplay(entity: DeploymentApiResponse | SessionApiResponse): string {
-  const cents = entityBudgetCents(entity);
-  return cents === null ? '—' : formatUsdCents(cents);
+  const usdCents = entityBudgetCents(entity);
+  if (usdCents !== null) return formatUsdCents(usdCents);
+  const creditCents = entityBudgetCreditsCents(entity);
+  if (creditCents !== null) return `${formatUsdCentsPlain(creditCents)} Credits`;
+  return '—';
 }
 
 export function isBudgetReachedError(message: string | null): boolean {

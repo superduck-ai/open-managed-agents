@@ -28,10 +28,10 @@ func TestDefaultCapabilitiesAndSupports(t *testing.T) {
 	}
 
 	qoder := agentruntime.DefaultCapabilities(agentruntime.ProviderQoderCloud)
-	if !qoder.MemoryStores {
-		t.Fatalf("qoder memory_stores should be true: %+v", qoder)
+	if !qoder.MemoryStores || !qoder.Deployments {
+		t.Fatalf("qoder memory_stores and deployments should be true: %+v", qoder)
 	}
-	if qoder.MCPTunnels || qoder.PortPreview || qoder.OTLPTraces || qoder.ObservabilityDashboard || qoder.BYOKLLMProviders || qoder.Deployments || qoder.SessionWebhooks || qoder.SessionAgentOverrides || qoder.Channels || qoder.Evaluations || qoder.Skills || qoder.CredentialVaults || qoder.MCPServers {
+	if qoder.MCPTunnels || qoder.PortPreview || qoder.OTLPTraces || qoder.ObservabilityDashboard || qoder.BYOKLLMProviders || qoder.SessionWebhooks || qoder.SessionAgentOverrides || qoder.Channels || qoder.Evaluations || qoder.Skills || qoder.CredentialVaults || qoder.MCPServers {
 		t.Fatalf("qoder unsupported capabilities should be false: %+v", qoder)
 	}
 	if qoder.SessionBudget != agentruntime.BudgetModeCredits {

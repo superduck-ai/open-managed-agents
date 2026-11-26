@@ -472,7 +472,7 @@ func TestQoderSharedPoolEndToEndMockPostgres(t *testing.T) {
 		}
 		if ws.Runtime.ProviderKind != "qoder_cloud" ||
 			ws.Runtime.Capabilities.MCPTunnels ||
-			ws.Runtime.Capabilities.Deployments ||
+			!ws.Runtime.Capabilities.Deployments ||
 			ws.Runtime.Capabilities.SessionWebhooks ||
 			ws.Runtime.Capabilities.SessionBudget != "credits" {
 			t.Fatalf("unexpected workspace runtime: %+v", ws.Runtime)
@@ -488,8 +488,8 @@ func TestQoderSharedPoolEndToEndMockPostgres(t *testing.T) {
 		t.Fatalf("expected MCP tunnel cross-workspace guard 400, got status=%d body=%s", st, raw)
 	}
 	st, raw = h.doJSON(t, http.MethodGet, "/v1/deployments?beta=true", nil, wsQ1)
-	if st != http.StatusBadRequest || !strings.Contains(string(raw), "unsupported_capability_error") {
-		t.Fatalf("expected deployments capability guard 400, got status=%d body=%s", st, raw)
+	if st != http.StatusOK {
+		t.Fatalf("expected deployments enabled on qoder 200, got status=%d body=%s", st, raw)
 	}
 
 	st, raw = h.doJSON(t, http.MethodGet, "/v1/models", nil, wsQ1)

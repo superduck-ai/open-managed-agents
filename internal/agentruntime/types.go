@@ -53,13 +53,15 @@ type FileUploadConstraints struct {
 type ResourceType string
 
 const (
-	ResourceTypeAgent       ResourceType = "agent"
-	ResourceTypeEnvironment ResourceType = "environment"
-	ResourceTypeSession     ResourceType = "session"
-	ResourceTypeFile        ResourceType = "file"
-	ResourceTypeSkill       ResourceType = "skill"
-	ResourceTypeVault       ResourceType = "vault"
-	ResourceTypeMemoryStore ResourceType = "memory_store"
+	ResourceTypeAgent         ResourceType = "agent"
+	ResourceTypeEnvironment   ResourceType = "environment"
+	ResourceTypeSession       ResourceType = "session"
+	ResourceTypeFile          ResourceType = "file"
+	ResourceTypeSkill         ResourceType = "skill"
+	ResourceTypeVault         ResourceType = "vault"
+	ResourceTypeMemoryStore   ResourceType = "memory_store"
+	ResourceTypeDeployment    ResourceType = "deployment"
+	ResourceTypeDeploymentRun ResourceType = "deployment_run"
 )
 
 type Scope struct {
@@ -454,4 +456,119 @@ type ListMemoryVersionsQuery struct {
 
 type GetMemoryVersionQuery struct {
 	View string
+}
+
+type DeploymentAgentRef struct {
+	ID      string
+	Type    string
+	Version int
+}
+
+type DeploymentSchedule struct {
+	Type           string   `json:"type"`
+	Expression     string   `json:"expression"`
+	Timezone       string   `json:"timezone"`
+	LastRunAt      *string  `json:"last_run_at,omitempty"`
+	UpcomingRunsAt []string `json:"upcoming_runs_at,omitempty"`
+}
+
+type DeploymentRunError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+type DeploymentPausedReason struct {
+	Type  string              `json:"type"`
+	Error *DeploymentRunError `json:"error,omitempty"`
+}
+
+type DeploymentRunTriggerContext struct {
+	Type        string `json:"type"`
+	ScheduledAt string `json:"scheduled_at,omitempty"`
+}
+
+type Deployment struct {
+	ID            string
+	Agent         DeploymentAgentRef
+	EnvironmentID string
+	Name          string
+	Description   string
+	Metadata      map[string]string
+	InitialEvents []json.RawMessage
+	Resources     []json.RawMessage
+	VaultIDs      []string
+	Budget        *SessionBudget
+	Schedule      *DeploymentSchedule
+	Status        string
+	PausedReason  *DeploymentPausedReason
+	ArchivedAt    *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type CreateDeploymentInput struct {
+	AgentID       string
+	AgentVersion  int
+	EnvironmentID string
+	Name          string
+	Description   string
+	Metadata      map[string]string
+	InitialEvents []json.RawMessage
+	Resources     []AddSessionResourceInput
+	VaultIDs      []string
+	Budget        *SessionBudget
+	Schedule      *DeploymentSchedule
+}
+
+type UpdateDeploymentInput struct {
+	AgentID       *string
+	AgentVersion  int
+	EnvironmentID *string
+	Name          *string
+	Description   *string
+	ClearDesc     bool
+	Metadata      map[string]string
+	MetadataSet   bool
+	InitialEvents []json.RawMessage
+	EventsSet     bool
+	Resources     []AddSessionResourceInput
+	ResourcesSet  bool
+	VaultIDs      []string
+	VaultIDsSet   bool
+	Budget        *SessionBudget
+	BudgetSet     bool
+	Schedule      *DeploymentSchedule
+	ScheduleSet   bool
+}
+
+type ListDeploymentsQuery struct {
+	IncludeArchived bool
+	AgentID         string
+	Status          string
+	CreatedAtGTE    *time.Time
+	CreatedAtLTE    *time.Time
+	Limit           int
+	Offset          int
+}
+
+type DeploymentRun struct {
+	ID             string
+	DeploymentID   string
+	Agent          DeploymentAgentRef
+	SessionID      *string
+	Error          *DeploymentRunError
+	TriggerContext DeploymentRunTriggerContext
+	CreatedAt      time.Time
+}
+
+type ListDeploymentRunsQuery struct {
+	DeploymentID string
+	TriggerType  string
+	HasError     *bool
+	CreatedAtGT  *time.Time
+	CreatedAtGTE *time.Time
+	CreatedAtLT  *time.Time
+	CreatedAtLTE *time.Time
+	Limit        int
+	Offset       int
 }

@@ -77,11 +77,25 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 				params.DataResidency,
 				params.ExternalKeyID,
 				params.Tags,
+				params.OrganizationUUID,
 			},
 			"CAST($10 AS jsonb)",
 			"CAST($12 AS jsonb)",
+			"default_runtime_profile_uuid",
 			"RETURNING",
 		)
+	})
+
+	t.Run("inserted with explicit runtime profile", func(t *testing.T) {
+		explicit := params
+		explicit.RuntimeProfileUUID = "33333333-3333-4333-8333-333333333333"
+		bound := buildAdminWorkspaceMapperInsert(yourbatis.DialectPostgres, explicit)
+		if !strings.Contains(bound.SQL, "runtime_profile_uuid") || !strings.Contains(bound.SQL, "$13") {
+			t.Fatalf("explicit insert SQL missing runtime_profile_uuid binding: %q", bound.SQL)
+		}
+		if values := bound.Values(); len(values) != 13 || values[12] != explicit.RuntimeProfileUUID {
+			t.Fatalf("explicit insert args = %#v", values)
+		}
 	})
 }
 
@@ -107,8 +121,8 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			"AdminWorkspaceMapper.FindByIdentifier",
 			yourbatis.StatementSelect,
 			wantValues,
-			"organization_uuid = $1",
-			"external_id = $3 OR uuid = $4",
+			"w.organization_uuid = $1",
+			"w.external_id = $3 OR w.uuid = $4",
 		)
 	})
 
@@ -133,10 +147,10 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			"AdminWorkspaceMapper.FindByIdentifier",
 			yourbatis.StatementSelect,
 			[]any{organizationUUID, "wrkspc_mapper", "wrkspc_mapper"},
-			"organization_uuid = $1",
-			"external_id = $3",
+			"w.organization_uuid = $1",
+			"w.external_id = $3",
 		)
-		if strings.Contains(executor.bound.SQL, "uuid = $4") {
+		if strings.Contains(executor.bound.SQL, "w.uuid = $4") {
 			t.Fatalf("FindByIdentifier() SQL unexpectedly contains UUID filter: %s", executor.bound.SQL)
 		}
 	})
@@ -160,27 +174,27 @@ func TestAdminWorkspaceMapperListPageBuildsFilters(t *testing.T) {
 		{
 			name:       "active without cursor",
 			wantValues: []any{organizationUUID, 11},
-			wantSQL:    []string{"archived_at IS NULL", "LIMIT $2"},
+			wantSQL:    []string{"w.archived_at IS NULL", "LIMIT $2"},
 		},
 		{
 			name:            "archived included",
 			includeArchived: true,
 			wantValues:      []any{organizationUUID, 11},
 			wantSQL:         []string{"LIMIT $2"},
-			omitSQL:         "archived_at IS NULL",
+			omitSQL:         "w.archived_at IS NULL",
 		},
 		{
 			name:       "after anchor",
 			anchor:     anchor,
 			wantValues: []any{organizationUUID, anchor.CreatedAt, anchor.UUID, 11},
-			wantSQL:    []string{"(created_at, uuid) < ($2, $3)", "LIMIT $4"},
+			wantSQL:    []string{"(w.created_at, w.uuid) < ($2, $3)", "LIMIT $4"},
 		},
 		{
 			name:       "before anchor",
 			anchor:     anchor,
 			before:     true,
 			wantValues: []any{organizationUUID, anchor.CreatedAt, anchor.UUID, 11},
-			wantSQL:    []string{"(created_at, uuid) > ($2, $3)", "LIMIT $4"},
+			wantSQL:    []string{"(w.created_at, w.uuid) > ($2, $3)", "LIMIT $4"},
 		},
 	}
 	for _, test := range tests {
@@ -280,6 +294,10 @@ func adminWorkspaceMapperTestColumns() []string {
 		"data_residency",
 		"external_key_id",
 		"tags",
+		"runtime_profile_uuid",
+		"runtime_profile_external_id",
+		"runtime_profile_name",
+		"runtime_provider_kind",
 	}
 }
 
@@ -298,5 +316,9 @@ func adminWorkspaceMapperTestRow(externalID string, createdAt time.Time) []drive
 		[]byte(`{"region":"us"}`),
 		nil,
 		[]byte(`[]`),
+		DefaultOMANativeRuntimeProfileUUID,
+		"rprof_oma_native_default",
+		"OMA Native",
+		"oma_native",
 	}
 }

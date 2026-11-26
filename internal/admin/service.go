@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -13,6 +15,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
+
+type workspaceRuntimePolicyStore interface {
+	GetOrganizationRuntimePolicy(ctx context.Context, organizationUUID string) (db.OrganizationRuntimePolicy, error)
+	GetRuntimeProfileByUUID(ctx context.Context, profileUUID string) (db.RuntimeProfile, error)
+	GetRuntimeProfileByExternalID(ctx context.Context, externalID string) (db.RuntimeProfile, error)
+}
 
 type Service struct {
 	cfg config.Config
@@ -195,22 +203,89 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
 	}
+	requestedProfileID := ""
+	if req.RuntimeProfileID != nil {
+		requestedProfileID = strings.TrimSpace(*req.RuntimeProfileID)
+	}
+	var policyStore workspaceRuntimePolicyStore
+	if s.db != nil {
+		policyStore = s.db
+	}
+	runtimeProfileUUID, err := resolveAdminWorkspaceRuntimeProfileUUID(ctx, policyStore, organizationUUID.String(), requestedProfileID)
+	if err != nil {
+		return workspaceResponse{}, err
+	}
 	record, err := s.db.CreateAdminWorkspace(ctx, db.AdminWorkspace{
-		UUID:             uuid.NewV4().String(),
-		ExternalID:       workspaceID,
-		OrganizationUUID: organizationUUID.String(),
-		Name:             name,
-		CreatedAt:        now,
-		CompartmentID:    uuid.NewV4().String(),
-		DisplayColor:     "#6C5BB9",
-		DataResidency:    residencyJSON,
-		ExternalKeyID:    normalizedOptionalString(req.ExternalKeyID),
-		Tags:             tagsJSON,
+		UUID:               uuid.NewV4().String(),
+		ExternalID:         workspaceID,
+		OrganizationUUID:   organizationUUID.String(),
+		Name:               name,
+		CreatedAt:          now,
+		CompartmentID:      uuid.NewV4().String(),
+		DisplayColor:       "#6C5BB9",
+		DataResidency:      residencyJSON,
+		ExternalKeyID:      normalizedOptionalString(req.ExternalKeyID),
+		Tags:               tagsJSON,
+		RuntimeProfileUUID: runtimeProfileUUID,
 	})
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Could not create workspace")
 	}
 	return s.workspaceFromRecord(record), nil
+}
+
+func resolveAdminWorkspaceRuntimeProfileUUID(
+	ctx context.Context,
+	store workspaceRuntimePolicyStore,
+	organizationUUID string,
+	requestedID string,
+) (string, error) {
+	if store == nil {
+		if requestedID != "" {
+			return "", invalidRequest("runtime_profile_id cannot be validated")
+		}
+		return "", nil
+	}
+	policy, err := store.GetOrganizationRuntimePolicy(ctx, organizationUUID)
+	if err != nil {
+		return "", mapAdminDBError(err, "Organization not found")
+	}
+	if requestedID == "" {
+		profileUUID := policy.DefaultRuntimeProfileUUID
+		if profileUUID == "" {
+			profileUUID = db.DefaultOMANativeRuntimeProfileUUID
+		}
+		if len(policy.AllowedRuntimeProfileUUIDs) > 0 && !slices.Contains(policy.AllowedRuntimeProfileUUIDs, profileUUID) {
+			return "", invalidRequest("organization default runtime profile is not allowed")
+		}
+		profile, profileErr := store.GetRuntimeProfileByUUID(ctx, profileUUID)
+		if profileErr != nil {
+			return "", mapAdminDBError(profileErr, "Runtime profile not found")
+		}
+		if profile.Status != "active" {
+			return "", invalidRequest("runtime profile is not active")
+		}
+		return profile.UUID, nil
+	}
+	var profile db.RuntimeProfile
+	if _, parseErr := uuid.Parse(requestedID); parseErr == nil {
+		profile, err = store.GetRuntimeProfileByUUID(ctx, requestedID)
+	} else {
+		profile, err = store.GetRuntimeProfileByExternalID(ctx, requestedID)
+	}
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return "", invalidRequest("runtime_profile_id not found")
+		}
+		return "", err
+	}
+	if profile.Status != "active" {
+		return "", invalidRequest("runtime_profile_id is not active")
+	}
+	if !slices.Contains(policy.AllowedRuntimeProfileUUIDs, profile.UUID) {
+		return "", invalidRequest("runtime_profile_id is not allowed for this organization")
+	}
+	return profile.UUID, nil
 }
 
 func (s *Service) GetWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (workspaceResponse, error) {

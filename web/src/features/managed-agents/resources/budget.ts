@@ -1,10 +1,17 @@
 import { type DeploymentApiResponse, type ManagedEntityFormValues, type SessionApiResponse } from '../types';
 
 /** Budget wire shape: integer-cent USD amount as a string (CMA-compatible). */
-export type BudgetWire = {
+export type UsdBudgetWire = {
   type: 'limit';
   max_list_cost: { amount: string; currency: string };
 };
+
+export type CreditsBudgetWire = {
+  type: 'limit';
+  max_credit_cost: string;
+};
+
+export type BudgetWire = UsdBudgetWire | CreditsBudgetWire;
 
 export type BudgetParseResult = { ok: true; cents: number | null } | { ok: false };
 
@@ -29,14 +36,23 @@ export function parseBudgetUsdInput(input: string): BudgetParseResult {
   return { ok: true, cents };
 }
 
-export function budgetWireBody(cents: number): BudgetWire {
+export function budgetWireBody(cents: number): UsdBudgetWire {
   return { type: 'limit', max_list_cost: { amount: String(cents), currency: 'USD' } };
 }
 
-/** Body fragment for create requests: budget present only when set. */
+export function budgetCreditsWireBody(cents: number): CreditsBudgetWire {
+  return { type: 'limit', max_credit_cost: (cents / 100).toFixed(2) };
+}
+
 export function budgetCreateBody(values: ManagedEntityFormValues): BudgetWire | undefined {
+  if (values.budgetMode === 'none') {
+    return undefined;
+  }
   const parsed = parseBudgetUsdInput(values.budgetUsd);
-  return parsed.ok && parsed.cents !== null ? budgetWireBody(parsed.cents) : undefined;
+  if (!parsed.ok || parsed.cents === null) {
+    return undefined;
+  }
+  return values.budgetMode === 'credits' ? budgetCreditsWireBody(parsed.cents) : budgetWireBody(parsed.cents);
 }
 
 /** Body fragment for update requests: sent only when edited, null clears. */

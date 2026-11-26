@@ -6,6 +6,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"log/slog"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -24,25 +25,27 @@ const maxSessionBodySize = 4 << 20
 const maxSessionCreateBodySize = sessioncontract.MaxCreateBodyBytes
 
 type Handler struct {
-	attachments     codesessions.SessionAttachmentStore
-	secretService   *secrets.Service
-	eventPayloads   *eventpayload.Store
-	cfg             config.Config
-	db              *db.DB
-	codeSessions    *codesessions.Service
-	webhooks        webhookEnqueuer
-	sandboxReclaims sandboxReclaimer
-	logger          *slog.Logger
-	errorAdapter    *httpapi.ErrorAdapter
-	router          chi.Router
-	streams         *streamHub
-	eventBus        sessionfanout.EventBus
-	previews        *workerPreviewConverter
-	eventObserver   SessionEventObserver
-	admitExecution  func(context.Context, string, string, string, bool) error
-	resolveIdentity func(context.Context, auth.Principal, string) (string, error)
-	enqueueTitle    db.SessionTitleEnqueuer
-	ports           *sessionports.Settings
+	attachments      codesessions.SessionAttachmentStore
+	secretService    *secrets.Service
+	eventPayloads    *eventpayload.Store
+	cfg              config.Config
+	db               *db.DB
+	codeSessions     *codesessions.Service
+	webhooks         webhookEnqueuer
+	sandboxReclaims  sandboxReclaimer
+	logger           *slog.Logger
+	errorAdapter     *httpapi.ErrorAdapter
+	router           chi.Router
+	streams          *streamHub
+	eventBus         sessionfanout.EventBus
+	previews         *workerPreviewConverter
+	eventObserver    SessionEventObserver
+	admitExecution   func(context.Context, string, string, string, bool) error
+	resolveIdentity  func(context.Context, auth.Principal, string) (string, error)
+	enqueueTitle     db.SessionTitleEnqueuer
+	ports            *sessionports.Settings
+	runtimeResolver  *agentruntime.Resolver
+	eventIdempotency *eventIdempotencyCache
 }
 
 type SessionEventObserver interface {

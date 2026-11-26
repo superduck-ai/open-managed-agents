@@ -16,6 +16,7 @@ import {
 } from '../../shared/workspaces/presentation';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
+import { workspaceRuntimeBadgeLabel } from '../../shared/workspaces/runtime';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import {
   CopyIdCell,
@@ -84,8 +85,8 @@ export function WorkspacesSettingsPage() {
     { value: 'archived', label: msg('settings.workspaces.statusArchived', 'Archived') },
   ];
 
-  const handleCreate = async (name: string, displayColor: string) => {
-    await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
+  const handleCreate = async (name: string, displayColor: string, runtimeProfileId?: string) => {
+    await createWorkspace(buildCreateWorkspaceInput(name, displayColor, runtimeProfileId));
   };
 
   const handleUpdate = async (name: string, displayColor: string) => {
@@ -343,6 +344,9 @@ export function WorkspacesSettingsPage() {
                                   <ResourceStatusBadge tone="info">
                                     {msg('settings.workspaces.current', 'Current')}
                                   </ResourceStatusBadge>
+                                ) : null}
+                                {workspaceRuntimeBadgeLabel(workspace.runtime) ? (
+                                  <Badge variant="outline">{workspaceRuntimeBadgeLabel(workspace.runtime)}</Badge>
                                 ) : null}
                               </div>
                             </div>

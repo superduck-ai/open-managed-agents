@@ -72,3 +72,7 @@ func archivedAgentCannotBeUpdated(cause error) error {
 func agentVersionConflict(cause error) error {
 	return apperr.New(apperr.Conflict, "Agent version does not match current version", cause)
 }
+
+func agentRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Workspace runtime agents are unavailable", cause)
+}

@@ -1,4 +1,18 @@
 import { consoleApi } from '../api/client';
+import type { OrganizationRuntimeProfile, OrganizationRuntimeProfilesResult, WorkspaceRuntimeSummary } from './runtime';
+
+export type {
+  BooleanRuntimeCapabilityKey,
+  OrganizationRuntimeProfile,
+  OrganizationRuntimeProfilesResult,
+  RuntimeArtifactDiscoveryMode,
+  RuntimeBudgetMode,
+  RuntimeCapabilities,
+  RuntimeFileUploadConstraints,
+  RuntimeProviderKind,
+  RuntimeUsageMeteringMode,
+  WorkspaceRuntimeSummary,
+} from './runtime';
 
 export type Workspace = {
   is_default?: boolean;
@@ -18,6 +32,7 @@ export type Workspace = {
     allowed_inference_geos?: string;
     default_inference_geo?: string;
   } | null;
+  runtime?: WorkspaceRuntimeSummary;
 };
 
 export type CreateWorkspaceInput = {
@@ -26,6 +41,7 @@ export type CreateWorkspaceInput = {
   data_residency: {
     workspace_geo: 'us';
   };
+  runtime_profile_id?: string;
 };
 
 export type WorkspaceApiKey = {
@@ -84,6 +100,38 @@ export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceIn
   return consoleApi<Workspace>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`, {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+type OrganizationRuntimeProfilesEnvelope =
+  | OrganizationRuntimeProfile[]
+  | {
+      data?: OrganizationRuntimeProfile[];
+      profiles?: OrganizationRuntimeProfile[];
+      default_runtime_profile_id?: string;
+      default_runtime_profile_uuid?: string;
+    };
+
+export function listOrganizationRuntimeProfiles(orgUuid: string): Promise<OrganizationRuntimeProfilesResult> {
+  return consoleApi<OrganizationRuntimeProfilesEnvelope>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/runtime-profiles`,
+    {
+      context: { organizationUuid: orgUuid },
+    },
+  ).then((payload) => {
+    const profiles = Array.isArray(payload) ? payload : (payload.profiles ?? payload.data ?? []);
+    const defaultProfileUuid = Array.isArray(payload) ? '' : (payload.default_runtime_profile_uuid ?? '');
+    const explicitDefaultId = Array.isArray(payload) ? '' : (payload.default_runtime_profile_id ?? '');
+    const defaultProfile =
+      profiles.find((profile) => profile.is_default) ??
+      profiles.find((profile) => (explicitDefaultId ? profile.id === explicitDefaultId : false)) ??
+      profiles.find((profile) => (defaultProfileUuid ? profile.uuid === defaultProfileUuid : false)) ??
+      profiles[0];
+    return {
+      profiles,
+      defaultProfileId: explicitDefaultId || defaultProfile?.id || defaultProfile?.uuid || '',
+      defaultProfileUuid: defaultProfileUuid || defaultProfile?.uuid || '',
+    };
   });
 }
 

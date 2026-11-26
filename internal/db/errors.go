@@ -22,3 +22,7 @@ var ErrToolCallSandboxPreparing = errors.New("tool call sandbox is still being p
 
 var ErrToolCallSandboxRetired = errors.New("tool call sandbox no longer accepts calls")
 var ErrChannelCredentialUserRequired = errors.New("channel workspace credential requires a runtime user")
+
+var ErrRuntimeProfileInUse = errors.New("runtime profile is referenced by existing resources")
+
+var ErrBuiltinRuntimeProfileProtected = errors.New("builtin runtime profile cannot be deleted")

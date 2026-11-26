@@ -274,3 +274,15 @@ func oauthBoundToEnvironmentCredential() error {
 func oauthBoundToDifferentProvider() error {
 	return apperr.New(apperr.Conflict, "当前变量已绑定其他 OAuth 连接", nil)
 }
+
+func sessionRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Workspace runtime sessions are unavailable", cause)
+}
+
+func sessionIdempotencyConflict() error {
+	return apperr.New(apperr.Conflict, "Idempotency-Key was already used with different events", nil)
+}
+
+func externalThreadArchiveUnsupported() error {
+	return apperr.New(apperr.InvalidArgument, "Archiving individual threads is not supported by this workspace runtime", nil)
+}

@@ -89,6 +89,10 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, apiErr)
 		return
 	}
+	if isExternalRuntime(principal) {
+		h.uploadBase64External(w, r, principal, scope)
+		return
+	}
 
 	payload, err := httpapi.DecodeObjectBodyAs[platformUploadB64Request](w, r, h.platformUploadBodyLimit())
 	defer r.Body.Close()
@@ -206,6 +210,10 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 	scope, apiErr := h.resolvePlatformOrganizationScope(r, principal)
 	if apiErr != nil {
 		httpapi.WriteError(w, r, apiErr)
+		return
+	}
+	if isExternalRuntime(principal) {
+		h.streamPlatformFileVariantExternal(w, r, principal)
 		return
 	}
 

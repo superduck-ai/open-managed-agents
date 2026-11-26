@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { ConsoleTopbar } from '../console-topbar/ConsoleTopbar';
 import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
 import '../../shared/ui/console-navigation.css';
-import { ArrowLeft, Blocks, Building2, KeyRound, Shield, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Blocks, Building2, Cpu, KeyRound, Shield, ShieldCheck } from 'lucide-react';
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { organizationSection, organizationSections } from './organizationNavigation';
 import {
@@ -54,6 +54,9 @@ function AdminSidebar({ email }: { email: string }) {
   const administratorsActive = useLocation().pathname === '/platform-admin/administrators';
   const skillsActive = useLocation().pathname === '/platform-admin/skills';
   const oauthActive = useLocation().pathname === '/platform-admin/oauth';
+  const runtimesActive = useLocation().pathname === '/platform-admin/runtimes';
+  const organizationsActive =
+    !organizationUuid && !administratorsActive && !skillsActive && !oauthActive && !runtimesActive;
   const organizationsLabel = organizationUuid
     ? msg('platformAdmin.backToOrganizations', 'Back to organizations')
     : msg('platformAdmin.organizations', 'Organizations');
@@ -74,17 +77,13 @@ function AdminSidebar({ email }: { email: string }) {
                   <SidebarMenuButton
                     tooltip={organizationsLabel}
                     aria-label={organizationsLabel}
-                    isActive={!organizationUuid && !administratorsActive && !skillsActive && !oauthActive}
+                    isActive={organizationsActive}
                     render={
                       <Link
                         to="/platform-admin"
                         activeOptions={{ exact: true }}
                         onClick={closeMenu}
-                        aria-current={
-                          !organizationUuid && !administratorsActive && !skillsActive && !oauthActive
-                            ? 'page'
-                            : undefined
-                        }
+                        aria-current={organizationsActive ? 'page' : undefined}
                       />
                     }
                   >
@@ -148,6 +147,25 @@ function AdminSidebar({ email }: { email: string }) {
                         <KeyRound aria-hidden />
                         <span className="truncate group-data-[collapsible=icon]:hidden">
                           {msg('platformAdmin.oauthManagement.title', 'OAuth management')}
+                        </span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        tooltip={msg('platformAdmin.runtimeProfiles.title', 'Runtime profiles')}
+                        aria-label={msg('platformAdmin.runtimeProfiles.title', 'Runtime profiles')}
+                        isActive={runtimesActive}
+                        render={
+                          <Link
+                            to="/platform-admin/runtimes"
+                            onClick={closeMenu}
+                            aria-current={runtimesActive ? 'page' : undefined}
+                          />
+                        }
+                      >
+                        <Cpu aria-hidden />
+                        <span className="truncate group-data-[collapsible=icon]:hidden">
+                          {msg('platformAdmin.runtimeProfiles.title', 'Runtime profiles')}
                         </span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

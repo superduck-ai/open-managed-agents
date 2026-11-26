@@ -7,19 +7,23 @@ import (
 )
 
 type AdminWorkspace struct {
-	IsDefault        bool            `db:"is_default"`
-	UUID             string          `db:"uuid"`
-	ExternalID       string          `db:"external_id"`
-	OrganizationUUID string          `db:"organization_uuid"`
-	Name             string          `db:"name"`
-	CreatedAt        time.Time       `db:"created_at"`
-	UpdatedAt        time.Time       `db:"updated_at"`
-	ArchivedAt       *time.Time      `db:"archived_at"`
-	CompartmentID    string          `db:"compartment_id"`
-	DisplayColor     string          `db:"display_color"`
-	DataResidency    json.RawMessage `db:"data_residency"`
-	ExternalKeyID    *string         `db:"external_key_id"`
-	Tags             json.RawMessage `db:"tags"`
+	IsDefault                bool            `db:"is_default"`
+	UUID                     string          `db:"uuid"`
+	ExternalID               string          `db:"external_id"`
+	OrganizationUUID         string          `db:"organization_uuid"`
+	Name                     string          `db:"name"`
+	CreatedAt                time.Time       `db:"created_at"`
+	UpdatedAt                time.Time       `db:"updated_at"`
+	ArchivedAt               *time.Time      `db:"archived_at"`
+	CompartmentID            string          `db:"compartment_id"`
+	DisplayColor             string          `db:"display_color"`
+	DataResidency            json.RawMessage `db:"data_residency"`
+	ExternalKeyID            *string         `db:"external_key_id"`
+	Tags                     json.RawMessage `db:"tags"`
+	RuntimeProfileUUID       string          `db:"runtime_profile_uuid"`
+	RuntimeProfileExternalID string          `db:"runtime_profile_external_id"`
+	RuntimeProfileName       string          `db:"runtime_profile_name"`
+	RuntimeProviderKind      string          `db:"runtime_provider_kind"`
 }
 
 type ListAdminWorkspacesParams struct {
@@ -41,17 +45,18 @@ func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace)
 
 func workspaceInsertParams(workspace AdminWorkspace) insertAdminWorkspaceParams {
 	return insertAdminWorkspaceParams{
-		UUID:             workspace.UUID,
-		ExternalID:       workspace.ExternalID,
-		OrganizationUUID: workspace.OrganizationUUID,
-		Name:             workspace.Name,
-		IsDefault:        workspace.IsDefault,
-		CreatedAt:        workspace.CreatedAt,
-		CompartmentID:    workspace.CompartmentID,
-		DisplayColor:     workspace.DisplayColor,
-		DataResidency:    workspace.DataResidency,
-		ExternalKeyID:    workspace.ExternalKeyID,
-		Tags:             workspace.Tags,
+		UUID:               workspace.UUID,
+		ExternalID:         workspace.ExternalID,
+		OrganizationUUID:   workspace.OrganizationUUID,
+		Name:               workspace.Name,
+		IsDefault:          workspace.IsDefault,
+		CreatedAt:          workspace.CreatedAt,
+		CompartmentID:      workspace.CompartmentID,
+		DisplayColor:       workspace.DisplayColor,
+		DataResidency:      workspace.DataResidency,
+		ExternalKeyID:      workspace.ExternalKeyID,
+		Tags:               workspace.Tags,
+		RuntimeProfileUUID: workspace.RuntimeProfileUUID,
 	}
 }
 

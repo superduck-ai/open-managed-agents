@@ -4,6 +4,7 @@ import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
 import { useContext, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceCapabilities } from '../../../shared/workspaces/context';
 import { listAllWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
 import { cn } from '../../../shared/lib/utils';
 import { skillSourceLabel } from '../../../shared/lib/skill-source';
@@ -31,6 +32,55 @@ import { CreatePageSection } from './create-page-section';
 import { SubagentsEditor } from './subagents-editor';
 import { subagentSettings } from './subagents-model';
 
+function useAgentConfigCapabilityQueries(orgUuid: string | undefined, workspaceId: string) {
+  const capabilities = useWorkspaceCapabilities();
+  const skillsEnabled = capabilities.skills;
+  const mcpServersEnabled = capabilities.mcp_servers;
+  const mcpTunnelsEnabled = capabilities.mcp_tunnels;
+
+  const skillsQuery = useQuery({
+    queryKey: ['skills', workspaceId, 'agent-config-picker'],
+    queryFn: () => listCreateAgentSkills(workspaceId),
+    enabled: skillsEnabled,
+    retry: false,
+  });
+  const directoryQuery = useQuery({
+    queryKey: ['managed-agents', 'mcp-directory', 'agent-config'],
+    queryFn: loadMcpDirectoryServers,
+    enabled: mcpServersEnabled,
+    retry: false,
+  });
+  const workspaceServersQuery = useQuery({
+    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, 'agent-picker'],
+    queryFn: () => listAllWorkspaceMCPServers(orgUuid ?? '', workspaceId),
+    enabled: Boolean(orgUuid && workspaceId && mcpServersEnabled),
+    retry: false,
+  });
+  const tunnelsQuery = useQuery({
+    queryKey: ['console-mcp-tunnels', orgUuid, workspaceId, false],
+    queryFn: () => listMcpTunnels(orgUuid ?? '', workspaceId, false),
+    enabled: Boolean(orgUuid && workspaceId && mcpTunnelsEnabled),
+    retry: false,
+  });
+
+  const refetchSkills = skillsQuery.refetch;
+  const refetchWorkspaceServers = workspaceServersQuery.refetch;
+  useEffect(() => {
+    const refresh = () => {
+      if (skillsEnabled) {
+        void refetchSkills();
+      }
+      if (mcpServersEnabled && orgUuid && workspaceId) {
+        void refetchWorkspaceServers();
+      }
+    };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [skillsEnabled, mcpServersEnabled, orgUuid, workspaceId, refetchSkills, refetchWorkspaceServers]);
+
+  return { capabilities, skillsQuery, directoryQuery, workspaceServersQuery, tunnelsQuery };
+}
+
 export function AgentConfigRenderedEditor({
   orgUuid,
   workspaceId,
@@ -56,39 +106,8 @@ export function AgentConfigRenderedEditor({
   const systemPromptId = useId();
   const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
-  const skillsQuery = useQuery({
-    queryKey: ['skills', workspaceId, 'agent-config-picker'],
-    queryFn: () => listCreateAgentSkills(workspaceId),
-    retry: false,
-  });
-  const directoryQuery = useQuery({
-    queryKey: ['managed-agents', 'mcp-directory', 'agent-config'],
-    queryFn: loadMcpDirectoryServers,
-    retry: false,
-  });
-  const workspaceServersQuery = useQuery({
-    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, 'agent-picker'],
-    queryFn: () => listAllWorkspaceMCPServers(orgUuid ?? '', workspaceId),
-    enabled: Boolean(orgUuid && workspaceId),
-    retry: false,
-  });
-  const tunnelsQuery = useQuery({
-    queryKey: ['console-mcp-tunnels', orgUuid, workspaceId, false],
-    queryFn: () => listMcpTunnels(orgUuid ?? '', workspaceId, false),
-    enabled: Boolean(orgUuid && workspaceId),
-    retry: false,
-  });
-  const refetchSkills = skillsQuery.refetch;
-  const refetchWorkspaceServers = workspaceServersQuery.refetch;
-
-  useEffect(() => {
-    const refresh = () => {
-      void refetchSkills();
-      void refetchWorkspaceServers();
-    };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, [refetchSkills, refetchWorkspaceServers]);
+  const { capabilities, skillsQuery, directoryQuery, workspaceServersQuery, tunnelsQuery } =
+    useAgentConfigCapabilityQueries(orgUuid, workspaceId);
 
   const selectedSkills = selectedSkillReferences(draft);
   const skillOptions = skillsQuery.data ?? [];
@@ -190,59 +209,62 @@ export function AgentConfigRenderedEditor({
       </CreateDialogSection>
 
       <Separator className={presentation.separator} />
-      <CreateDialogSection
-        compact={compact}
-        collapsible={compact}
-        className={presentation.skillsOrder}
-        summary={selectedConfigurationSummary(selectedSkills.length, msg)}
-        title={msg('managedAgents.agents.createDialog.skills', 'Skills')}
-        description={msg(
-          'managedAgents.agents.createDialog.skillsDescription',
-          'Packaged instructions and scripts this agent loads when it needs them.',
-        )}
-        learnMore={documentationHref('skills', locale)}
-      >
-        <SelectedPills
-          items={selectedSkills.map((reference) => {
-            const skill = skillOptions.find((candidate) => candidate.id === reference.skill_id);
-            const label = skill?.displayTitle
-              ? skill.displayTitle
-              : skillsQuery.isSuccess
-                ? `${reference.skill_id} (${msg('managedAgents.agents.detail.skillUnavailableBadge', 'Unavailable')})`
-                : reference.skill_id;
-            return { id: reference.skill_id, label };
-          })}
-          onRemove={(id) => {
-            const skill = skillOptions.find((candidate) => candidate.id === id);
-            if (skill) {
-              onChange(toggleSkill(draft, skill));
-            } else {
-              onChange({ ...draft, skills: selectedSkills.filter((reference) => reference.skill_id !== id) });
-            }
-          }}
-        />
-        <CreateDialogPicker
-          label={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
-          placeholder={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
-          searchPlaceholder={msg('managedAgents.agents.createDialog.searchSkills', 'Search skills...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills found.')}
-          options={skillPickerOptions}
-          selectedIds={selectedSkills.map((reference) => reference.skill_id)}
-          loading={skillsQuery.isLoading}
-          error={skillsQuery.isError}
-          onRetry={() => void skillsQuery.refetch()}
-          onToggle={(id) => {
-            const skill = skillOptions.find((candidate) => candidate.id === id);
-            if (skill) {
-              onChange(toggleSkill(draft, skill));
-            }
-          }}
-          createLabel={msg('skills.create', 'Create skill')}
-          onCreate={() => openInNewTab(skillCreateHref(workspaceId))}
-        />
-      </CreateDialogSection>
-
-      <Separator className={presentation.separator} />
+      {capabilities.skills ? (
+        <>
+          <CreateDialogSection
+            compact={compact}
+            collapsible={compact}
+            className={presentation.skillsOrder}
+            summary={selectedConfigurationSummary(selectedSkills.length, msg)}
+            title={msg('managedAgents.agents.createDialog.skills', 'Skills')}
+            description={msg(
+              'managedAgents.agents.createDialog.skillsDescription',
+              'Packaged instructions and scripts this agent loads when it needs them.',
+            )}
+            learnMore={documentationHref('skills', locale)}
+          >
+            <SelectedPills
+              items={selectedSkills.map((reference) => {
+                const skill = skillOptions.find((candidate) => candidate.id === reference.skill_id);
+                const label = skill?.displayTitle
+                  ? skill.displayTitle
+                  : skillsQuery.isSuccess
+                    ? `${reference.skill_id} (${msg('managedAgents.agents.detail.skillUnavailableBadge', 'Unavailable')})`
+                    : reference.skill_id;
+                return { id: reference.skill_id, label };
+              })}
+              onRemove={(id) => {
+                const skill = skillOptions.find((candidate) => candidate.id === id);
+                if (skill) {
+                  onChange(toggleSkill(draft, skill));
+                } else {
+                  onChange({ ...draft, skills: selectedSkills.filter((reference) => reference.skill_id !== id) });
+                }
+              }}
+            />
+            <CreateDialogPicker
+              label={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
+              placeholder={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
+              searchPlaceholder={msg('managedAgents.agents.createDialog.searchSkills', 'Search skills...')}
+              emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills found.')}
+              options={skillPickerOptions}
+              selectedIds={selectedSkills.map((reference) => reference.skill_id)}
+              loading={skillsQuery.isLoading}
+              error={skillsQuery.isError}
+              onRetry={() => void skillsQuery.refetch()}
+              onToggle={(id) => {
+                const skill = skillOptions.find((candidate) => candidate.id === id);
+                if (skill) {
+                  onChange(toggleSkill(draft, skill));
+                }
+              }}
+              createLabel={msg('skills.create', 'Create skill')}
+              onCreate={() => openInNewTab(skillCreateHref(workspaceId))}
+            />
+          </CreateDialogSection>
+          <Separator className={presentation.separator} />
+        </>
+      ) : null}
       <CreateDialogSection
         compact={compact}
         collapsible={compact}

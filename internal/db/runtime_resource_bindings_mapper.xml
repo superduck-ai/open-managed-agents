@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="RuntimeResourceBindingMapper">
+    <sql id="columns">
+        id,
+        organization_uuid,
+        workspace_uuid,
+        runtime_profile_uuid,
+        provider_kind,
+        resource_type,
+        oma_external_id,
+        remote_id,
+        parent_oma_external_id,
+        resource_role,
+        state,
+        summary,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Upsert" result="returning" resultType="RuntimeResourceBinding">
+        INSERT INTO runtime_resource_bindings (
+            organization_uuid,
+            workspace_uuid,
+            runtime_profile_uuid,
+            provider_kind,
+            resource_type,
+            oma_external_id,
+            remote_id,
+            parent_oma_external_id,
+            resource_role,
+            state,
+            summary,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.RuntimeProfileUUID},
+            #{params.ProviderKind},
+            #{params.ResourceType},
+            #{params.OMAExternalID},
+            #{params.RemoteID},
+            #{params.ParentOMAExternalID},
+            #{params.ResourceRole},
+            #{params.State},
+            CAST(#{params.Summary} AS jsonb),
+            #{params.CreatedAt},
+            #{params.UpdatedAt}
+        )
+        ON CONFLICT (organization_uuid, workspace_uuid, resource_type, oma_external_id) DO UPDATE SET
+            remote_id = EXCLUDED.remote_id,
+            parent_oma_external_id = EXCLUDED.parent_oma_external_id,
+            resource_role = EXCLUDED.resource_role,
+            state = EXCLUDED.state,
+            summary = EXCLUDED.summary,
+            updated_at = EXCLUDED.updated_at
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <insert id="InsertIfAbsent" result="returning" resultType="RuntimeResourceBinding">
+        INSERT INTO runtime_resource_bindings (
+            organization_uuid,
+            workspace_uuid,
+            runtime_profile_uuid,
+            provider_kind,
+            resource_type,
+            oma_external_id,
+            remote_id,
+            parent_oma_external_id,
+            resource_role,
+            state,
+            summary,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.RuntimeProfileUUID},
+            #{params.ProviderKind},
+            #{params.ResourceType},
+            #{params.OMAExternalID},
+            #{params.RemoteID},
+            #{params.ParentOMAExternalID},
+            #{params.ResourceRole},
+            #{params.State},
+            CAST(#{params.Summary} AS jsonb),
+            #{params.CreatedAt},
+            #{params.UpdatedAt}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByOMAID" resultType="RuntimeResourceBinding">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_resource_bindings
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND resource_type = #{resourceType}
+        AND oma_external_id = #{omaExternalID}
+        AND state != 'deleted'
+    </select>
+
+    <select id="FindByRemoteID" resultType="RuntimeResourceBinding">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_resource_bindings
+        WHERE runtime_profile_uuid = #{runtimeProfileUUID}
+        AND resource_type = #{resourceType}
+        AND remote_id = #{remoteID}
+        AND state != 'deleted'
+    </select>
+
+    <select id="ListByWorkspaceAndType" resultType="RuntimeResourceBinding">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_resource_bindings
+        <where>
+            organization_uuid = #{query.OrganizationUUID}
+            AND workspace_uuid = #{query.WorkspaceUUID}
+            AND resource_type = #{query.ResourceType}
+            <choose>
+                <when test="query.IncludeArchived">
+                    AND state IN ('active', 'archived')
+                </when>
+                <otherwise>
+                    AND state = 'active'
+                </otherwise>
+            </choose>
+            <if test="query.ParentOMAExternalID != ''">
+                AND parent_oma_external_id = #{query.ParentOMAExternalID}
+            </if>
+            <if test="query.ResourceRole != ''">
+                AND resource_role = #{query.ResourceRole}
+            </if>
+        </where>
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{query.Limit}
+        OFFSET #{query.Offset}
+    </select>
+
+    <select id="SearchByWorkspaceAndType" resultType="RuntimeResourceBinding">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_resource_bindings
+        <where>
+            organization_uuid = #{query.OrganizationUUID}
+            AND workspace_uuid = #{query.WorkspaceUUID}
+            AND resource_type = #{query.ResourceType}
+            <choose>
+                <when test="query.IncludeArchived">
+                    AND state IN ('active', 'archived')
+                </when>
+                <otherwise>
+                    AND state = 'active'
+                </otherwise>
+            </choose>
+            AND (
+                COALESCE(summary-&gt;&gt;'name', '') ILIKE #{query.Pattern} ESCAPE '\'
+                OR COALESCE(summary-&gt;&gt;'title', '') ILIKE #{query.Pattern} ESCAPE '\'
+                OR oma_external_id ILIKE #{query.Pattern} ESCAPE '\'
+            )
+        </where>
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{query.Limit}
+        OFFSET #{query.Offset}
+    </select>
+
+    <update id="UpdateSummaryAndState" result="returning" resultType="RuntimeResourceBinding">
+        UPDATE runtime_resource_bindings
+        SET summary = CAST(#{params.Summary} AS jsonb),
+            <if test="params.State != ''">
+                state = #{params.State},
+            </if>
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND resource_type = #{params.ResourceType}
+        AND oma_external_id = #{params.OMAExternalID}
+        AND state != 'deleted'
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="SoftDelete" result="rows">
+        UPDATE runtime_resource_bindings
+        SET state = 'deleted',
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND resource_type = #{resourceType}
+        AND oma_external_id = #{omaExternalID}
+        AND state != 'deleted'
+    </update>
+
+    <select id="LockAgentInTx" resultType="RuntimeResourceBinding">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_resource_bindings
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND resource_type = 'agent'
+        AND oma_external_id = #{omaExternalID}
+        AND state = 'active'
+        FOR UPDATE
+    </select>
+
+    <select id="AggregateExternalOverview" resultType="WorkspaceOverviewBucket">
+        SELECT to_char(s.created_at AT TIME ZONE #{query.Timezone}, 'YYYY-MM-DD') AS date,
+               COALESCE(NULLIF(s.summary-&gt;&gt;'agent_id', ''), s.parent_oma_external_id, '') AS agent_id,
+               COALESCE(NULLIF(s.summary-&gt;&gt;'agent_name', ''), NULLIF(s.summary-&gt;&gt;'agent_id', ''), s.parent_oma_external_id, '') AS agent_name,
+               COUNT(*) AS session_count,
+               COUNT(*) FILTER (WHERE s.summary-&gt;&gt;'failed' = 'true' OR s.summary-&gt;&gt;'status' IN ('failed', 'error')) AS failed_session_count,
+               MAX(s.created_at) AS last_run_at
+        FROM runtime_resource_bindings s
+        WHERE s.organization_uuid = #{query.OrganizationUUID}
+        AND s.workspace_uuid = #{query.WorkspaceUUID}
+        AND s.resource_type = 'session'
+        AND s.state != 'deleted'
+        AND s.created_at &gt;= #{query.Start} AND s.created_at &lt; #{query.End}
+        GROUP BY date, agent_id, agent_name
+        ORDER BY date, agent_id
+    </select>
+</mapper>

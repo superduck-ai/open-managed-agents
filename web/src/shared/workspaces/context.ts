@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { AuthAccount } from '../auth/api';
 import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from './api';
+import { resolveWorkspaceRuntime, type RuntimeCapabilities, type WorkspaceRuntimeSummary } from './runtime';
 
 export type WorkspaceContextValue = {
   canManageWorkspaces?: boolean;
@@ -37,6 +38,15 @@ export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null
 
 export function useWorkspace() {
   return useContext(WorkspaceContext) ?? fallbackWorkspaceContext;
+}
+
+export function useWorkspaceRuntime(): WorkspaceRuntimeSummary {
+  const { activeWorkspace } = useWorkspace();
+  return resolveWorkspaceRuntime(activeWorkspace.runtime);
+}
+
+export function useWorkspaceCapabilities(): RuntimeCapabilities {
+  return useWorkspaceRuntime().capabilities;
 }
 
 export function getPrimaryOrganizationUuid(account?: AuthAccount | null) {

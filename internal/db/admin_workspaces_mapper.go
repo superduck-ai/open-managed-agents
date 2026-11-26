@@ -9,17 +9,18 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminWorkspaceMapper -sql ./admin_workspaces_mapper.xml -out ./admin_workspaces_mapper.sqlmap.gen.go -dialect postgres
 
 type insertAdminWorkspaceParams struct {
-	UUID             string
-	ExternalID       string
-	OrganizationUUID string
-	Name             string
-	IsDefault        bool
-	CreatedAt        time.Time
-	CompartmentID    string
-	DisplayColor     string
-	DataResidency    json.RawMessage
-	ExternalKeyID    *string
-	Tags             json.RawMessage
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	Name               string
+	IsDefault          bool
+	CreatedAt          time.Time
+	CompartmentID      string
+	DisplayColor       string
+	DataResidency      json.RawMessage
+	ExternalKeyID      *string
+	Tags               json.RawMessage
+	RuntimeProfileUUID string
 }
 
 type updateAdminWorkspaceParams struct {

@@ -5,6 +5,7 @@ import { canManageMembers } from '../permissions/members';
 import { canViewAnalytics } from '../permissions/analytics';
 import { isActivePath } from './navigation-paths';
 import type { NavGroupItem } from './navigation';
+import type { RuntimeCapabilities } from '../workspaces/runtime';
 
 export const settingsGroups: (NavGroupItem & { id: string })[] = [
   {
@@ -32,6 +33,7 @@ export const settingsGroups: (NavGroupItem & { id: string })[] = [
         label: 'Observability',
         labelId: 'nav.observability',
         icon: productIcons.observability,
+        requiredCapability: 'observability_dashboard',
       },
       {
         href: '/settings/telemetry',
@@ -84,11 +86,19 @@ export function canAccessSettings(href: string, account: AuthAccount | null | un
   return true;
 }
 
-export function visibleSettingsGroups(account: AuthAccount | null | undefined, orgUuid?: string) {
+export function visibleSettingsGroups(
+  account: AuthAccount | null | undefined,
+  orgUuid?: string,
+  capabilities?: RuntimeCapabilities,
+) {
   return settingsGroups
     .map((group) => ({
       ...group,
-      children: group.children.filter((item) => canAccessSettings(item.href, account, orgUuid)),
+      children: group.children.filter(
+        (item) =>
+          canAccessSettings(item.href, account, orgUuid) &&
+          (!item.requiredCapability || !capabilities || Boolean(capabilities[item.requiredCapability])),
+      ),
     }))
     .filter((group) => group.children.length > 0);
 }

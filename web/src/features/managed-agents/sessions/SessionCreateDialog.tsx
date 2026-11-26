@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceCapabilities } from '../../../shared/workspaces/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -27,6 +28,17 @@ import type { AgentApiResponse, ManagedEntityFormValues, SessionApiResponse } fr
 import { errorMessage } from '../utils';
 import { sessionEditErrorMessage } from './sessionEdit';
 
+function shouldShowSessionBudget(mode: 'none' | 'usd' | 'credits', entity?: SessionApiResponse) {
+  return mode !== 'none' && (!entity || Boolean(entityBudgetUsdInput(entity)));
+}
+
+function sessionSubmitButtonText(submitting: boolean, editing: boolean, msg: (id: string, fallback: string) => string) {
+  if (submitting) {
+    return msg('common.saving', 'Saving...');
+  }
+  return editing ? msg('common.save', 'Save') : msg('managedAgents.sessions.createLabel', 'Create session');
+}
+
 export function SessionCreateDialog({
   title,
   workspaceId,
@@ -43,8 +55,10 @@ export function SessionCreateDialog({
   onSubmit: (values: ManagedEntityFormValues) => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const capabilities = useWorkspaceCapabilities();
   const [values, setValues] = useState<ManagedEntityFormValues>(() => ({
     ...initialFormValues('sessions', entity),
+    budgetMode: capabilities.session_budget,
     ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
   }));
   const editing = Boolean(entity);
@@ -176,29 +190,33 @@ export function SessionCreateDialog({
                   />
                 </>
               )}
-              <ManagedVaultSelectField
-                label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
-                optional
-                presentation="add"
-                readOnly={editing}
-                workspaceId={workspaceId}
-                selectedIds={values.vaultIds}
-                options={references.vaults}
-                manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/vaults`}
-                manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
-                acknowledged={acknowledged}
-                onAcknowledgedChange={editing ? undefined : setAcknowledged}
-                onChange={(vaultIds) => patch({ vaultIds })}
-              />
+              {capabilities.credential_vaults ? (
+                <ManagedVaultSelectField
+                  label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
+                  optional
+                  presentation="add"
+                  readOnly={editing}
+                  workspaceId={workspaceId}
+                  selectedIds={values.vaultIds}
+                  options={references.vaults}
+                  manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/vaults`}
+                  manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
+                  acknowledged={acknowledged}
+                  onAcknowledgedChange={editing ? undefined : setAcknowledged}
+                  onChange={(vaultIds) => patch({ vaultIds })}
+                />
+              ) : null}
               {!editing && (
                 <ManagedResourceFields
                   values={values}
                   onChange={setValues}
                   workspaceId={workspaceId}
-                  memoryStores={references.memoryStores}
+                  memoryStores={capabilities.memory_stores ? references.memoryStores : undefined}
                 />
               )}
-              {!entity || entityBudgetUsdInput(entity) ? <BudgetField values={values} onChange={patch} /> : null}
+              {shouldShowSessionBudget(capabilities.session_budget, entity) ? (
+                <BudgetField mode={capabilities.session_budget} values={values} onChange={patch} />
+              ) : null}
             </fieldset>
             {referenceError ? (
               <Alert variant="destructive">
@@ -219,11 +237,7 @@ export function SessionCreateDialog({
               {msg('common.cancel', 'Cancel')}
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {submitting
-                ? msg('common.saving', 'Saving...')
-                : entity
-                  ? msg('common.save', 'Save')
-                  : msg('managedAgents.sessions.createLabel', 'Create session')}
+              {sessionSubmitButtonText(submitting, editing, msg)}
             </Button>
           </DialogFooter>
         </form>

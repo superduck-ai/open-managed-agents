@@ -34,6 +34,7 @@ import {
   Webhook,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
+import type { BooleanRuntimeCapabilityKey, RuntimeCapabilities } from '../workspaces/runtime';
 
 export type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 
@@ -43,6 +44,7 @@ export type NavLinkItem = {
   label: string;
   labelId: string;
   icon?: IconComponent;
+  requiredCapability?: BooleanRuntimeCapabilityKey;
 };
 
 export type NavGroupItem = {
@@ -55,6 +57,7 @@ export type NavGroupItem = {
     label: string;
     labelId: string;
     icon?: IconComponent;
+    requiredCapability?: BooleanRuntimeCapabilityKey;
   }>;
 };
 
@@ -77,6 +80,7 @@ export const consoleNavigation: NavItem[] = [
     label: 'Deployments',
     labelId: 'nav.deployments',
     icon: navigationIcons.deployments,
+    requiredCapability: 'deployments',
   },
   {
     type: 'link',
@@ -91,6 +95,7 @@ export const consoleNavigation: NavItem[] = [
     label: 'Evaluation',
     labelId: 'nav.evaluations',
     icon: navigationIcons.evaluations,
+    requiredCapability: 'evaluations',
   },
   {
     type: 'group',
@@ -99,22 +104,87 @@ export const consoleNavigation: NavItem[] = [
     icon: navigationIcons.resources,
     children: [
       { href: '/files', label: 'Files', labelId: 'nav.files', icon: navigationIcons.files },
-      { href: '/skills', label: 'Skills', labelId: 'nav.skills', icon: navigationIcons.skills },
-      { href: '/channels', label: 'Channels', labelId: 'nav.channels', icon: navigationIcons.channels },
-      { href: '/identities', label: 'Identities', labelId: 'nav.identities', icon: navigationIcons.identities },
-      { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores', icon: navigationIcons.memory },
+      {
+        href: '/skills',
+        label: 'Skills',
+        labelId: 'nav.skills',
+        icon: navigationIcons.skills,
+        requiredCapability: 'skills',
+      },
+      {
+        href: '/channels',
+        label: 'Channels',
+        labelId: 'nav.channels',
+        icon: navigationIcons.channels,
+        requiredCapability: 'channels',
+      },
+      {
+        href: '/identities',
+        label: 'Identities',
+        labelId: 'nav.identities',
+        icon: navigationIcons.identities,
+        requiredCapability: 'channels',
+      },
+      {
+        href: '/memory-stores',
+        label: 'Memory stores',
+        labelId: 'nav.memoryStores',
+        icon: navigationIcons.memory,
+        requiredCapability: 'memory_stores',
+      },
       {
         href: '/credential-vaults',
         label: 'Credential vaults',
         labelId: 'nav.credentialVaults',
         icon: navigationIcons.vaults,
+        requiredCapability: 'credential_vaults',
       },
-      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers', icon: navigationIcons.mcp },
-      { href: '/mcp-tunnels', label: 'MCP tunnels', labelId: 'nav.mcpTunnels', icon: navigationIcons.tunnel },
-      { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks', icon: navigationIcons.webhooks },
+      {
+        href: '/mcp-servers',
+        label: 'MCP Servers',
+        labelId: 'nav.mcpServers',
+        icon: navigationIcons.mcp,
+        requiredCapability: 'mcp_servers',
+      },
+      {
+        href: '/mcp-tunnels',
+        label: 'MCP tunnels',
+        labelId: 'nav.mcpTunnels',
+        icon: navigationIcons.tunnel,
+        requiredCapability: 'mcp_tunnels',
+      },
+      {
+        href: '/webhooks',
+        label: 'Webhooks',
+        labelId: 'nav.webhooks',
+        icon: navigationIcons.webhooks,
+        requiredCapability: 'session_webhooks',
+      },
     ],
   },
 ];
+
+function supportsNavigationCapability(
+  requiredCapability: BooleanRuntimeCapabilityKey | undefined,
+  capabilities?: RuntimeCapabilities,
+) {
+  if (!requiredCapability || !capabilities) {
+    return true;
+  }
+  return Boolean(capabilities[requiredCapability]);
+}
+
+export function visibleConsoleNavigation(capabilities?: RuntimeCapabilities): NavItem[] {
+  return consoleNavigation.flatMap((item): NavItem[] => {
+    if (item.type === 'link') {
+      return supportsNavigationCapability(item.requiredCapability, capabilities) ? [item] : [];
+    }
+    const children = item.children.filter((child) =>
+      supportsNavigationCapability(child.requiredCapability, capabilities),
+    );
+    return children.length > 0 ? [{ ...item, children }] : [];
+  });
+}
 
 export function sortedResourceNavigation(items: NavGroupItem['children'], locale: string) {
   const order =

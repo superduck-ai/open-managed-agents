@@ -102,3 +102,7 @@ func environmentHeartbeatPreconditionFailed(cause error) error {
 func invalidEnvironmentListStatus() error {
 	return apperr.New(apperr.InvalidArgument, "status must be all, active or archived", nil)
 }
+
+func environmentRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Workspace runtime environments are unavailable", cause)
+}

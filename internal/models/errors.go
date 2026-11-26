@@ -37,3 +37,7 @@ func modelUnavailable(err error) error {
 		err,
 	)
 }
+
+func modelRuntimeUnavailable(err error) error {
+	return apperr.New(apperr.Unavailable, "Workspace runtime models are unavailable", err)
+}

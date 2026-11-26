@@ -606,6 +606,7 @@ export type ManagedEntityFormValues = {
   /** Budget cap in USD dollars as typed; empty string means no budget. */
   budgetUsd: string;
   originalBudgetUsd: string;
+  budgetMode?: 'none' | 'usd' | 'credits';
 };
 
 export type GitRepositoryResourceFormValue = {

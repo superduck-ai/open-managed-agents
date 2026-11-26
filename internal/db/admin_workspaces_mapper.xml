@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="AdminWorkspaceMapper">
-    <sql id="adminWorkspaceColumns">
+    <sql id="adminWorkspaceReturningColumns">
         uuid,
         external_id,
         organization_uuid,
@@ -13,7 +13,31 @@
         display_color,
         data_residency,
         external_key_id,
-        tags
+        tags,
+        runtime_profile_uuid,
+        COALESCE((SELECT rp.external_id FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_profile_external_id,
+        COALESCE((SELECT rp.name FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_profile_name,
+        COALESCE((SELECT rp.provider_kind FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_provider_kind
+    </sql>
+
+    <sql id="adminWorkspaceSelectColumns">
+        w.uuid,
+        w.external_id,
+        w.organization_uuid,
+        w.name,
+        w.is_default,
+        w.created_at,
+        w.updated_at,
+        w.archived_at,
+        w.compartment_id,
+        w.display_color,
+        w.data_residency,
+        w.external_key_id,
+        w.tags,
+        w.runtime_profile_uuid,
+        COALESCE(rp.external_id, '') AS runtime_profile_external_id,
+        COALESCE(rp.name, '') AS runtime_profile_name,
+        COALESCE(rp.provider_kind, '') AS runtime_provider_kind
     </sql>
 
     <insert id="Insert" result="returning" resultType="AdminWorkspace">
@@ -29,7 +53,8 @@
             display_color,
             data_residency,
             external_key_id,
-            tags
+            tags,
+            runtime_profile_uuid
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -42,21 +67,33 @@
             #{params.DisplayColor},
             CAST(#{params.DataResidency} AS jsonb),
             #{params.ExternalKeyID},
-            CAST(#{params.Tags} AS jsonb)
+            CAST(#{params.Tags} AS jsonb),
+            <choose>
+                <when test="params.RuntimeProfileUUID != ''">
+                    #{params.RuntimeProfileUUID}
+                </when>
+                <otherwise>
+                    COALESCE(
+                        (SELECT default_runtime_profile_uuid FROM organizations WHERE uuid = #{params.OrganizationUUID}),
+                        '00000000-0000-4000-8000-000000000001'
+                    )
+                </otherwise>
+            </choose>
         )
         RETURNING
-        <include refid="adminWorkspaceColumns"/>
+        <include refid="adminWorkspaceReturningColumns"/>
     </insert>
 
     <select id="FindByIdentifier" resultType="AdminWorkspace">
         SELECT
-        <include refid="adminWorkspaceColumns"/>
-        FROM workspaces
-        WHERE organization_uuid = #{organizationUUID}
+        <include refid="adminWorkspaceSelectColumns"/>
+        FROM workspaces w
+        LEFT JOIN runtime_profiles rp ON rp.uuid = w.runtime_profile_uuid
+        WHERE w.organization_uuid = #{organizationUUID}
         AND (
-            (#{externalID} = 'default' AND is_default) OR external_id = #{externalID}
+            (#{externalID} = 'default' AND w.is_default) OR w.external_id = #{externalID}
             <if test="workspaceUUID != ''">
-                OR uuid = #{workspaceUUID}
+                OR w.uuid = #{workspaceUUID}
             </if>
         )
     </select>
@@ -70,26 +107,27 @@
 
     <select id="ListPage" resultType="AdminWorkspace">
         SELECT
-        <include refid="adminWorkspaceColumns"/>
-        FROM workspaces
+        <include refid="adminWorkspaceSelectColumns"/>
+        FROM workspaces w
+        LEFT JOIN runtime_profiles rp ON rp.uuid = w.runtime_profile_uuid
         <where>
-            organization_uuid = #{organizationUUID}
-            AND NOT is_default
+            w.organization_uuid = #{organizationUUID}
+            AND NOT w.is_default
             <if test="!includeArchived">
-                AND archived_at IS NULL
+                AND w.archived_at IS NULL
             </if>
             <if test="anchor != nil">
                 <choose>
                     <when test="before">
-                        AND (created_at, uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                        AND (w.created_at, w.uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
                     </when>
                     <otherwise>
-                        AND (created_at, uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                        AND (w.created_at, w.uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
                     </otherwise>
                 </choose>
             </if>
         </where>
-        ORDER BY created_at DESC, uuid DESC
+        ORDER BY w.created_at DESC, w.uuid DESC
         LIMIT #{limit}
     </select>
 
@@ -103,7 +141,7 @@
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND external_id = #{params.ExternalID}
         RETURNING
-        <include refid="adminWorkspaceColumns"/>
+        <include refid="adminWorkspaceReturningColumns"/>
     </update>
 
     <update id="ArchiveByExternalID" result="returning" resultType="AdminWorkspace">
@@ -113,7 +151,7 @@
         WHERE organization_uuid = #{organizationUUID}
         AND external_id = #{externalID}
         RETURNING
-        <include refid="adminWorkspaceColumns"/>
+        <include refid="adminWorkspaceReturningColumns"/>
     </update>
 
     <select id="CountByExternalKeyID" result="scalar">

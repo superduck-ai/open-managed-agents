@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
@@ -240,6 +241,10 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	deltaTypes, err := requestedStreamDeltaTypes(r)
 	if err != nil {
 		h.errorAdapter.Write(w, r, invalidRequest(err))
+		return
+	}
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		h.streamEventsExternal(w, r, principal, sessionID, threadID, deltaTypes)
 		return
 	}
 	flusher, ok := w.(http.Flusher)

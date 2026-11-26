@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="ConsoleWorkspaceMapper">
-    <sql id="columns">
+    <sql id="returningColumns">
         uuid,
         external_id,
         organization_uuid AS org_uuid,
@@ -11,14 +11,38 @@
         data_residency,
         external_key_id,
         tags,
+        runtime_profile_uuid,
+        COALESCE((SELECT rp.external_id FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_profile_external_id,
+        COALESCE((SELECT rp.name FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_profile_name,
+        COALESCE((SELECT rp.provider_kind FROM runtime_profiles rp WHERE rp.uuid = workspaces.runtime_profile_uuid), '') AS runtime_provider_kind,
         archived_at,
         created_at,
         updated_at
     </sql>
 
+    <sql id="selectColumns">
+        w.uuid,
+        w.external_id,
+        w.organization_uuid AS org_uuid,
+        w.name,
+        w.is_default,
+        w.display_color AS display_color,
+        w.display_color AS color,
+        w.data_residency,
+        w.external_key_id,
+        w.tags,
+        w.runtime_profile_uuid,
+        COALESCE(rp.external_id, '') AS runtime_profile_external_id,
+        COALESCE(rp.name, '') AS runtime_profile_name,
+        COALESCE(rp.provider_kind, '') AS runtime_provider_kind,
+        w.archived_at,
+        w.created_at,
+        w.updated_at
+    </sql>
+
     <insert id="Insert" result="returning" resultType="consoleWorkspaceRow">
         WITH org AS (
-            SELECT uuid
+            SELECT uuid, default_runtime_profile_uuid
             FROM organizations
             WHERE uuid = #{params.OrgUUID}
             LIMIT 1
@@ -31,7 +55,8 @@
             compartment_id,
             display_color,
             data_residency,
-            tags
+            tags,
+            runtime_profile_uuid
         )
         SELECT
             #{params.UUID},
@@ -41,21 +66,30 @@
             #{params.ExternalID},
             #{params.DisplayColor},
             CAST(#{params.DataResidency} AS jsonb),
-            CAST('{}' AS jsonb)
+            CAST('{}' AS jsonb),
+            <choose>
+                <when test="params.RuntimeProfileUUID != ''">
+                    #{params.RuntimeProfileUUID}
+                </when>
+                <otherwise>
+                    org.default_runtime_profile_uuid
+                </otherwise>
+            </choose>
         FROM org
         RETURNING
-        <include refid="columns"/>
+        <include refid="returningColumns"/>
     </insert>
 
     <select id="List" resultType="consoleWorkspaceRow">
         SELECT
-        <include refid="columns"/>
-        FROM workspaces
-        WHERE organization_uuid = #{orgUUID}
+        <include refid="selectColumns"/>
+        FROM workspaces w
+        LEFT JOIN runtime_profiles rp ON rp.uuid = w.runtime_profile_uuid
+        WHERE w.organization_uuid = #{orgUUID}
         <if test="!includeArchived">
-            AND archived_at IS NULL
+            AND w.archived_at IS NULL
         </if>
-        ORDER BY name ASC, uuid ASC
+        ORDER BY w.name ASC, w.uuid ASC
     </select>
 
     <update id="UpdateByIdentifier" result="returning" resultType="consoleWorkspaceRow">
@@ -67,7 +101,7 @@
         AND external_id = #{params.ExternalID}
         AND NOT is_default
         RETURNING
-        <include refid="columns"/>
+        <include refid="returningColumns"/>
     </update>
 
     <update id="ArchiveByIdentifier" result="returning" resultType="consoleWorkspaceRow">
@@ -78,6 +112,6 @@
         AND external_id = #{externalID}
         AND NOT is_default
         RETURNING
-        <include refid="columns"/>
+        <include refid="returningColumns"/>
     </update>
 </mapper>

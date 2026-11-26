@@ -32,6 +32,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.createExternal(w, r, principal)
+	}
 	body, err := httpapi.DecodeObjectBodyAs[sessionCreateRequest](w, r, maxSessionCreateBodySize)
 	if err != nil {
 		return invalidSessionCreateBody(err)
@@ -236,6 +239,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
+	}
 	limit, err := httpapi.ParseLimit(r, 1000)
 	if err != nil {
 		return invalidRequest(err)
@@ -314,6 +320,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, sessionID)
+	}
 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
@@ -333,7 +342,13 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
+	if isExternalRuntime(principal) {
+		return h.updateExternal(w, r, principal, sessionID)
+	}
+	return h.updateNative(w, r, principal, sessionID)
+}
 
+func (h *Handler) updateNative(w http.ResponseWriter, r *http.Request, principal auth.Principal, sessionID string) error {
 	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		return invalidRequest(err)
@@ -510,6 +525,9 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
+	if isExternalRuntime(principal) {
+		return h.archiveExternal(w, r, principal, sessionID)
+	}
 	archived, err := h.archiveSession(r.Context(), principal, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
@@ -542,6 +560,9 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
+	if isExternalRuntime(principal) {
+		return h.deleteExternal(w, r, principal, sessionID)
+	}
 	primary, found, err := h.db.GetPrimarySessionThread(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
@@ -589,6 +610,9 @@ func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) error 
 func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.listEventsExternal(w, r, principal, sessionID, threadID)
+	}
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
 	if err != nil {
 		return err
@@ -628,6 +652,9 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 }
 
 func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) error {
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.listEventsExternal(w, r, principal, sessionID, threadID)
+	}
 	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
 		return err
 	}
@@ -715,6 +742,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err := json.Unmarshal(body.Events, &inputs); err != nil || len(inputs) == 0 {
 		return invalidRequest(errors.New("events must be a non-empty array"))
 	}
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.sendEventsExternal(w, r, principal, sessionID, body.Events, inputs)
+	}
 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsSend)
 	if err != nil {
@@ -793,6 +823,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 
 func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.addResourceExternal(w, r, principal, sessionID)
+	}
 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
 	if err != nil {
@@ -846,6 +879,9 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 
 func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.listResourcesExternal(w, r, principal, sessionID)
+	}
 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
@@ -863,6 +899,9 @@ func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) err
 func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.retrieveResourceExternal(w, r, principal, sessionID, resourceID)
+	}
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
 		return err
@@ -879,6 +918,9 @@ func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.updateResourceExternal(w, r, principal, sessionID, resourceID)
+	}
 	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
 	if err != nil {
 		return err
@@ -918,6 +960,9 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.deleteResourceExternal(w, r, principal, sessionID, resourceID)
+	}
 	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
 	if err != nil {
 		return err
@@ -945,6 +990,9 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 
 func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.listThreadsExternal(w, r, principal, sessionID)
+	}
 
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
@@ -978,6 +1026,9 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok && isExternalRuntime(principal) {
+		return h.retrieveThreadExternal(w, r, principal, sessionID, threadID)
+	}
 	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
 	if err != nil {
 		return err
@@ -999,6 +1050,9 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	principal, err := requireSessionManager(r)
 	if err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return externalThreadArchiveUnsupported()
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")

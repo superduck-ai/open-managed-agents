@@ -40,7 +40,15 @@ func (s *Server) registerPlatformAdminRoutes(router chi.Router) {
 		return session, nil
 	}
 	oauthProviders := platformadmin.NewOAuthProviderService(s.db, s.vaultSecrets, s.logger.With("component", "platform_oauth_providers")).WithEnvironment(s.cfg.Env)
+	runtimeProfiles := platformadmin.NewRuntimeProfileService(
+		s.db,
+		s.runtimeRegistry,
+		s.vaultSecrets,
+		s.runtimeResolver,
+		s.logger.With("component", "platform_runtime_profiles"),
+	).WithEnvironment(s.cfg.Env)
 	router.Mount("/api/platform-admin", platformadmin.NewHandler(service, loader, s.platformAuth.VerifiedLoginEnabled()).
 		WithOAuthProviders(oauthProviders).
+		WithRuntimeProfiles(runtimeProfiles).
 		Routes(s.skills.AdminRoutes()))
 }

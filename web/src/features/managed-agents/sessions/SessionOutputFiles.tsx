@@ -1,7 +1,19 @@
-import { ChevronDown, Download, Eye, FileCode2, FileText, Globe, Image, LoaderCircle, Table2 } from 'lucide-react';
+import {
+  ChevronDown,
+  Download,
+  Eye,
+  FileCode2,
+  FileText,
+  Globe,
+  Image,
+  Info,
+  LoaderCircle,
+  Table2,
+} from 'lucide-react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Card } from '../../../shared/ui/card';
+import type { RuntimeArtifactDiscoveryMode } from '../../../shared/workspaces/runtime';
 import { type ReactNode, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { SessionFileContext, useSessionFiles } from './SessionFileContext';
@@ -18,6 +30,8 @@ type SessionOutputFilesProps = {
   session: SessionApiResponse;
   workspaceId: string;
   refreshKey: number;
+  artifactDiscovery?: RuntimeArtifactDiscoveryMode;
+  hasEvents?: boolean;
   children: ReactNode;
 };
 
@@ -30,19 +44,29 @@ export function SessionOutputFiles({
   return <SessionOutputFilesContent {...props} />;
 }
 
-function SessionOutputFilesContent({ session, workspaceId, refreshKey, children }: SessionOutputFilesProps) {
+function SessionOutputFilesContent({
+  session,
+  workspaceId,
+  refreshKey,
+  artifactDiscovery = 'filesystem_outputs_dir',
+  hasEvents = false,
+  children,
+}: SessionOutputFilesProps) {
   const { msg } = useI18n();
   const { files, error, refresh } = useSessionOutputFiles(session, workspaceId, refreshKey);
   const [previewId, setPreviewId] = useState<string>();
   const outputFiles = sessionOutputFilePaths(files, session.resources);
   const previewFile = outputFiles.find((file) => file.id === previewId);
   const previewKind = previewFile && sessionFilePreviewKind(previewFile);
+  const running = sessionStatusIsLive(session.status) && !session.archived_at;
+  const showExplicitDeliverHint =
+    artifactDiscovery === 'explicit_deliver_tool' && hasEvents && !running && !error && outputFiles.length === 0;
   return (
     <SessionFileContext.Provider
       value={{
         files: outputFiles,
         workspaceId,
-        running: sessionStatusIsLive(session.status) && !session.archived_at,
+        running,
         openPreview: setPreviewId,
       }}
     >
@@ -56,6 +80,20 @@ function SessionOutputFilesContent({ session, workspaceId, refreshKey, children 
         </div>
       ) : null}
       {children}
+      {showExplicitDeliverHint ? (
+        <div
+          data-testid="session-deliver-artifacts-hint"
+          className="mt-3 flex items-start gap-2 rounded-lg border-[0.5px] border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        >
+          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            {msg(
+              'managedAgents.sessions.outputs.explicitDeliverHint',
+              'No delivered artifacts yet. This runtime exports downloadable output files when the agent calls the DeliverArtifacts tool.',
+            )}
+          </span>
+        </div>
+      ) : null}
       {previewFile && previewKind ? (
         <SessionFilePreview
           key={previewFile.id}

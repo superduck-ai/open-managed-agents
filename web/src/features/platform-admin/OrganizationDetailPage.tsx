@@ -4,16 +4,40 @@ import { useState } from 'react';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
+import { formatRuntimeProviderKind, isNativeRuntimeProvider } from '../../shared/workspaces/runtime';
 import { DirectoryTable } from './DirectoryTable';
 import { OrganizationProfileForm } from './OrganizationProfileForm';
 import { OrganizationMembers } from './OrganizationMembers';
 import { OrganizationInvitations } from './OrganizationInvitations';
+import { OrganizationRuntimePolicySection } from './runtimes/OrganizationRuntimePolicySection';
 import { usePlatformAdmin } from './context';
 import type { Organization } from './types';
 import { organizationSection, type OrganizationSection } from './organizationNavigation';
 
-type Workspace = { uuid: string; id: string; name: string; is_default: boolean; archived: boolean };
+type Workspace = {
+  uuid: string;
+  id: string;
+  name: string;
+  is_default: boolean;
+  archived: boolean;
+  runtime_profile_name?: string;
+  runtime_provider_kind?: string;
+  runtime?: {
+    profile_name?: string;
+    provider_kind?: string;
+  };
+};
+
+function workspaceRuntimeDisplay(workspace: Workspace) {
+  const providerKind = workspace.runtime?.provider_kind ?? workspace.runtime_provider_kind;
+  const profileName = workspace.runtime?.profile_name ?? workspace.runtime_profile_name;
+  return {
+    native: isNativeRuntimeProvider(providerKind),
+    label: profileName || formatRuntimeProviderKind(providerKind),
+  };
+}
 
 export function OrganizationDetailPage() {
   const { organizationUuid } = useParams({ from: '/platform-admin/organizations/$organizationUuid' });
@@ -28,6 +52,14 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
   const workspaceColumns: ColumnDef<Workspace>[] = [
     { accessorKey: 'name', header: msg('platformAdmin.workspaces', 'Workspaces') },
     { accessorKey: 'id', header: msg('platformAdmin.workspaceID', 'Workspace ID') },
+    {
+      id: 'runtime',
+      header: msg('platformAdmin.runtimeProfiles.runtime', 'Runtime'),
+      cell: ({ row }) => {
+        const runtime = workspaceRuntimeDisplay(row.original);
+        return <Badge variant={runtime.native ? 'secondary' : 'outline'}>{runtime.label}</Badge>;
+      },
+    },
     {
       id: 'status',
       header: msg('platformAdmin.status', 'Status'),
@@ -149,6 +181,7 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
           }}
         />
       )}
+      {view === 'runtime' && <OrganizationRuntimePolicySection organizationUuid={organizationUuid} />}
     </section>
   );
 }

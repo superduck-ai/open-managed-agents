@@ -3,7 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { AuthAccount } from '../../shared/auth/api';
 import { AuthContext } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { useWorkspace } from '../../shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities } from '../../shared/workspaces/context';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../shared/ui/accordion';
 import {
@@ -94,9 +94,10 @@ export function SettingsNavigation({
 }) {
   const { msg } = useI18n();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const capabilities = useWorkspaceCapabilities();
   const { state, isMobile } = useSidebar();
   const compact = state === 'collapsed' && !isMobile;
-  const groups = visibleSettingsGroups(account, orgUuid);
+  const groups = visibleSettingsGroups(account, orgUuid, capabilities);
   const selected = settingsItem(currentPath);
   const selectedGroupId = selected?.group.id;
   const [expanded, setExpanded] = useState<string[]>([selectedGroupId || 'access']);

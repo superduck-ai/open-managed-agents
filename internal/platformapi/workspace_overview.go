@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -15,6 +16,14 @@ type workspaceOverviewStore interface {
 	consoleWorkspaceLister
 	AggregateWorkspaceOverview(context.Context, db.WorkspaceOverviewQuery) ([]db.WorkspaceOverviewBucket, error)
 	CountWorkspaceOverviewAgents(context.Context, string, string) (int64, error)
+}
+
+type externalWorkspaceOverviewStore interface {
+	AggregateExternalWorkspaceOverview(context.Context, db.WorkspaceOverviewQuery) ([]db.WorkspaceOverviewBucket, error)
+}
+
+type externalWorkspaceAgentLister interface {
+	ListRuntimeResourceBindingsByWorkspaceAndType(context.Context, db.ListRuntimeResourceBindingsParams) ([]db.RuntimeResourceBinding, error)
 }
 
 type overviewAgent struct {
@@ -53,7 +62,7 @@ func handleWorkspaceOverview(store workspaceOverviewStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		scope, ok := consoleWorkspaceScopeFromRequest(w, r, store, org)
+		workspace, scope, ok := consoleWorkspaceFromRequest(w, r, store, org)
 		if !ok {
 			return
 		}
@@ -62,20 +71,94 @@ func handleWorkspaceOverview(store workspaceOverviewStore) http.HandlerFunc {
 			return
 		}
 		query.OrganizationUUID, query.WorkspaceUUID = org, scope.UUID
-		rows, err := store.AggregateWorkspaceOverview(r.Context(), query)
+		rows, count, err := loadWorkspaceOverviewData(r.Context(), store, workspace, query)
 		if err != nil {
 			internalError(w, "failed to load overview")
 			return
 		}
-		count, err := store.CountWorkspaceOverviewAgents(r.Context(), org, scope.UUID)
-		if err != nil {
-			internalError(w, "failed to count agents")
-			return
-		}
 		report := buildWorkspaceOverview(query, rows)
-		report.AgentCount = count
+		if count < 0 {
+			report.AgentCount = int64(report.ActiveAgentCount)
+		} else {
+			report.AgentCount = count
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+func loadWorkspaceOverviewData(
+	ctx context.Context,
+	store workspaceOverviewStore,
+	workspace ConsoleWorkspace,
+	query db.WorkspaceOverviewQuery,
+) ([]db.WorkspaceOverviewBucket, int64, error) {
+	if isExternalWorkspaceRuntime(workspace.RuntimeProviderKind) {
+		return loadExternalWorkspaceOverviewData(ctx, store, query)
+	}
+	rows, err := store.AggregateWorkspaceOverview(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	count, err := store.CountWorkspaceOverviewAgents(ctx, query.OrganizationUUID, query.WorkspaceUUID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, count, nil
+}
+
+func isExternalWorkspaceRuntime(providerKind string) bool {
+	return providerKind != "" && providerKind != agentruntime.ProviderOMANative.String()
+}
+
+func loadExternalWorkspaceOverviewData(
+	ctx context.Context,
+	store workspaceOverviewStore,
+	query db.WorkspaceOverviewQuery,
+) ([]db.WorkspaceOverviewBucket, int64, error) {
+	externalStore, ok := store.(externalWorkspaceOverviewStore)
+	if !ok {
+		return []db.WorkspaceOverviewBucket{}, 0, nil
+	}
+	rows, err := externalStore.AggregateExternalWorkspaceOverview(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	agentLister, ok := store.(externalWorkspaceAgentLister)
+	if !ok {
+		return rows, -1, nil
+	}
+	count, err := countExternalOverviewAgents(ctx, agentLister, query.OrganizationUUID, query.WorkspaceUUID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, count, nil
+}
+
+func countExternalOverviewAgents(
+	ctx context.Context,
+	store externalWorkspaceAgentLister,
+	organizationUUID string,
+	workspaceUUID string,
+) (int64, error) {
+	const pageSize = 500
+	var total int64
+	for offset := 0; ; offset += pageSize {
+		rows, err := store.ListRuntimeResourceBindingsByWorkspaceAndType(ctx, db.ListRuntimeResourceBindingsParams{
+			OrganizationUUID: organizationUUID,
+			WorkspaceUUID:    workspaceUUID,
+			ResourceType:     string(agentruntime.ResourceTypeAgent),
+			IncludeArchived:  false,
+			Limit:            pageSize,
+			Offset:           offset,
+		})
+		if err != nil {
+			return 0, err
+		}
+		total += int64(len(rows))
+		if len(rows) < pageSize {
+			return total, nil
+		}
 	}
 }
 

@@ -383,3 +383,114 @@ test('keeps history ahead of a live final while a later page is pending and remo
     ),
   ).toEqual(['event_start', 'event_delta', 'agent.message']);
 });
+
+test('deduplicates buffered stream events against paginated history and keeps SSE open on requires_action', async () => {
+  const queryClient = new QueryClient();
+  const controller = new AbortController();
+  const calls: string[] = [];
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const frame = (event: object) => `data: ${JSON.stringify(event)}\n\n`;
+  let streamOpenCount = 0;
+
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes('/stream?')) {
+      streamOpenCount += 1;
+      calls.push('stream');
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(current) {
+            streamController = current;
+            current.enqueue(new TextEncoder().encode(': connected\n\n'));
+            init?.signal?.addEventListener('abort', () => current.close(), { once: true });
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
+    const page = new URL(url, 'https://oma.duck.ai').searchParams.get('page');
+    calls.push(`list:${page ?? ''}`);
+    if (!page) {
+      streamController?.enqueue(
+        new TextEncoder().encode(
+          [
+            frame({
+              id: 'sevt_2',
+              type: 'agent.tool_use',
+              name: 'Bash',
+              processed_at: '2026-11-25T10:00:01Z',
+            }),
+            frame({
+              id: 'sevt_3',
+              type: 'session.status_idle',
+              stop_reason: { type: 'requires_action', event_ids: ['sevt_2'] },
+              processed_at: '2026-11-25T10:00:02Z',
+            }),
+          ].join(''),
+        ),
+      );
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 'sevt_1', type: 'user.message', processed_at: '2026-11-25T10:00:00Z' }],
+          next_page: 'page2',
+        }),
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        data: [
+          {
+            id: 'sevt_2',
+            type: 'agent.tool_use',
+            name: 'Bash',
+            processed_at: '2026-11-25T10:00:01Z',
+          },
+        ],
+        next_page: null,
+      }),
+    );
+  };
+
+  const loop = runSessionEventStreamLoop({
+    queryClient,
+    sessionId: 'sesn_qoder',
+    workspaceId: 'workspace_qoder',
+    threadId: '',
+    signal: controller.signal,
+    onCacheChange: () => {
+      const ids = sessionDetailScopeEvents(queryClient, 'workspace_qoder', 'sesn_qoder', ['']).map((event) => event.id);
+      if (ids.includes('sevt_5')) {
+        controller.abort();
+      }
+    },
+    onHistorySynced: () => {
+      streamController?.enqueue(
+        new TextEncoder().encode(
+          [
+            frame({
+              id: 'sevt_4',
+              type: 'user.tool_confirmation',
+              tool_use_id: 'sevt_2',
+              result: 'allow',
+              processed_at: '2026-11-25T10:00:03Z',
+            }),
+            frame({
+              id: 'sevt_5',
+              type: 'agent.message',
+              content: [{ type: 'text', text: 'Done after approval' }],
+              processed_at: '2026-11-25T10:00:04Z',
+            }),
+          ].join(''),
+        ),
+      );
+    },
+  });
+
+  await loop;
+
+  expect(streamOpenCount).toBe(1);
+  expect(calls).toEqual(['stream', 'list:', 'list:page2']);
+  expect(sessionDetailScopeEvents(queryClient, 'workspace_qoder', 'sesn_qoder', ['']).map((event) => event.id)).toEqual(
+    ['sevt_1', 'sevt_2', 'sevt_3', 'sevt_4', 'sevt_5'],
+  );
+});

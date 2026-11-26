@@ -14,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -30,11 +31,12 @@ import (
 const maxEnvironmentBodySize = 4 << 20
 
 type Handler struct {
-	prebuilds *Prebuilds
-	cfg       config.Config
-	db        *db.DB
-	webhooks  webhookEnqueuer
-	router    chi.Router
+	prebuilds       *Prebuilds
+	cfg             config.Config
+	db              *db.DB
+	webhooks        webhookEnqueuer
+	runtimeResolver *agentruntime.Resolver
+	router          chi.Router
 }
 
 type environmentResponse struct {
@@ -149,6 +151,11 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 	return h
 }
 
+func (h *Handler) WithRuntimeResolver(resolver *agentruntime.Resolver) *Handler {
+	h.runtimeResolver = resolver
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
@@ -161,6 +168,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	principal, err := requireWorkspaceCredential(r)
 	if err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.createExternal(w, r, principal)
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
@@ -226,6 +236,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
+	}
 	limit, err := parseLimit(r)
 	if err != nil {
 		return invalidRequest(err)
@@ -283,6 +296,9 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 	if authErr != nil {
 		return authErr
 	}
+	if isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, environmentID)
+	}
 	record, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -302,6 +318,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 	principal, authErr := requireWorkspaceCredential(r)
 	if authErr != nil {
 		return authErr
+	}
+	if isExternalRuntime(principal) {
+		return h.updateExternal(w, r, principal, environmentID)
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
@@ -337,6 +356,9 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 	if authErr != nil {
 		return authErr
 	}
+	if isExternalRuntime(principal) {
+		return h.archiveExternal(w, r, principal, environmentID)
+	}
 	record, changed, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -357,6 +379,9 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	environmentID := chi.URLParam(r, "environment_id")
+	if isExternalRuntime(principal) {
+		return h.deleteExternal(w, r, principal, environmentID)
+	}
 
 	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceUUID, environmentID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {

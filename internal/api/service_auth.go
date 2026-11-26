@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
@@ -34,7 +35,21 @@ func (s *Server) authenticateService(r *http.Request) (auth.Principal, *httpapi.
 	if err != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
+	applyWorkspaceRuntime(&principal, workspace)
 	return principal, nil
+}
+
+func applyWorkspaceRuntime(principal *auth.Principal, workspace db.AdminWorkspace) {
+	provider := workspace.RuntimeProviderKind
+	if provider == "" {
+		provider = agentruntime.ProviderOMANative.String()
+	}
+	profileUUID := workspace.RuntimeProfileUUID
+	if profileUUID == "" {
+		profileUUID = db.DefaultOMANativeRuntimeProfileUUID
+	}
+	principal.RuntimeProvider = provider
+	principal.RuntimeProfileUUID = profileUUID
 }
 
 type filestoreProtocolError struct {

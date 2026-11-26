@@ -24,19 +24,12 @@ func (w *channelWorker) receiveNewSessionMenu(ctx context.Context, eventID, acto
 	if chatID != "" {
 		return w.receiveChannelMessage(ctx, msg)
 	}
-	allowed, err := w.authorize(ctx, msg)
-	if err != nil || !allowed {
-		return err
-	}
-	return w.replyText(ctx, msg, "发送一条消息即可开始新会话。")
+	return w.receiveChannelInput(ctx, msg, "user:"+actorID)
 }
 
 func (w *channelWorker) receiveChannelMessage(ctx context.Context, msg *channelMessage) error {
 	if msg.MessageID == "" || msg.ChatID == "" || msg.UserID == "" {
 		return errors.New("渠道消息缺少消息、聊天或操作者标识")
-	}
-	if len(msg.MessageIDs) == 0 {
-		msg.MessageIDs = []string{msg.MessageID}
 	}
 	scopeKey, err := w.messageScopeKey(ctx, msg)
 	if err != nil {
@@ -45,6 +38,13 @@ func (w *channelWorker) receiveChannelMessage(ctx context.Context, msg *channelM
 	allowed, err := w.authorize(ctx, msg)
 	if err != nil || !allowed {
 		return err
+	}
+	return w.receiveChannelInput(ctx, msg, scopeKey)
+}
+
+func (w *channelWorker) receiveChannelInput(ctx context.Context, msg *channelMessage, scopeKey string) error {
+	if len(msg.MessageIDs) == 0 {
+		msg.MessageIDs = []string{msg.MessageID}
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -68,7 +68,7 @@ func (w *channelWorker) claimAndDispatchInput(ctx context.Context, inputUUID str
 	}
 	msg.Input = &row
 	if row.State == "buffering" {
-		if msg.ChatType == "p2p" && msg.PairingID == "" && parseChannelMounts(w.record.Mounts).PairingProvider != "" {
+		if msg.ChatID != "" && msg.ChatType == "p2p" && msg.PairingID == "" && parseChannelMounts(w.record.Mounts).PairingProvider != "" {
 			held, err := w.supervisor.pairingPrompt(ctx, w, &msg)
 			if err != nil || held {
 				return err

@@ -135,6 +135,7 @@ type fakeChannel struct {
 	appends        []string
 	downloads      map[string][]byte
 	startErr       error
+	sendErr        error
 	updateFailures int
 	updateAttempts int
 	streams        []*channeltypes.SendInput
@@ -143,6 +144,9 @@ type fakeChannel struct {
 func (f *fakeChannel) Send(_ context.Context, input *channeltypes.SendInput) (*channeltypes.SendResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return nil, f.sendErr
+	}
 	if input.Card == "" {
 		f.sends = append(f.sends, input.Text+input.Markdown)
 	}

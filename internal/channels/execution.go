@@ -11,7 +11,7 @@ import (
 )
 
 func (w *channelWorker) handleMessage(ctx context.Context, msg *channelMessage, scopeKey string) error {
-	if msg == nil || msg.UserID == "" || msg.ChatID == "" || !w.active(ctx) {
+	if msg == nil || msg.UserID == "" || !w.active(ctx) {
 		return nil
 	}
 	text := msg.Content
@@ -28,6 +28,13 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channelMessage, 
 		}
 		w.releaseInput(ctx, msg)
 		return err
+	}
+	if msg.ChatID == "" {
+		defer w.releaseInput(ctx, msg)
+		if err := w.replyText(ctx, msg, "发送一条消息即可开始新会话。"); err != nil {
+			return err
+		}
+		return w.completeInput(ctx, msg)
 	}
 	ticket := w.enqueueScope(scopeKey)
 	parts := strings.Fields(text)

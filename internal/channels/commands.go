@@ -160,7 +160,8 @@ func (w *channelWorker) compatibleSession(session omaSession, scopeKey, legacySc
 
 func (w *channelWorker) sessionMatchesChannel(session omaSession, scopeKey, legacyScope string) bool {
 	chatID, isChat := strings.CutPrefix(scopeKey, "chat:")
-	legacyDirect := isChat && session.Metadata["chat_type"] == "p2p" && strings.HasPrefix(session.Metadata["scope_id"], "thread:"+chatID+":")
+	legacyDirect := isChat && session.Metadata["chat_type"] == "p2p" && session.Metadata["chat_id"] == "" &&
+		strings.HasPrefix(session.Metadata["scope_id"], "thread:"+chatID+":")
 	return session.ID != "" && session.Status == "idle" && session.ArchivedAt == nil &&
 		session.Metadata["source"] == w.record.ChannelType && session.Metadata["channel_id"] == w.record.ExternalID &&
 		session.Metadata["app_id"] == w.record.AppID &&

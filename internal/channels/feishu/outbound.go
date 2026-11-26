@@ -36,18 +36,20 @@ func (w *Adapter) ResumeReply(receipt string) contracts.ReplyStream {
 func (s *ReplyStream) Close(context.Context) error { return nil }
 func (w *Adapter) OpenReply(ctx context.Context, msg *contracts.Message, initial ...contracts.Reply) (contracts.ReplyStream, error) {
 	card := Card("", w.Config.IncludeThinking)
+	var deliveryKey string
 	if len(initial) > 0 {
 		card = Render(initial[0])
+		deliveryKey = initial[0].DeliveryKey
 	}
 	var messageID string
-	if msg.ChatType == "group" && w.Config.ReplyInThread && msg.MessageID != "" {
-		id, err := w.replyMessage(ctx, msg.MessageID, "interactive", card)
+	if target := w.threadReplyTarget(msg); target != "" {
+		id, err := w.replyMessage(ctx, target, "interactive", card, deliveryKey)
 		if err != nil {
 			return nil, err
 		}
 		messageID = id
-	} else if len(initial) > 0 && initial[0].DeliveryKey != "" {
-		body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType("interactive").Content(card).Uuid(initial[0].DeliveryKey).Build()
+	} else if deliveryKey != "" {
+		body := larkim.NewCreateMessageReqBodyBuilder().ReceiveId(msg.ChatID).MsgType("interactive").Content(card).Uuid(deliveryKey).Build()
 		sent, err := w.Client.Im.V1.Message.Create(ctx, larkim.NewCreateMessageReqBuilder().ReceiveIdType("chat_id").Body(body).Build())
 		if err != nil {
 			return nil, err
@@ -69,10 +71,21 @@ func (w *Adapter) OpenReply(ctx context.Context, msg *contracts.Message, initial
 	return &ReplyStream{Client: w.Client, messageID: messageID}, nil
 }
 
-func (w *Adapter) replyMessage(ctx context.Context, messageID, msgType, content string) (string, error) {
+func (w *Adapter) threadReplyTarget(msg *contracts.Message) string {
+	if msg.ChatType == "group" && w.Config.ReplyInThread {
+		return msg.MessageID
+	}
+	return msg.ThreadReplyTo
+}
+
+func (w *Adapter) replyMessage(ctx context.Context, messageID, msgType, content, deliveryKey string) (string, error) {
+	body := larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(content).ReplyInThread(true)
+	if deliveryKey != "" {
+		body.Uuid(deliveryKey)
+	}
 	request := larkim.NewReplyMessageReqBuilder().
 		MessageId(messageID).
-		Body(larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(content).ReplyInThread(true).Build()).
+		Body(body.Build()).
 		Build()
 	response, err := w.Client.Im.V1.Message.Reply(ctx, request)
 	if err != nil {
@@ -88,12 +101,12 @@ func (w *Adapter) replyMessage(ctx context.Context, messageID, msgType, content 
 }
 
 func (w *Adapter) ReplyText(ctx context.Context, msg *contracts.Message, text string) error {
-	if msg.ChatType == "group" && w.Config.ReplyInThread && msg.MessageID != "" {
+	if target := w.threadReplyTarget(msg); target != "" {
 		content, err := json.Marshal(map[string]string{"text": text})
 		if err != nil {
 			return err
 		}
-		_, err = w.replyMessage(ctx, msg.MessageID, "text", string(content))
+		_, err = w.replyMessage(ctx, target, "text", string(content), "")
 		return err
 	}
 	_, err := w.Channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text})

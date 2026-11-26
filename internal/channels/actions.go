@@ -135,7 +135,11 @@ func (w *channelWorker) handleAction(ctx context.Context, event *contracts.Actio
 	case "answer", "cancel_question":
 		err := w.answerQuestion(ctx, apiKey, value, event.FormValue, events)
 		if public, ok := errors.AsType[*apperr.Error](err); ok {
-			return w.replyText(ctx, &channelMessage{ChatID: receipt.ChatID, ChatType: receipt.ChatType, MessageID: receipt.ReplyMessageID}, public.PublicMessage)
+			msg := &channelMessage{ChatID: receipt.ChatID, ChatType: receipt.ChatType, MessageID: receipt.ReplyMessageID}
+			if isDirectTopicScope(receipt.ChatType, receipt.ScopeKey) {
+				msg.ThreadReplyTo = receipt.ReplyMessageID
+			}
+			return w.replyText(ctx, msg, public.PublicMessage)
 		}
 		if err == nil {
 			w.resumeReplyDelivery(receipt)

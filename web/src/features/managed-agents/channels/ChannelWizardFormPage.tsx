@@ -413,6 +413,7 @@ function channelPayload(value: WizardValue, binding: string) {
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,
+    direct_reply_in_thread: value.direct_reply_in_thread ?? false,
     ...(binding === 'credentials' && appSecret ? { app_id: appId, app_secret: appSecret } : {}),
   };
 }

@@ -26,6 +26,7 @@ type ChannelRecord struct {
 	IncludeThinking   bool       `db:"include_thinking"`
 	IncludeToolCalls  bool       `db:"include_tool_calls"`
 	ReplyInThread     bool       `db:"reply_in_thread"`
+	DirectInThread    bool       `db:"direct_reply_in_thread"`
 	Mounts            string     `db:"mounts"`
 	GitTokenEnvelope  *string    `db:"git_token_envelope"`
 	CreatedAt         time.Time  `db:"created_at"`
@@ -60,6 +61,7 @@ type insertChannelRecordParams struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	DirectInThread    bool
 	Mounts            string
 	GitTokenEnvelope  *string
 }
@@ -77,6 +79,7 @@ type updateChannelRecordParams struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	DirectInThread    bool
 	Mounts            string
 	GitTokenEnvelope  *string
 }

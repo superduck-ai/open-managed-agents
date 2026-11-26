@@ -167,7 +167,7 @@ func (s *Service) CompletePairingOAuth(ctx context.Context, workspace string, c 
 	if err = s.supervisor.ingress.ConfirmSelfPairing(ctx, channelIngress(t.Scope.Channel, msg, row.ScopeKey), receipt.PairingID, version); err != nil {
 		return err
 	}
-	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ScopeKey: row.ScopeKey, ActorID: t.Scope.ActorID, PairingID: receipt.PairingID}, t.Request.Provider)
+	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ActorID: t.Scope.ActorID, PairingID: receipt.PairingID}, t.Scope.ChatID, t.Request.Provider)
 	if err != nil {
 		return err
 	}

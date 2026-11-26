@@ -28,6 +28,7 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			DirectInThread:    params.DirectInThread,
 			ExecutionMode:     params.ExecutionMode,
 			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
@@ -82,6 +83,7 @@ func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			DirectInThread:    params.DirectInThread,
 			ExecutionMode:     params.ExecutionMode,
 			IdentityUUID:      params.IdentityUUID,
 			Mounts:            params.Mounts,
@@ -173,6 +175,7 @@ type ChannelRecordInput struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	DirectInThread    bool
 	Mounts            string
 	GitTokenEnvelope  *string
 }
@@ -191,6 +194,7 @@ type ChannelRecordUpdate struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	DirectInThread    bool
 	Mounts            string
 	GitTokenEnvelope  *string
 }

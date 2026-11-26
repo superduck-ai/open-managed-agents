@@ -165,6 +165,9 @@ func (r *replyRunner) open(ctx context.Context) error {
 		return err
 	}
 	r.stream = opened
+	if isDirectTopicScope(r.msg.ChatType, r.task.scopeKey) {
+		r.msg.ThreadReplyTo = opened.Receipt()
+	}
 	if r.task.delivery != nil && r.task.delivery.ArtifactDelivery != "" {
 		var receipts channelArtifactDelivery
 		if err := json.Unmarshal([]byte(r.task.delivery.ArtifactDelivery), &receipts); err != nil {

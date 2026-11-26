@@ -19,6 +19,7 @@
         include_thinking,
         include_tool_calls,
         reply_in_thread,
+        direct_reply_in_thread,
         mounts::text AS mounts,
         git_token_envelope::text AS git_token_envelope,
         created_at,
@@ -39,12 +40,12 @@
         INSERT INTO channels (
             external_id, organization_uuid, workspace_uuid, agent_external_id, name, channel_type,
             mode, enabled, binding_status, app_id, app_secret_envelope, include_thinking,
-            include_tool_calls, reply_in_thread, mounts, git_token_envelope, identity_resolution_mode, identity_uuid
+            include_tool_calls, reply_in_thread, direct_reply_in_thread, mounts, git_token_envelope, identity_resolution_mode, identity_uuid
         ) VALUES (
             #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.AgentExternalID},
             #{params.Name}, #{params.ChannelType}, #{params.Mode}, #{params.Enabled}, #{params.BindingStatus},
             #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb), #{params.IncludeThinking},
-            #{params.IncludeToolCalls}, #{params.ReplyInThread},
+            #{params.IncludeToolCalls}, #{params.ReplyInThread}, #{params.DirectInThread},
             CAST(COALESCE(NULLIF(#{params.Mounts}, ''), '{}') AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb),
             #{params.ExecutionMode}, #{params.IdentityUUID}
         )
@@ -120,6 +121,7 @@
             include_thinking = #{params.IncludeThinking},
             include_tool_calls = #{params.IncludeToolCalls},
             reply_in_thread = #{params.ReplyInThread},
+            direct_reply_in_thread = #{params.DirectInThread},
             mounts = COALESCE(CAST(NULLIF(#{params.Mounts}, '') AS jsonb), '{}'::jsonb),
             git_token_envelope = CAST(#{params.GitTokenEnvelope} AS jsonb),
             updated_at = now()

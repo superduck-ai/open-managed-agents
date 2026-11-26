@@ -24,6 +24,7 @@ type Message struct {
 	RawContentType  string           `json:"raw_content_type"`
 	RootID          string           `json:"root_id"`
 	ThreadID        string           `json:"thread_id"`
+	ThreadReplyTo   string           `json:"-"`
 	PairingProvider string           `json:"oauth_provider,omitempty"`
 	PairingCard     string           `json:"oauth_card,omitempty"`
 	PairingID       string           `json:"pairing_id,omitempty"`

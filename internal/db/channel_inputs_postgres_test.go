@@ -192,8 +192,14 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO channels(uuid,external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,binding_status,app_id) VALUES($1,'chnl_batch',$2,$3,'agent_fixture','配对恢复','feishu','pairing','bound',$4)`, scope.ChannelUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []struct{ id, actor, provider string }{{"one", "actor", "client"}, {"two", "actor", "client"}, {"other", "another", "client"}, {"old", "actor", "previous"}} {
-		row, _, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: input.id, ScopeKey: "chat", Payload: fmt.Sprintf(`{"user_id":%q,"pairing_id":"pair","oauth_provider":%q}`, input.actor, input.provider)})
+	for _, input := range []struct{ id, chat, actor, provider string }{
+		{"one", "chat", "actor", "client"},
+		{"two", "chat", "actor", "client"},
+		{"other_chat", "different", "actor", "client"},
+		{"other", "chat", "another", "client"},
+		{"old", "chat", "actor", "previous"},
+	} {
+		row, _, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: input.id, ScopeKey: "thread:" + input.chat + ":" + input.id, Payload: fmt.Sprintf(`{"chat_id":%q,"user_id":%q,"pairing_id":"pair","oauth_provider":%q}`, input.chat, input.actor, input.provider)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,8 +210,8 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	match := ChannelPairingResume{ActorID: "actor", PairingID: "pair", ScopeKey: "chat"}
-	rows, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	match := ChannelPairingResume{ActorID: "actor", PairingID: "pair"}
+	rows, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
 	if err != nil || len(rows) != 2 || rows[0].MessageID != "one" || rows[1].MessageID != "two" {
 		t.Fatalf("等待消息不匹配：%+v %v", rows, err)
 	}
@@ -214,7 +220,7 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 			t.Fatalf("恢复的消息无法认领：%v", err)
 		}
 	}
-	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
 	if err != nil || len(again) != 0 {
 		t.Fatalf("重复回调恢复了已受理的消息：%+v %v", again, err)
 	}

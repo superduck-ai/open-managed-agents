@@ -13,6 +13,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/safety"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
@@ -40,60 +41,24 @@ func Message(msg *channeltypes.NormalizedMessage) *contracts.Message {
 	for i, r := range msg.Resources {
 		resources[i] = contracts.Attachment{Type: r.Type, FileKey: r.FileKey, FileName: r.FileName}
 	}
-	rootID, threadID := "", ""
-	if msg.ChatType != "p2p" {
-		rootID = messageID(msg, []string{"root_id"})
-		threadID = messageID(msg, []string{"thread_id", "root_id"})
+	rootID, threadID := messageThreadIDs(msg.RawEvent)
+	if msg.ChatType != "p2p" && threadID == "" {
+		threadID = rootID
 	}
 	return &contracts.Message{MessageID: msg.MessageID, MessageIDs: []string{msg.MessageID}, ChatID: msg.ChatID, ChatType: msg.ChatType, UserID: msg.UserID, Content: strings.TrimSpace(msg.Content), RawContentType: msg.RawContentType, RootID: rootID, ThreadID: threadID, Resources: resources}
 }
 
-func messageID(msg *channeltypes.NormalizedMessage, keys []string) string {
-	if raw, ok := msg.RawEvent.(map[string]any); ok {
-		return messageIDFromPayload(raw, keys)
-	}
-	if msg.RawEvent == nil {
-		return ""
-	}
-	encoded, err := json.Marshal(msg.RawEvent)
-	if err != nil {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(encoded, &payload); err != nil {
-		return ""
-	}
-	return messageIDFromPayload(payload, keys)
-}
-
-func messageIDFromPayload(payload map[string]any, keys []string) string {
-	if value := messageIDFromMessage(payload, keys); value != "" {
-		return value
-	}
-	for _, key := range []string{"message", "event"} {
-		nested, ok := payload[key].(map[string]any)
-		if !ok {
-			continue
+func messageThreadIDs(event any) (rootID, threadID string) {
+	switch raw := event.(type) {
+	case *larkim.P2MessageReceiveV1:
+		if raw != nil && raw.Event != nil && raw.Event.Message != nil {
+			return larkcore.StringValue(raw.Event.Message.RootId), larkcore.StringValue(raw.Event.Message.ThreadId)
 		}
-		if value := messageIDFromMessage(nested, keys); value != "" {
-			return value
-		}
-		if message, ok := nested["message"].(map[string]any); ok {
-			if value := messageIDFromMessage(message, keys); value != "" {
-				return value
-			}
-		}
+	case map[string]any:
+		rootID, _ = raw["root_id"].(string)
+		threadID, _ = raw["thread_id"].(string)
 	}
-	return ""
-}
-
-func messageIDFromMessage(payload map[string]any, keys []string) string {
-	for _, key := range keys {
-		if value, ok := payload[key].(string); ok && value != "" {
-			return value
-		}
-	}
-	return ""
+	return rootID, threadID
 }
 
 func newWSClient(appID, secret string) *larkws.Client {

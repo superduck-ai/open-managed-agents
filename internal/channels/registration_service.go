@@ -224,6 +224,7 @@ func (s *localService) applyChannelCredentials(ctx context.Context, channel db.C
 		IncludeThinking:   channel.IncludeThinking,
 		IncludeToolCalls:  channel.IncludeToolCalls,
 		ReplyInThread:     channel.ReplyInThread,
+		DirectInThread:    channel.DirectInThread,
 		Mounts:            channel.Mounts,
 		GitTokenEnvelope:  channel.GitTokenEnvelope,
 	})

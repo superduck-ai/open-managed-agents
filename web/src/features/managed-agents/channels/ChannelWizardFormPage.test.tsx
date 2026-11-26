@@ -145,6 +145,10 @@ test('第一步独立完成授权，第三步选择目标后才能保存正式�
   expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
+  const directReply = screen.getByRole('combobox', { name: '单聊 回复方式' });
+  expect(directReply.textContent).toContain('主会话回复');
+  fireEvent.click(directReply);
+  fireEvent.click(await screen.findByRole('option', { name: '话题回复' }));
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
   await selectTargets();
@@ -163,6 +167,8 @@ test('第一步独立完成授权，第三步选择目标后才能保存正式�
       authorization_id: 'authorization-test',
       environment_id: 'env-test',
       mode: 'open',
+      direct_reply_in_thread: true,
+      reply_in_thread: true,
       memory_store_id: 'mem-test',
       vault_ids: ['vault-test'],
     }),

@@ -79,6 +79,7 @@ type channelMutation struct {
 	IncludeThinking    *bool           `json:"include_thinking"`
 	IncludeToolCalls   *bool           `json:"include_tool_calls"`
 	ReplyInThread      *bool           `json:"reply_in_thread"`
+	DirectInThread     *bool           `json:"direct_reply_in_thread"`
 	Status             *string         `json:"status"`
 	AuthorizationID    *string         `json:"authorization_id"`
 	MemoryStoreID      json.RawMessage `json:"memory_store_id"`
@@ -152,20 +153,21 @@ func (s *localService) view(ctx context.Context, record db.ChannelRecord) (map[s
 		}
 	}
 	view := map[string]any{
-		"id":                 record.ExternalID,
-		"name":               record.Name,
-		"channel_type":       record.ChannelType,
-		"mode":               record.Mode,
-		"source":             "console",
-		"enabled":            record.Enabled,
-		"connected":          s.runtime != nil && s.runtime.online(record.ExternalID),
-		"binding_status":     record.BindingStatus,
-		"app_id":             record.AppID,
-		"include_thinking":   record.IncludeThinking,
-		"include_tool_calls": record.IncludeToolCalls,
-		"reply_in_thread":    record.ReplyInThread,
-		"pending_pairings":   pending,
-		"created_at":         record.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"id":                     record.ExternalID,
+		"name":                   record.Name,
+		"channel_type":           record.ChannelType,
+		"mode":                   record.Mode,
+		"source":                 "console",
+		"enabled":                record.Enabled,
+		"connected":              s.runtime != nil && s.runtime.online(record.ExternalID),
+		"binding_status":         record.BindingStatus,
+		"app_id":                 record.AppID,
+		"include_thinking":       record.IncludeThinking,
+		"include_tool_calls":     record.IncludeToolCalls,
+		"reply_in_thread":        record.ReplyInThread,
+		"direct_reply_in_thread": record.DirectInThread,
+		"pending_pairings":       pending,
+		"created_at":             record.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	for key, value := range channelMountView(record) {
 		view[key] = value
@@ -260,6 +262,7 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		DirectInThread:    record.DirectInThread,
 		ExecutionMode:     record.ExecutionMode,
 		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
@@ -332,6 +335,7 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		DirectInThread:    record.DirectInThread,
 		ExecutionMode:     record.ExecutionMode,
 		IdentityUUID:      record.IdentityUUID,
 		Mounts:            record.Mounts,
@@ -580,6 +584,9 @@ func applyChannelFlags(record *db.ChannelRecord, input channelMutation) {
 	}
 	if input.ReplyInThread != nil {
 		record.ReplyInThread = *input.ReplyInThread
+	}
+	if input.DirectInThread != nil {
+		record.DirectInThread = *input.DirectInThread
 	}
 }
 

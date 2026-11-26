@@ -6,6 +6,7 @@ import "context"
 
 type ChannelInputMapper interface {
 	Insert(ctx context.Context, scope ChannelInputScope, input ChannelInput) (ChannelInput, bool, error)
+	FindDirectChat(ctx context.Context, scope ChannelInputScope, channelID, actorID string) (string, error)
 	Claim(ctx context.Context, scope ChannelInputScope, inputUUID, owner string) (ChannelInput, bool, error)
 	ListRecoverable(ctx context.Context, scope ChannelInputScope) ([]ChannelInput, error)
 	HoldOAuth(ctx context.Context, scope ChannelInputScope, inputUUID, owner, patch string) (int64, error)

@@ -63,3 +63,18 @@ func TestChannelInputMapperScopesAndPayloadBindings(t *testing.T) {
 		t.Fatal("命令交接未知时不能自动再次执行")
 	}
 }
+
+func TestChannelInputMapperFindsDirectChatsForOneActor(t *testing.T) {
+	scope := ChannelInputScope{OrganizationUUID: "org", WorkspaceUUID: "workspace", ChannelUUID: "channel", ChannelType: "feishu", AccountID: "app"}
+	query := buildChannelInputMapperFindDirectChat(yourbatis.DialectPostgres, scope, "chnl_1", "ou_1")
+	for _, part := range []string{
+		"i.organization_uuid=$1 AND i.workspace_uuid=$2",
+		"i.channel_uuid=$3 AND i.channel_type=$4 AND i.account_id=$5",
+		"i.payload->>'chat_type'='p2p' AND i.payload->>'user_id'=$6",
+		"s.workspace_uuid=$7", "b.channel_external_id=$8 AND s.organization_uuid=$9",
+		"s.metadata->>'app_id'=$10 AND s.metadata->>'chat_type'='p2p'",
+		"COALESCE(s.metadata->>'actor_id',s.metadata->>'open_id')=$11",
+	} {
+		assertMapperSQLContains(t, query, part)
+	}
+}

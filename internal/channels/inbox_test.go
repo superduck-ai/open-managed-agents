@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,88 @@ func TestChannelInputDuplicateDoesNotReenterBatch(t *testing.T) {
 	waitForScope(t, worker, "chat:oc_1")
 	if len(requests.snapshot()) != 1 || strings.Count(requests.snapshot()[0], "同一条原消息") != 1 {
 		t.Fatalf("重复回调进入了同一批次: %v", requests.snapshot())
+	}
+}
+
+func TestFirstNewSessionMenuReplayDoesNotResetLaterChat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sendErr error
+	}{
+		{name: "提示失败后恢复", sendErr: errors.New("飞书暂时无法发送")},
+		{name: "提示成功后重投"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _, requests := omaTestServer(t, 0)
+			store := &fakeRuntimeStore{directChats: map[string]string{}}
+			worker, channel := testWorker(t, store, server.URL)
+			channel.sendErr = tc.sendErr
+			ctx := t.Context()
+			if err := worker.receiveNewSessionMenu(ctx, "first_click", "ou_actor"); !errors.Is(err, tc.sendErr) {
+				t.Fatalf("首次菜单提示返回错误不符: %v", err)
+			}
+			channel.sendErr = nil
+			store.directChats["ou_actor"] = "oc_private"
+			if err := store.SetChannelSessionBinding(ctx, "chnl_1", "chat:oc_private", "sesn_1", "", 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := worker.receiveNewSessionMenu(ctx, "first_click", "ou_actor"); err != nil {
+				t.Fatal(err)
+			}
+			waitForScope(t, worker, "chat:oc_private")
+			if store.binding("chat:oc_private") != "sesn_1" || len(requests.snapshot()) != 0 {
+				t.Fatal("首次菜单点击重投后误重置了随后建立的会话")
+			}
+			if tc.sendErr != nil {
+				store.mu.Lock()
+				id := store.inputKeys[inputStoreKey(worker.inputScope(), "menu:first_click")]
+				row := store.inputs[id]
+				row.LeaseUntil = time.Now().Add(-time.Second)
+				store.inputs[id] = row
+				store.mu.Unlock()
+				worker.restoreInputs(ctx)
+			}
+			if got := channel.sentInputs(); len(got) != 1 || got[0].ChatID != "" || got[0].UserID != "ou_actor" || got[0].Text != "发送一条消息即可开始新会话。" {
+				t.Fatalf("原点击应只完成一次首次私聊提示: %+v", got)
+			}
+			if err := worker.receiveNewSessionMenu(ctx, "second_click", "ou_actor"); err != nil {
+				t.Fatal(err)
+			}
+			waitForScope(t, worker, "chat:oc_private")
+			if store.binding("chat:oc_private") != "" || len(requests.snapshot()) != 1 {
+				t.Fatal("新一次点击应重置当前会话")
+			}
+		})
+	}
+}
+
+func TestNewSessionMenuOnlyResetsClickingPrivateChat(t *testing.T) {
+	server, creates, requests := omaTestServer(t, 0)
+	store := &fakeRuntimeStore{
+		bindings:    map[string]string{"chat:oc_private": "sesn_1", "chat:oc_other": "sesn_other"},
+		directChats: map[string]string{"ou_actor": "oc_private"},
+	}
+	worker, _ := testWorker(t, store, server.URL)
+	worker.record.Mode = "pairing"
+	store.pairings = []db.ChannelPairingRecord{{Kind: "user", Target: "ou_actor", Status: "rejected"}}
+	if err := worker.receiveNewSessionMenu(t.Context(), "event_denied", "ou_actor"); err != nil {
+		t.Fatal(err)
+	}
+	if store.binding("chat:oc_private") != "sesn_1" || len(requests.snapshot()) != 0 {
+		t.Fatal("未获授权的菜单点击不能中断或重置会话")
+	}
+	store.pairings[0].Status = "approved"
+	for range 2 {
+		if err := worker.receiveNewSessionMenu(t.Context(), "event_allowed", "ou_actor"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForScope(t, worker, "chat:oc_private")
+	if store.binding("chat:oc_private") != "" || store.binding("chat:oc_other") != "sesn_other" {
+		t.Fatal("菜单只能移除点击者的私聊会话绑定")
+	}
+	if got := requests.snapshot(); len(got) != 1 || !strings.Contains(got[0], "user.interrupt") || creates.Load() != 0 {
+		t.Fatalf("菜单应只中断一次，并在收到下一条消息前延迟新建会话: %v %d", got, creates.Load())
 	}
 }
 

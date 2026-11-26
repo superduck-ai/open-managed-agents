@@ -24,6 +24,7 @@ const (
 
 type runtimeStore interface {
 	ReceiveChannelInput(context.Context, db.ChannelInputScope, db.ChannelInput) (db.ChannelInput, bool, error)
+	FindChannelDirectChat(context.Context, db.ChannelInputScope, string, string) (string, error)
 	ClaimChannelInput(context.Context, db.ChannelInputScope, string, string) (db.ChannelInput, bool, error)
 	HasWaitingChannelPairingInput(context.Context, db.ChannelInputScope, db.ChannelPairingResume) (bool, error)
 	ResumeChannelInputAfterPairing(context.Context, db.ChannelInputScope, db.ChannelPairingResume) (string, bool, error)

@@ -17,6 +17,18 @@
       RETURNING uuid,message_id,scope_key,payload,state,session_external_id,prepared_content,input_event_id,lease_owner,lease_until
     ) SELECT <include refid="columns"/> FROM changed i
   </select>
+  <select id="FindDirectChat" result="scalar">
+    SELECT COALESCE(
+      (SELECT i.payload->>'chat_id' FROM channel_inputs i WHERE <include refid="scope"/>
+        AND i.payload->>'chat_type'='p2p' AND i.payload->>'user_id'=#{actorID}
+        AND i.payload->>'chat_id'&lt;&gt;'' ORDER BY i.created_at DESC,i.uuid DESC LIMIT 1),
+      (SELECT split_part(b.scope_key, ':', 2) FROM channel_sessions b
+        JOIN sessions s ON s.external_id=b.session_external_id AND s.workspace_uuid=#{scope.WorkspaceUUID}
+        WHERE b.channel_external_id=#{channelID} AND s.organization_uuid=#{scope.OrganizationUUID}
+        AND b.scope_key LIKE 'chat:%' AND s.metadata->>'app_id'=#{scope.AccountID} AND s.metadata->>'chat_type'='p2p'
+        AND COALESCE(s.metadata->>'actor_id',s.metadata->>'open_id')=#{actorID}
+        ORDER BY b.updated_at DESC,b.scope_key LIMIT 1), '') AS chat_id
+  </select>
   <select id="Claim" result="optional">
     WITH changed AS (
       UPDATE channel_inputs i SET state=CASE WHEN state='received' THEN 'buffering' ELSE state END,

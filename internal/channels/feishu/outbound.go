@@ -109,6 +109,6 @@ func (w *Adapter) ReplyText(ctx context.Context, msg *contracts.Message, text st
 		_, err = w.replyMessage(ctx, target, "text", string(content), "")
 		return err
 	}
-	_, err := w.Channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text})
+	_, err := w.Channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, UserID: msg.UserID, Text: text})
 	return err
 }

@@ -192,9 +192,11 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO channels(uuid,external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,binding_status,app_id) VALUES($1,'chnl_batch',$2,$3,'agent_fixture','配对恢复','feishu','pairing','bound',$4)`, scope.ChannelUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.AccountID); err != nil {
 		t.Fatal(err)
 	}
+	var lateInput ChannelInput
 	for _, input := range []struct{ id, chat, actor, provider string }{
 		{"one", "chat", "actor", "client"},
 		{"two", "chat", "actor", "client"},
+		{"late", "chat", "actor", "client"},
 		{"other_chat", "different", "actor", "client"},
 		{"other", "chat", "another", "client"},
 		{"old", "chat", "actor", "previous"},
@@ -205,6 +207,10 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 		}
 		if _, found, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "worker"); err != nil || !found {
 			t.Fatalf("首次认领失败：%v", err)
+		}
+		if input.id == "late" {
+			lateInput = row
+			continue
 		}
 		if err := store.HoldPairingOAuth(t.Context(), scope, row.UUID, "worker", "{}"); err != nil {
 			t.Fatal(err)
@@ -219,6 +225,13 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 		if _, ok, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "restart"); err != nil || !ok {
 			t.Fatalf("恢复的消息无法认领：%v", err)
 		}
+	}
+	if err := store.HoldPairingOAuth(t.Context(), scope, lateInput.UUID, "worker", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	late, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
+	if err != nil || len(late) != 1 || late[0].MessageID != lateInput.MessageID || late[0].ScopeKey != lateInput.ScopeKey {
+		t.Fatalf("授权后补登记的消息未恢复到原话题：%+v %v", late, err)
 	}
 	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "chat", "client")
 	if err != nil || len(again) != 0 {

@@ -6,6 +6,7 @@ export async function optimizeBuilderPrompt(input: {
   orgUuid: string;
   workspaceId: string;
   model: string;
+  backend?: 'messages' | 'chat_completions';
   catalog: BuilderCatalog;
   text: string;
   signal: AbortSignal;
@@ -18,7 +19,7 @@ export async function optimizeBuilderPrompt(input: {
   };
   const result = await streamBuilderTurn({
     ...input,
-    backend: builderBackend(input.model, input.catalog),
+    backend: input.backend ?? builderBackend(input.model, input.catalog),
     system: [
       {
         type: 'text',

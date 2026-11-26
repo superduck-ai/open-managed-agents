@@ -5,10 +5,52 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/platformapi"
 )
+
+func (s *Server) requireConsoleWorkspaceCapability(capability string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			principal, ok := auth.PrincipalFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			orgUUID := principal.OrganizationUUID
+			workspaceUUID := principal.WorkspaceUUID
+			providerKind := principal.RuntimeProvider
+			if chi.URLParam(r, "workspaceId") != "" && s.consoleScopeStore != nil && s.workspaceAccess != nil {
+				scope, resolved := platformapi.ResolveConsoleWorkspaceRequest(w, r, s.consoleScopeStore)
+				if !resolved {
+					return
+				}
+				targetPrincipal, accessErr := s.resolvePlatformWorkspace(r, principal, scope.WorkspaceUUID)
+				if accessErr != nil {
+					httpapi.WriteError(w, r, accessErr)
+					return
+				}
+				orgUUID = scope.OrganizationUUID
+				workspaceUUID = targetPrincipal.WorkspaceUUID
+				providerKind = targetPrincipal.RuntimeProvider
+			}
+			if capErr := s.checkWorkspaceCapability(
+				r.Context(),
+				orgUUID,
+				workspaceUUID,
+				providerKind,
+				capability,
+			); capErr != nil {
+				httpapi.WriteError(w, r, capErr)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func (s *Server) requireCapability(capability string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

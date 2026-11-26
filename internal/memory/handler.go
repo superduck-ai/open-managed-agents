@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -37,12 +38,14 @@ const (
 )
 
 type Handler struct {
-	webhooks webhookEnqueuer
-	cfg      config.Config
-	db       *db.DB
-	logger   *slog.Logger
-	store    storage.ObjectStore
-	router   chi.Router
+	webhooks        webhookEnqueuer
+	cfg             config.Config
+	db              *db.DB
+	logger          *slog.Logger
+	store           storage.ObjectStore
+	runtimeResolver *agentruntime.Resolver
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
 }
 
 type storePageResponse struct {
@@ -143,7 +146,7 @@ type memoryListItem struct {
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, logger: logger, store: store}
+	h := &Handler{cfg: cfg, db: database, logger: logger, store: store, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -176,6 +179,10 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 	principal, ok := requireAPIKey(w, r)
 	if !ok {
+		return
+	}
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.createStoreExternal(w, r, principal))
 		return
 	}
 	body, err := httpapi.DecodeObjectBodyAs[memoryStoreMutationRequest](w, r, maxMemoryBodySize)
@@ -235,6 +242,10 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listStores(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.listStoresExternal(w, r, principal))
+		return
+	}
 	limit, err := parseLimit(r, 100)
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -291,6 +302,10 @@ func (h *Handler) retrieveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.retrieveStoreExternal(w, r, principal, storeID))
+		return
+	}
 	record, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
@@ -305,6 +320,10 @@ func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.updateStoreExternal(w, r, principal, storeID))
+		return
+	}
 	current, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
@@ -378,6 +397,10 @@ func (h *Handler) archiveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.archiveStoreExternal(w, r, principal, storeID))
+		return
+	}
 	record, changed, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
@@ -395,6 +418,10 @@ func (h *Handler) deleteStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.deleteStoreExternal(w, r, principal, storeID))
+		return
+	}
 	refs, err := h.db.DeleteMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
@@ -413,6 +440,10 @@ func (h *Handler) createMemoryRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.createMemoryExternal(w, r, principal, storeID))
+		return
+	}
 	view, err := parseView(r, "basic")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -500,6 +531,10 @@ func (h *Handler) listMemoriesRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.listMemoriesExternal(w, r, principal, storeID))
+		return
+	}
 	view, err := parseView(r, "basic")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -650,6 +685,10 @@ func (h *Handler) retrieveMemoryRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID, memoryID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.retrieveMemoryExternal(w, r, principal, storeID, memoryID))
+		return
+	}
 	view, err := parseView(r, "full")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -680,6 +719,10 @@ func (h *Handler) updateMemoryRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, memoryID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.updateMemoryExternal(w, r, principal, storeID, memoryID))
+		return
+	}
 	view, err := parseView(r, "basic")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -807,6 +850,10 @@ func (h *Handler) deleteMemoryRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, memoryID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.deleteMemoryExternal(w, r, principal, storeID, memoryID))
+		return
+	}
 	expectedHash := strings.TrimSpace(r.URL.Query().Get("expected_content_sha256"))
 	var expected *string
 	if expectedHash != "" {
@@ -843,6 +890,10 @@ func (h *Handler) listVersionsRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.listVersionsExternal(w, r, principal, storeID))
+		return
+	}
 	view, err := parseView(r, "basic")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -921,6 +972,10 @@ func (h *Handler) retrieveVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.retrieveVersionExternal(w, r, principal, storeID, versionID))
+		return
+	}
 	view, err := parseView(r, "full")
 	if err != nil {
 		writeBadRequest(w, r, err)
@@ -951,6 +1006,10 @@ func (h *Handler) redactVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.writeRuntimeError(w, r, h.redactVersionExternal(w, r, principal, storeID, versionID))
+		return
+	}
 	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, principalActor(principal), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {

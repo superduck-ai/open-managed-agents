@@ -26,7 +26,7 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
     { id: 'agent', label: zh ? '创建智能体' : 'Create agent', done: Boolean(state.agent) },
     { id: 'environment', label: zh ? '配置环境' : 'Environment', done: Boolean(state.environment) },
     { id: 'session', label: zh ? '试跑' : 'Test', done: state.testClosed },
-    ...(state.wantsSchedule
+    ...(builder.runtimeCapabilities.deployments && state.wantsSchedule
       ? [{ id: 'deploy', label: zh ? '定时运行' : 'Schedule', done: Boolean(state.deployment) }]
       : []),
     { id: 'integrate', label: zh ? '接入' : 'Integrate', done: false },

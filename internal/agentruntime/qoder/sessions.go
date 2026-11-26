@@ -27,13 +27,14 @@ type qoderSessionUsage struct {
 }
 
 type qoderSessionResource struct {
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	FileID    string          `json:"file_id,omitempty"`
-	MountPath string          `json:"mount_path,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	Raw       json.RawMessage `json:"-"`
+	ID            string          `json:"id"`
+	Type          string          `json:"type"`
+	FileID        string          `json:"file_id,omitempty"`
+	MemoryStoreID string          `json:"memory_store_id,omitempty"`
+	MountPath     string          `json:"mount_path,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	Raw           json.RawMessage `json:"-"`
 }
 
 type qoderAgentField struct {
@@ -290,6 +291,20 @@ func (r *Runtime) encodeSessionResourceInput(ctx context.Context, scope agentrun
 		}
 		rawRemoteID, _ := json.Marshal(fileBinding.RemoteID)
 		fields["file_id"] = rawRemoteID
+	}
+	memoryStoreID := input.MemoryStoreID
+	if memoryStoreID == "" {
+		if rawStoreID, ok := fields["memory_store_id"]; ok {
+			_ = json.Unmarshal(rawStoreID, &memoryStoreID)
+		}
+	}
+	if memoryStoreID != "" {
+		storeBinding, err := r.bindings.ResolveOwned(ctx, scope, agentruntime.ResourceTypeMemoryStore, memoryStoreID)
+		if err != nil {
+			return nil, err
+		}
+		rawRemoteID, _ := json.Marshal(storeBinding.RemoteID)
+		fields["memory_store_id"] = rawRemoteID
 	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {
@@ -675,20 +690,27 @@ func (r *Runtime) mapSessionResource(ctx context.Context, scope agentruntime.Sco
 			omaFileID = fb.OMAExternalID
 		}
 	}
-	payload := rewriteResourcePayloadIDs(res.Raw, omaResourceID, omaFileID)
+	omaMemoryStoreID := res.MemoryStoreID
+	if res.MemoryStoreID != "" {
+		if mb, err := r.bindings.LookupByRemoteID(ctx, scope, agentruntime.ResourceTypeMemoryStore, res.MemoryStoreID); err == nil {
+			omaMemoryStoreID = mb.OMAExternalID
+		}
+	}
+	payload := rewriteResourcePayloadIDs(res.Raw, omaResourceID, omaFileID, omaMemoryStoreID)
 	return agentruntime.SessionResource{
-		ID:        omaResourceID,
-		SessionID: omaSessionID,
-		Type:      res.Type,
-		FileID:    omaFileID,
-		MountPath: res.MountPath,
-		Payload:   payload,
-		CreatedAt: res.CreatedAt,
-		UpdatedAt: res.UpdatedAt,
+		ID:            omaResourceID,
+		SessionID:     omaSessionID,
+		Type:          res.Type,
+		FileID:        omaFileID,
+		MemoryStoreID: omaMemoryStoreID,
+		MountPath:     res.MountPath,
+		Payload:       payload,
+		CreatedAt:     res.CreatedAt,
+		UpdatedAt:     res.UpdatedAt,
 	}
 }
 
-func rewriteResourcePayloadIDs(raw json.RawMessage, omaResourceID, omaFileID string) json.RawMessage {
+func rewriteResourcePayloadIDs(raw json.RawMessage, omaResourceID, omaFileID, omaMemoryStoreID string) json.RawMessage {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return raw
 	}
@@ -705,6 +727,13 @@ func rewriteResourcePayloadIDs(raw json.RawMessage, omaResourceID, omaFileID str
 		if _, has := fields["file_id"]; has {
 			if encoded, err := json.Marshal(omaFileID); err == nil {
 				fields["file_id"] = encoded
+			}
+		}
+	}
+	if omaMemoryStoreID != "" {
+		if _, has := fields["memory_store_id"]; has {
+			if encoded, err := json.Marshal(omaMemoryStoreID); err == nil {
+				fields["memory_store_id"] = encoded
 			}
 		}
 	}

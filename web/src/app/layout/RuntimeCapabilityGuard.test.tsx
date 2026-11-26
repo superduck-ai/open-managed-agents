@@ -289,3 +289,48 @@ test('SessionOutputFiles shows DeliverArtifacts hint when artifact_discovery is 
   await waitFor(() => expect(screen.getByTestId('session-deliver-artifacts-hint')).toBeTruthy());
   expect(screen.getByTestId('session-deliver-artifacts-hint').textContent).toContain('DeliverArtifacts');
 });
+
+test('memory-stores route and navigation stay accessible on external runtime when memory_stores is enabled', () => {
+  const memoryEnabledCaps: RuntimeCapabilities = {
+    ...externalCaps,
+    memory_stores: true,
+  };
+  const mainHrefs = visibleConsoleNavigation(memoryEnabledCaps).flatMap((item) =>
+    item.type === 'link' ? [item.href] : item.children.map((child) => child.href),
+  );
+  expect(mainHrefs).toContain('/memory-stores');
+  expect(mainHrefs).not.toContain('/credential-vaults');
+
+  const memoryEnabledWorkspace: Workspace = {
+    ...externalWorkspace,
+    runtime: {
+      ...externalWorkspace.runtime!,
+      capabilities: memoryEnabledCaps,
+    },
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider
+          value={{
+            orgUuid: 'org-1',
+            workspaces: [defaultWorkspace, memoryEnabledWorkspace],
+            activeWorkspace: memoryEnabledWorkspace,
+            activeWorkspaceId: memoryEnabledWorkspace.id,
+            isLoading: false,
+            error: null,
+            selectWorkspace: () => undefined,
+            createWorkspace: async () => memoryEnabledWorkspace,
+            refreshWorkspaces: async () => undefined,
+          }}
+        >
+          <RuntimeCapabilityGuard currentPath="/workspaces/wrkspc_qoder/memory-stores">
+            <div>Memory Stores Body</div>
+          </RuntimeCapabilityGuard>
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText('Memory Stores Body')).toBeTruthy();
+});

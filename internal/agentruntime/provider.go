@@ -86,3 +86,20 @@ type SessionRuntime interface {
 type HealthChecker interface {
 	HealthCheck(ctx context.Context) (HealthCheckResult, error)
 }
+
+type MemoryRuntime interface {
+	CreateMemoryStore(ctx context.Context, scope Scope, input CreateMemoryStoreInput) (MemoryStore, error)
+	GetMemoryStore(ctx context.Context, scope Scope, storeID string) (MemoryStore, error)
+	ListMemoryStores(ctx context.Context, scope Scope, query ListMemoryStoresQuery) (Page[MemoryStore], error)
+	UpdateMemoryStore(ctx context.Context, scope Scope, storeID string, input UpdateMemoryStoreInput) (MemoryStore, error)
+	ArchiveMemoryStore(ctx context.Context, scope Scope, storeID string) (MemoryStore, error)
+	DeleteMemoryStore(ctx context.Context, scope Scope, storeID string) error
+	CreateMemory(ctx context.Context, scope Scope, storeID string, input CreateMemoryInput) (Memory, error)
+	GetMemory(ctx context.Context, scope Scope, storeID string, memoryID string, query GetMemoryQuery) (Memory, error)
+	ListMemories(ctx context.Context, scope Scope, storeID string, query ListMemoriesQuery) (MemoryListResult, error)
+	UpdateMemory(ctx context.Context, scope Scope, storeID string, memoryID string, input UpdateMemoryInput) (Memory, error)
+	DeleteMemory(ctx context.Context, scope Scope, storeID string, memoryID string, input DeleteMemoryInput) error
+	ListMemoryVersions(ctx context.Context, scope Scope, storeID string, query ListMemoryVersionsQuery) (Page[MemoryVersion], error)
+	GetMemoryVersion(ctx context.Context, scope Scope, storeID string, versionID string, query GetMemoryVersionQuery) (MemoryVersion, error)
+	RedactMemoryVersion(ctx context.Context, scope Scope, storeID string, versionID string) (MemoryVersion, error)
+}

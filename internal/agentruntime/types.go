@@ -289,21 +289,23 @@ type StreamOptions struct {
 }
 
 type SessionResource struct {
-	ID        string
-	SessionID string
-	Type      string
-	FileID    string
-	MountPath string
-	Payload   json.RawMessage
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID            string
+	SessionID     string
+	Type          string
+	FileID        string
+	MemoryStoreID string
+	MountPath     string
+	Payload       json.RawMessage
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type AddSessionResourceInput struct {
-	Type      string
-	FileID    string
-	MountPath string
-	Payload   json.RawMessage
+	Type          string
+	FileID        string
+	MemoryStoreID string
+	MountPath     string
+	Payload       json.RawMessage
 }
 
 type UpdateSessionResourceInput struct {
@@ -326,4 +328,130 @@ type HealthCheckResult struct {
 	Latency   time.Duration
 	Message   string
 	CheckedAt time.Time
+}
+
+type MemoryStore struct {
+	ID          string
+	Name        string
+	Description string
+	Metadata    map[string]string
+	ArchivedAt  *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CreateMemoryStoreInput struct {
+	Name        string
+	Description string
+	Metadata    map[string]string
+}
+
+type UpdateMemoryStoreInput struct {
+	Name        *string
+	Description *string
+	Metadata    map[string]string
+}
+
+type ListMemoryStoresQuery struct {
+	IncludeArchived bool
+	Limit           int
+	Offset          int
+	CreatedAtGTE    *time.Time
+	CreatedAtLTE    *time.Time
+}
+
+type MemoryPrecondition struct {
+	Type          string
+	ContentSHA256 string
+}
+
+type Memory struct {
+	ID               string
+	MemoryStoreID    string
+	MemoryVersionID  string
+	Path             string
+	Content          *string
+	ContentSizeBytes int64
+	ContentSHA256    string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type CreateMemoryInput struct {
+	Path         string
+	Content      string
+	View         string
+	Precondition *MemoryPrecondition
+}
+
+type UpdateMemoryInput struct {
+	Path         *string
+	Content      *string
+	View         string
+	Precondition *MemoryPrecondition
+}
+
+type DeleteMemoryInput struct {
+	ExpectedContentSHA256 *string
+}
+
+type GetMemoryQuery struct {
+	View string
+}
+
+type ListMemoriesQuery struct {
+	PathPrefix string
+	Depth      *int
+	View       string
+	Order      string
+	OrderBy    string
+	Limit      int
+	Page       string
+}
+
+type MemoryListResult struct {
+	Items    []Memory
+	Prefixes []string
+	NextPage string
+	HasMore  bool
+}
+
+type MemoryActor struct {
+	Type      string
+	APIKeyID  string
+	SessionID string
+	UserID    string
+}
+
+type MemoryVersion struct {
+	ID               string
+	MemoryID         string
+	MemoryStoreID    string
+	Operation        string
+	Path             *string
+	Content          *string
+	ContentSizeBytes *int64
+	ContentSHA256    *string
+	CreatedBy        MemoryActor
+	Redacted         bool
+	RedactedAt       *time.Time
+	RedactedBy       *MemoryActor
+	CreatedAt        time.Time
+}
+
+type ListMemoryVersionsQuery struct {
+	MemoryID     string
+	Path         string
+	Operation    string
+	APIKeyID     string
+	SessionID    string
+	View         string
+	Limit        int
+	Page         string
+	CreatedAtGTE *time.Time
+	CreatedAtLTE *time.Time
+}
+
+type GetMemoryVersionQuery struct {
+	View string
 }

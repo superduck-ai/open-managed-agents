@@ -61,7 +61,7 @@ flowchart TB
     end
 
     subgraph ControlPlane["2. 控制面与资源外观层"]
-        Resources["资源外观 (sessions / agents / environments / files / models)"]
+        Resources["资源外观 (sessions / agents / environments / files / models / memory)"]
         Admin["平台超管与组织白名单 (platformadmin / platformapi / admin)"]
         NativeFast["oma_native 原生路径 (各资源包既有本地实现，零搬迁)"]
     end
@@ -102,7 +102,7 @@ flowchart TB
 ### 包边界与依赖不变量
 
 - `internal/agentruntime` 仅依赖标准库及基础包（`apperr`、`auth`、`db`、`ids`、`logging`、`secrets`），不导入 `internal/api`、`internal/httpapi` 或任何资源 Handler 包。
-- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`。
+- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models`、`internal/memory` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`（其中 `internal/memory` 委托 `MemoryRuntime`）。
 - `internal/agentruntime/qoder` 依赖 `internal/agentruntime`，仅在 `internal/api/server.go` 启动组装阶段注册进 `Registry`。
 - `internal/db` 不导入 `internal/agentruntime`、`internal/api` 或任何业务包，所有新增表严格遵循 Yourbatis 三文件拆分（`xxx.go` / `xxx_mapper.go` / `xxx_mapper.xml`），UUID 参数直接以 `string` 绑定。
 
@@ -246,7 +246,8 @@ CREATE INDEX provider_usage_scope_time_idx
 | `session_webhooks` | `true` | `false`（建议首期关闭，待拍板） | 避免按需 SSE 下 11 类 Session Webhook 静默漏发 |
 | `session_budget` / `session_agent_overrides` | `usd` / `true` | `credits` / `false` | `budget` 升级为 `BudgetMode`（OMA 用 USD，Qoder 原生支持 `max_credit_cost`）；`agent_with_overrides` 实测 400 拒绝，入口拦截 |
 | `channels` / `evaluations` | `true` | `false`（首期关闭，PR-5/PR-6 解耦后开启） | 避免首期在 Qoder 空间误操作未解耦的原生 Channel 与 Evaluation 表 |
-| `skills` / `memory_stores` / `credential_vaults` / `mcp_servers` | `true` | `false`（首期关闭） | 首期 Qoder 空间聚焦核心 Models/Agents/Environments/Files/Sessions，导航、路由守卫、全局搜索与后端路由同步裁减 |
+| `memory_stores` | `true` | `true` | 接入 Qoder Memory Stores API（Store / Memory / Version 全量接口与 Session `memory_store` 挂载），以 `runtime_resource_bindings` 做多租户防 IDOR 隔离 |
+| `skills` / `credential_vaults` / `mcp_servers` | `true` | `false`（首期关闭） | 首期 Qoder 空间聚焦核心 Models/Agents/Environments/Files/Memory Stores/Sessions，导航、路由守卫、全局搜索、Builder 与后端路由同步裁减 |
 | `usage_metering` | `token_and_cost` | `provider_credits` | 正交双口径账本；Qoder 实测支持 `model_credits`、`sandbox_runtime_credits`、`total_credits` 与 `session.usage` 事件 |
 | `artifact_discovery` | `filesystem_outputs_dir` | `explicit_deliver_tool` | 原生路径为 `sandboxmount.SandboxOutputsMount`（`/mnt/user-data/outputs`）；Qoder 实测为 `/data/...` |
 | `file_constraints` | 不限 MIME | 默认 5MB、文本+图片（可由 Profile 配置覆写） | 文档写仅文本，但 2026-11-25 线上实测 `image/png` 返回 200；配置化避免误杀飞书发截图 |
@@ -284,19 +285,30 @@ CREATE INDEX provider_usage_scope_time_idx
   - **无 `Last-Event-ID` 的实时连接**：进入进程内扇出 Hub，Key 固定为 `(profile_uuid, remote_session_id, thread_id)`（主会话 `thread_id = ""`，子线程流填具体 `sthr_...`）。Hub 建连时始终携带最大超集 `event_deltas[]=agent.message&event_deltas[]=agent.thinking`，向各下游订阅者按其 `StreamOptions.DeltaTypes` 过滤分发；无订阅者 15 秒后关闭上游流。
   - **协议不变量**：前端与代理层严格坚持先建流缓冲再按 `processed_at ASC` 拉历史合并去重，且 `requires_action` 时绝不关闭 SSE；`internal/sessions` 入口层统一承接 `Idempotency-Key` 缓存。
 
-### 4.4 能力守卫、Overview、文件旁路与 Admin API 收口（修复 F9、F10）
+### 4.4 Memory Stores 外部运行时适配与 Session 挂载
 
-- **Console URL 工作空间能力守卫**：凡路径含 `{workspaceId}` 的 Console 路由（如 `/workspaces/{workspaceId}/mcp_tunnels`），不在外层仅凭 `principal.WorkspaceUUID` 拦截，而是在解析并鉴权路径目标 Workspace 之后（如 `resolveTunnelConsoleScope`）立即校验目标工作空间的 `CapabilitySet`，堵死通过省略或伪造 `X-Workspace-ID` 绕过的安全漏洞。
+- **统一运行时接口（`agentruntime.MemoryRuntime`）**：
+  - 定义 Memory Store（Create/Get/List/Update/Archive/Delete）、Memory（Create/Get/List/Update/Delete）与 Memory Version（List/Get/Redact）三类操作；`internal/memory/handler.go` 对 `oma_native` 保持原生路径，对外部运行时在 `internal/memory/runtime_dispatch.go` 经 `Resolver` 分发。
+- **Qoder 适配与多租户隔离（`internal/agentruntime/qoder/memory.go`）**：
+  - 所有 Store 创建时写入 `runtime_resource_bindings`（`resource_type = 'memory_store'`），后续 Store / Memory / Version 的全部单对象操作与列表检索均先校验 `(organization_uuid, workspace_uuid, 'memory_store', oma_external_id)` 归属，未命中直接返回 404。
+  - 支持 `ListMemories` 的 `depth` 目录扫描与分页，并按 `view=full` 并发补齐 Memory 及 Version 的正文内容。
+- **Session 资源挂载双向映射（`internal/sessions/runtime_dispatch.go`、`internal/agentruntime/qoder/sessions.go`）**：
+  - 创建 Session 与 `AddResource` 时解析 `memory_store_id`，在进入 Qoder 前经 `runtime_resource_bindings` 重写为远端 Store ID；回显 Session Resource 时再反向映射为 OMA 外部 `memory_store_id`。
+
+### 4.5 能力守卫、Overview、Quickstart/Builder、文件旁路与 Admin API 收口（修复 F9、F10）
+
+- **Console URL 工作空间能力守卫**：凡路径含 `{workspaceId}` 的 Console 路由（如 `/workspaces/{workspaceId}/mcp_tunnels`、`/workspaces/{workspaceId}/mcp_servers`、`/workspaces/{workspaceId}/evaluations`），不在外层仅凭 `principal.WorkspaceUUID` 拦截，而是在解析并鉴权路径目标 Workspace 之后（`requireConsoleWorkspaceCapability` / `resolveTunnelConsoleScope`）立即校验目标工作空间的 `CapabilitySet`，堵死通过省略或伪造 `X-Workspace-ID` 绕过的安全漏洞。
 - **Workspace Overview 兼容**：`internal/platformapi/workspace_overview.go` 针对非原生工作空间从 `runtime_resource_bindings` 聚合 `agent_count`、`session_count`、每日活跃曲线与失败统计（Qoder 会话终态/错误状态同步写入 `summary` 字段）。
 - **Console 与 Platform 文件路由收口**：`internal/files/handler.go` 的 `RegisterConsoleRoutes`（`/api/console/.../files/{fileId}(/content)`，供 `caseMedia.tsx` 预览）与 `internal/files/platform.go` 的 `RegisterPlatformRoutes`（`/upload_b64`、`/thumbnail`、`/preview`）全部按目标 Workspace 的运行时分流，Qoder 空间经 `FileRuntime` 安全流式代理下载与校验上传。
 - **Admin API 建工作空间收口**：`internal/admin/service.go:CreateWorkspace` 接入与 Console 一致的 `runtime_profile_uuid` 白名单校验与组织默认继承逻辑。
-- **前端裁剪补漏**：
+- **前端裁剪与 Quickstart/Builder 适配**：
   - 保留组织级 `/settings/llm` 与 `/settings/telemetry`（页面注明仅作用于组织内原生工作空间及评测裁判）。
   - 补齐 `agents/detail.tsx` 的 `<ObservabilityPage>` 与 `SessionInspector.tsx` 的 `<SessionTrajectory>` 能力门控。
-  - `overview.tsx` 仅在 `caps.byok_llm_providers === true` 时展示 `<LLMProviderRequired>`。
-  - `console-search/resource-search.ts` 按 `useWorkspaceCapabilities()` 过滤并发检索源。
+  - `overview.tsx` 仅在 `caps.byok_llm_providers === true` 时展示 `<LLMProviderRequired>`；`AgentQuickstartPage.tsx` 在外部运行时无可用模型时展示外部运行时空态与重试按钮，不误弹 `LLMProviderRequired`。
+  - `quickstart/builder/*` 在 `byok_llm_providers === false` 的工作空间中，对话构建与 Prompt 优化选用组织级 BYOK 对话模型，Agent 配置仍使用当前工作区运行时模型；当组织未配置可用对话模型时提供切换到手动配置的引导，并按 `skills` / `mcp_servers` / `credential_vaults` / `deployments` 能力裁剪目录查询、系统提示词、工具列表与分发逻辑。
+  - `console-search/resource-search.ts` 与 `useManagedReferenceOptions.ts` 按 `useWorkspaceCapabilities()` 过滤检索源与引用下拉选项（Qoder 开启 `memory_stores` 后保留 Memory Stores 加载并跳过未开启的 Credential Vaults）。
 
-### 4.5 飞书 Channel 与 Evaluations 的完整解耦方案（修复 F4、F5）
+### 4.6 飞书 Channel 与 Evaluations 的完整解耦方案（修复 F4、F5）
 
 - **飞书 Channel（`internal/channels`）**：
   1. 抽离 `channels.ResourceDirectory` 接口，替换 `local.go`、`agent_version.go`、`resources.go`、`channel_mounts.go`、`vault_ids.go`、`oauth.go`、`oauth_context.go` 对本地表的直接查询。

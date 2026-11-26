@@ -267,7 +267,7 @@ func NewServer(deps ServerDeps) *Server {
 		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds).WithRuntimeResolver(runtimeResolver),
 		files:             files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")).WithRuntimeResolver(runtimeResolver),
 		filestore:         filestoreHandler,
-		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
+		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer).WithRuntimeResolver(runtimeResolver),
 		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
 		models:            modelsapi.NewHandler(deps.DB).WithRuntimeResolver(runtimeResolver),
 		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity).WithRuntimeResolver(runtimeResolver),
@@ -463,9 +463,15 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
-			mcpServerHandler.RegisterRoutes(r)
+			r.Group(func(g chi.Router) {
+				g.Use(s.requireConsoleWorkspaceCapability(agentruntime.CapabilityMCPServers))
+				mcpServerHandler.RegisterRoutes(g)
+			})
 			s.files.RegisterConsoleRoutes(r)
-			evaluationHandler.RegisterRoutes(r)
+			r.Group(func(g chi.Router) {
+				g.Use(s.requireConsoleWorkspaceCapability(agentruntime.CapabilityEvaluations))
+				evaluationHandler.RegisterRoutes(g)
+			})
 			if s.identities != nil {
 				s.identities.RegisterConsole(r)
 			}

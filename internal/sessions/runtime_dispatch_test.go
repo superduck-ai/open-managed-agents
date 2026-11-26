@@ -133,13 +133,14 @@ func (m *mockSessionRuntime) ListSessionResources(context.Context, agentruntime.
 
 func (m *mockSessionRuntime) AddSessionResource(_ context.Context, _ agentruntime.Scope, sessionID string, input agentruntime.AddSessionResourceInput) (agentruntime.SessionResource, error) {
 	res := agentruntime.SessionResource{
-		ID:        "sesrsc_qdr_1",
-		SessionID: sessionID,
-		Type:      input.Type,
-		FileID:    input.FileID,
-		MountPath: input.MountPath,
-		CreatedAt: time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC),
+		ID:            "sesrsc_qdr_1",
+		SessionID:     sessionID,
+		Type:          input.Type,
+		FileID:        input.FileID,
+		MemoryStoreID: input.MemoryStoreID,
+		MountPath:     input.MountPath,
+		CreatedAt:     time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC),
 	}
 	m.resources = append(m.resources, res)
 	return res, nil
@@ -306,6 +307,7 @@ func TestSessionsHandlerExternalRuntimeDispatch(t *testing.T) {
 			{http.MethodPost, "/sesn_qdr_1", `{"title":"Updated"}`, nil},
 			{http.MethodGet, "/sesn_qdr_1/events", "", nil},
 			{http.MethodPost, "/sesn_qdr_1/resources", `{"type":"file","file_id":"file_qdr_1","mount_path":"/data/a.txt"}`, nil},
+			{http.MethodPost, "/sesn_qdr_1/resources", `{"type":"memory_store","memory_store_id":"memstore_qdr_1","access":"read_write"}`, nil},
 			{http.MethodGet, "/sesn_qdr_1/resources", "", nil},
 			{http.MethodGet, "/sesn_qdr_1/resources/sesrsc_qdr_1", "", nil},
 			{http.MethodPost, "/sesn_qdr_1/resources/sesrsc_qdr_1", `{"mount_path":"/data/b.txt"}`, nil},

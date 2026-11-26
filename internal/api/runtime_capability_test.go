@@ -217,6 +217,8 @@ func TestRequireCapabilityMiddleware(t *testing.T) {
 		agentruntime.CapabilityDeployments,
 		agentruntime.CapabilitySessionWebhooks,
 		agentruntime.CapabilityObservabilityDashboard,
+		agentruntime.CapabilityMCPServers,
+		agentruntime.CapabilityEvaluations,
 	} {
 		t.Run("blocks qoder on "+capKey, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -241,6 +243,122 @@ func TestRequireCapabilityMiddleware(t *testing.T) {
 			server.requireCapability(capKey)(okHandler).ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+		})
+	}
+
+	t.Run("allows qoder on memory_stores", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/memory_stores", nil)
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
+			OrganizationUUID: orgUUID,
+			WorkspaceUUID:    qoderWsUUID,
+			RuntimeProvider:  agentruntime.ProviderQoderCloud.String(),
+		}))
+		server.requireCapability(agentruntime.CapabilityMemoryStores)(okHandler).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestRequireConsoleWorkspaceCapabilityGuardsMCPServersAndEvaluations(t *testing.T) {
+	const (
+		orgUUID      = "00000000-0000-4000-8000-000000000010"
+		nativeWsUUID = "00000000-0000-4000-8000-000000000011"
+		qoderWsUUID  = "00000000-0000-4000-8000-000000000012"
+		qoderProfID  = "00000000-0000-4000-8000-000000000022"
+	)
+
+	store := &stubTunnelConsoleStore{
+		workspaces: []platform.ConsoleWorkspace{
+			{
+				UUID:                nativeWsUUID,
+				ExternalID:          "wrkspc_native",
+				OrgUUID:             orgUUID,
+				IsDefault:           true,
+				RuntimeProfileUUID:  db.DefaultOMANativeRuntimeProfileUUID,
+				RuntimeProviderKind: agentruntime.ProviderOMANative.String(),
+			},
+			{
+				UUID:                qoderWsUUID,
+				ExternalID:          "wrkspc_qoder",
+				OrgUUID:             orgUUID,
+				RuntimeProfileUUID:  qoderProfID,
+				RuntimeProviderKind: agentruntime.ProviderQoderCloud.String(),
+			},
+		},
+	}
+
+	profiles := &stubProfileStore{
+		byWorkspace: map[string]db.RuntimeProfile{
+			nativeWsUUID: {
+				UUID:         db.DefaultOMANativeRuntimeProfileUUID,
+				ProviderKind: agentruntime.ProviderOMANative.String(),
+				Status:       "active",
+			},
+			qoderWsUUID: {
+				UUID:         qoderProfID,
+				ProviderKind: agentruntime.ProviderQoderCloud.String(),
+				Status:       "active",
+			},
+		},
+	}
+
+	server := &Server{
+		workspaceAccess:   workspaceaccess.New(store),
+		consoleScopeStore: store,
+		runtimeResolver:   agentruntime.NewResolver(profiles, agentruntime.NewRegistry(), nil, nil),
+	}
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router := chi.NewRouter()
+	router.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
+		r.Group(func(g chi.Router) {
+			g.Use(server.requireConsoleWorkspaceCapability(agentruntime.CapabilityMCPServers))
+			g.Get("/workspaces/{workspaceId}/mcp_servers", okHandler)
+		})
+		r.Group(func(g chi.Router) {
+			g.Use(server.requireConsoleWorkspaceCapability(agentruntime.CapabilityEvaluations))
+			g.Get("/workspaces/{workspaceId}/evaluations/datasets", okHandler)
+		})
+	})
+
+	send := func(path string, headerWs string, principalWs string, principalProvider string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if headerWs != "" {
+			req.Header.Set("X-Workspace-ID", headerWs)
+		}
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
+			OrganizationUUID:   orgUUID,
+			WorkspaceUUID:      principalWs,
+			RuntimeProvider:    principalProvider,
+			UserExternalID:     "user_admin",
+			WorkspaceAccess:    auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin"},
+			CredentialType:     auth.CredentialTypePlatformSession,
+			RuntimeProfileUUID: db.DefaultOMANativeRuntimeProfileUUID,
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, suffix := range []string{"/mcp_servers", "/evaluations/datasets"} {
+		t.Run("blocks qoder target with spoofed native header on "+suffix, func(t *testing.T) {
+			rec := send("/api/console/organizations/"+orgUUID+"/workspaces/wrkspc_qoder"+suffix, "wrkspc_native", nativeWsUUID, agentruntime.ProviderOMANative.String())
+			assertUnsupportedCapabilityError(t, rec)
+		})
+		t.Run("blocks qoder target without header on "+suffix, func(t *testing.T) {
+			rec := send("/api/console/organizations/"+orgUUID+"/workspaces/wrkspc_qoder"+suffix, "", nativeWsUUID, agentruntime.ProviderOMANative.String())
+			assertUnsupportedCapabilityError(t, rec)
+		})
+		t.Run("allows native target on "+suffix, func(t *testing.T) {
+			rec := send("/api/console/organizations/"+orgUUID+"/workspaces/wrkspc_native"+suffix, "wrkspc_native", nativeWsUUID, agentruntime.ProviderOMANative.String())
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 			}
 		})
 	}

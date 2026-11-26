@@ -4,6 +4,7 @@ import type { QueryClient as QueryClientType } from '@tanstack/react-query';
 import type { AnyRouter } from '@tanstack/react-router';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
+import type { WorkspaceRuntimeSummary } from '../../shared/workspaces/runtime';
 
 export { resetTestDom };
 export { mock };
@@ -30,6 +31,7 @@ type ManagedAgentsRenderOptions = {
   models?: TestAgentModel[];
   auth?: AuthContextValue;
   seedModels?: boolean;
+  runtime?: WorkspaceRuntimeSummary;
 };
 
 const defaultTestAgentModels: TestAgentModel[] = [
@@ -199,7 +201,7 @@ export function renderManagedAgentsPage(
   const result = render(
     <QueryClientProvider client={queryClient}>
       <I18nProvider initialLocale={locale}>
-        <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
+        <WorkspaceContext.Provider value={workspaceContextValue(workspaceId, options.runtime)}>
           <ManagedAgentsTestRouterProvider router={router} />
         </WorkspaceContext.Provider>
       </I18nProvider>
@@ -2319,11 +2321,12 @@ export function createAgentRequestFixture(name: string) {
   };
 }
 
-export function workspaceContextValue(workspaceId: string) {
+export function workspaceContextValue(workspaceId: string, runtime?: WorkspaceRuntimeSummary) {
   const workspace = {
     ...defaultWorkspace,
     id: workspaceId,
     name: workspaceId === 'default' ? 'Default' : 'foo',
+    ...(runtime ? { runtime } : {}),
   };
   return {
     orgUuid: 'org_test',

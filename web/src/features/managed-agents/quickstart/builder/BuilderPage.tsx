@@ -1,8 +1,19 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Settings2 } from 'lucide-react';
+import { productIcons } from '@/shared/icons/product-icons';
 import { useI18n } from '../../../../shared/i18n';
-import { Button } from '../../../../shared/ui/button';
+import { useWorkspaceRuntime } from '../../../../shared/workspaces/context';
+import { quickstartModelSetupHref } from '../../../../shared/workspaces/model-setup-navigation';
+import { Button, ButtonLink } from '../../../../shared/ui/button';
 import { Card, CardContent } from '../../../../shared/ui/card';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '../../../../shared/ui/empty';
 import { ToggleGroup, ToggleGroupItem } from '../../../../shared/ui/toggle-group';
 import {
   MessageScroller,
@@ -30,14 +41,17 @@ export function BuilderPage({
   orgUuid,
   models,
   startHeader,
+  onSwitchToManual,
 }: {
   accountId: string;
   workspaceId: string;
   orgUuid: string;
   models: string[];
   startHeader?: ReactNode;
+  onSwitchToManual?: () => void;
 }) {
   const { locale } = useI18n();
+  const runtime = useWorkspaceRuntime();
   const zh = locale === 'zh-CN';
   const builder = useBuilder({ accountId, workspaceId, orgUuid, models });
   const [active, setActive] = useState(false);
@@ -54,6 +68,16 @@ export function BuilderPage({
         <Button onClick={() => void builder.catalog.refetch()}>{zh ? '重试' : 'Retry'}</Button>
       </div>
     );
+  if (!builder.chatAvailable)
+    return (
+      <BuilderChatModelRequired
+        startHeader={startHeader}
+        runtimeName={runtime.profile_name}
+        workspaceId={workspaceId}
+        orgUuid={orgUuid}
+        onSwitchToManual={onSwitchToManual}
+      />
+    );
   if (!active) return <BuilderEntry builder={builder} startHeader={startHeader} onEnter={() => setActive(true)} />;
   return (
     <BuilderWorkspace
@@ -66,6 +90,65 @@ export function BuilderPage({
         setActive(false);
       }}
     />
+  );
+}
+
+function BuilderChatModelRequired({
+  startHeader,
+  runtimeName,
+  workspaceId,
+  orgUuid,
+  onSwitchToManual,
+}: {
+  startHeader?: ReactNode;
+  runtimeName: string;
+  workspaceId: string;
+  orgUuid: string;
+  onSwitchToManual?: () => void;
+}) {
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
+  return (
+    <>
+      {startHeader}
+      <div className="mx-auto flex w-full max-w-xl flex-1 items-start justify-center pt-6">
+        <Empty
+          data-testid="builder-chat-model-required"
+          className="w-full rounded-xl border border-border bg-card py-10"
+        >
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <productIcons.models aria-hidden />
+            </EmptyMedia>
+            <EmptyTitle className="text-base">
+              {zh ? '对话构建需要组织级对话模型' : 'Conversational builder requires an organization chat model'}
+            </EmptyTitle>
+            <EmptyDescription>
+              {zh
+                ? `当前工作区使用 ${runtimeName} 运行时，组织尚未配置可用于对话构建的对话模型。你可以直接切换到手动配置创建智能体，或配置组织模型后再使用对话构建。`
+                : `This workspace uses ${runtimeName}, and no organization chat model is configured for conversational building. Switch to manual setup to configure your agent now, or configure an organization model.`}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {onSwitchToManual ? (
+                <Button type="button" onClick={onSwitchToManual}>
+                  {zh ? '切换到手动配置' : 'Switch to manual setup'}
+                </Button>
+              ) : null}
+              {orgUuid ? (
+                <ButtonLink
+                  variant={onSwitchToManual ? 'outline' : 'default'}
+                  href={quickstartModelSetupHref(workspaceId, window.location.search)}
+                >
+                  {zh ? '配置组织模型' : 'Configure organization models'}
+                </ButtonLink>
+              ) : null}
+            </div>
+          </EmptyContent>
+        </Empty>
+      </div>
+    </>
   );
 }
 

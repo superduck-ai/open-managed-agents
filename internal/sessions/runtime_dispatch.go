@@ -650,19 +650,49 @@ func buildExternalAddResourceInput(body *sessionResourceRequest) (agentruntime.A
 			return agentruntime.AddSessionResourceInput{}, errors.New("file_id must be a string")
 		}
 	}
+	var memoryStoreID string
+	if len(body.MemoryStoreID) > 0 && !httpapi.IsJSONNull(body.MemoryStoreID) {
+		if err := json.Unmarshal(body.MemoryStoreID, &memoryStoreID); err != nil {
+			return agentruntime.AddSessionResourceInput{}, errors.New("memory_store_id must be a string")
+		}
+	}
 	var mountPath string
 	if len(body.MountPath) > 0 && !httpapi.IsJSONNull(body.MountPath) {
 		if err := json.Unmarshal(body.MountPath, &mountPath); err != nil {
 			return agentruntime.AddSessionResourceInput{}, errors.New("mount_path must be a string")
 		}
 	}
-	payload, _ := json.Marshal(body)
+	payload := buildExternalResourcePayload(body)
 	return agentruntime.AddSessionResourceInput{
-		Type:      resourceType,
-		FileID:    fileID,
-		MountPath: mountPath,
-		Payload:   payload,
+		Type:          resourceType,
+		FileID:        fileID,
+		MemoryStoreID: memoryStoreID,
+		MountPath:     mountPath,
+		Payload:       payload,
 	}, nil
+}
+
+func buildExternalResourcePayload(body *sessionResourceRequest) json.RawMessage {
+	fields := make(map[string]json.RawMessage)
+	setField := func(name string, raw json.RawMessage) {
+		if len(raw) > 0 {
+			fields[name] = raw
+		}
+	}
+	setField("authorization_token", body.AuthorizationToken)
+	setField("access", body.Access)
+	setField("checkout", body.Checkout)
+	setField("description", body.Description)
+	setField("file_id", body.FileID)
+	setField("instructions", body.Instructions)
+	setField("memory_store_id", body.MemoryStoreID)
+	setField("mount_path", body.MountPath)
+	setField("name", body.Name)
+	setField("source", body.Source)
+	setField("type", body.Type)
+	setField("url", body.URL)
+	encoded, _ := json.Marshal(fields)
+	return json.RawMessage(encoded)
 }
 
 func decodeSessionMetadataMap(raw json.RawMessage) (map[string]string, error) {
@@ -799,6 +829,9 @@ func encodeRuntimeResource(res agentruntime.SessionResource) json.RawMessage {
 	}
 	if res.FileID != "" {
 		payload["file_id"] = res.FileID
+	}
+	if res.MemoryStoreID != "" {
+		payload["memory_store_id"] = res.MemoryStoreID
 	}
 	if res.MountPath != "" {
 		payload["mount_path"] = res.MountPath

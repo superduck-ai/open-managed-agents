@@ -104,7 +104,7 @@ func DefaultCapabilities(kind ProviderKind) CapabilitySet {
 			Channels:               false,
 			Evaluations:            false,
 			Skills:                 false,
-			MemoryStores:           false,
+			MemoryStores:           true,
 			CredentialVaults:       false,
 			MCPServers:             false,
 			UsageMetering:          UsageMeteringProviderCredits,

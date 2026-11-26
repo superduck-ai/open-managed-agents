@@ -8,6 +8,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../../../shared/i18n';
+import { useWorkspaceCapabilities } from '../../../../shared/workspaces/context';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import type { CreateAgentInput } from '../../types';
 import { errorMessage } from '../../utils';
@@ -16,11 +17,13 @@ import {
   BuilderCredentialReadError,
   authenticationServers,
   loadBuilderVaults,
-  builderBackend,
   loadBuilderCatalog,
   recoverBuilderOperation,
+  resolveBuilderChatTarget,
   selectBuilderEnvironment,
+  selectOrganizationBuilderChatTarget,
   missingBuilderCredentials,
+  type BuilderRuntimeCapabilities,
 } from './api';
 import {
   builderStorageKey,
@@ -46,9 +49,22 @@ import {
   savedBuilderOperationResult,
 } from './mutations';
 
+function nextBuilderStep(state: BuilderState, deploymentsEnabled: boolean) {
+  if (!deploymentsEnabled && state.step === 'session') return 'integrate' as const;
+  return builderNextStep(state);
+}
+
 type BuilderInput = { accountId: string; workspaceId: string; orgUuid: string; models: string[] };
 export function useBuilder(input: BuilderInput) {
   const { locale } = useI18n();
+  const workspaceCapabilities = useWorkspaceCapabilities();
+  const runtimeCapabilities: BuilderRuntimeCapabilities = {
+    byok_llm_providers: workspaceCapabilities.byok_llm_providers,
+    skills: workspaceCapabilities.skills,
+    mcp_servers: workspaceCapabilities.mcp_servers,
+    credential_vaults: workspaceCapabilities.credential_vaults,
+    deployments: workspaceCapabilities.deployments,
+  };
   const key = builderStorageKey(input.accountId, input.workspaceId);
   const [state, setState] = useState(
     () =>
@@ -70,8 +86,15 @@ export function useBuilder(input: BuilderInput) {
   const [vaultsError, setVaultsError] = useState('');
   const testEvents = useRef('');
   const catalog = useQuery({
-    queryKey: ['builder-catalog', input.accountId, input.workspaceId],
-    queryFn: () => loadBuilderCatalog(input.orgUuid, input.workspaceId),
+    queryKey: [
+      'builder-catalog',
+      input.accountId,
+      input.workspaceId,
+      runtimeCapabilities.byok_llm_providers,
+      runtimeCapabilities.skills,
+      runtimeCapabilities.mcp_servers,
+    ],
+    queryFn: () => loadBuilderCatalog(input.orgUuid, input.workspaceId, runtimeCapabilities),
     retry: false,
   });
   useEffect(() => {
@@ -82,7 +105,12 @@ export function useBuilder(input: BuilderInput) {
     };
   }, []);
   useEffect(() => {
-    if (!catalog.data || !['pick_vault', 'select_vault'].includes(state.gate?.name ?? '')) return;
+    if (
+      !runtimeCapabilities.credential_vaults ||
+      !catalog.data ||
+      !['pick_vault', 'select_vault'].includes(state.gate?.name ?? '')
+    )
+      return;
     let active = true;
     setVaultsLoading(true);
     setVaultsError('');
@@ -103,7 +131,7 @@ export function useBuilder(input: BuilderInput) {
     return () => {
       active = false;
     };
-  }, [state.gate?.id, catalog.data, input.workspaceId, vaultRevision]);
+  }, [state.gate?.id, catalog.data, input.workspaceId, vaultRevision, runtimeCapabilities.credential_vaults]);
   function update(change: (value: BuilderState) => BuilderState) {
     if (!mounted.current) return;
     const next = change(current.current);
@@ -139,6 +167,7 @@ export function useBuilder(input: BuilderInput) {
         catalog: catalog.data,
         models: input.models,
         workspaceId: input.workspaceId,
+        runtimeCapabilities,
       });
       if (!mounted.current || controller.current?.signal.aborted) return null;
       if (prepared.vaults) setVaults(prepared.vaults);
@@ -172,10 +201,15 @@ export function useBuilder(input: BuilderInput) {
         modelID: input.models[0],
         locale,
       });
+      const chatTarget = resolveBuilderChatTarget(
+        input.models[0],
+        catalog.data,
+        runtimeCapabilities.byok_llm_providers,
+      );
       const turn = await streamBuilderTurn({
         ...input,
-        model: input.models[0],
-        backend: builderBackend(input.models[0], catalog.data),
+        model: chatTarget.model,
+        backend: chatTarget.backend,
         system: builderSystem(
           value,
           locale,
@@ -184,8 +218,9 @@ export function useBuilder(input: BuilderInput) {
           value.sessionID && !value.testClosed ? testEvents.current : '',
           catalog.data.agents,
           catalog.data.capabilities,
+          runtimeCapabilities,
         ),
-        tools: builderTools(input.models),
+        tools: builderTools(input.models, runtimeCapabilities),
         messages: baseMessages,
         signal: turnController.signal,
         onText: (text) => {
@@ -253,6 +288,7 @@ export function useBuilder(input: BuilderInput) {
         operation.id,
         input.workspaceId,
         input.orgUuid,
+        runtimeCapabilities,
       );
       if (!isCurrentWrite(action, tool)) return;
       update((value) => ({ ...value, operation }));
@@ -298,6 +334,7 @@ export function useBuilder(input: BuilderInput) {
         catalog: catalog.data,
         models: input.models,
         workspaceId: input.workspaceId,
+        runtimeCapabilities,
       });
       update((state) => ({
         ...state,
@@ -330,6 +367,7 @@ export function useBuilder(input: BuilderInput) {
         catalog: catalog.data,
         models: input.models,
         workspaceId: input.workspaceId,
+        runtimeCapabilities,
       });
       if (!mounted.current || controller.current?.signal.aborted) return;
       if (!prepared.gate) {
@@ -459,13 +497,18 @@ export function useBuilder(input: BuilderInput) {
         call,
         { user_choice: locale === 'zh-CN' ? '继续' : 'Continue' },
         {
-          step: builderNextStep(current.current),
+          step: nextBuilderStep(current.current, runtimeCapabilities.deployments),
         },
       );
     });
+  const chatAvailable =
+    runtimeCapabilities.byok_llm_providers ||
+    Boolean(catalog.data && selectOrganizationBuilderChatTarget(catalog.data));
   return {
     state,
     catalog,
+    chatAvailable,
+    runtimeCapabilities,
     busy,
     error,
     partial,
@@ -486,7 +529,19 @@ export function useBuilder(input: BuilderInput) {
         throw new Error(
           locale === 'zh-CN' ? '无法读取工作区能力，请重试。' : 'Unable to load workspace capabilities. Retry.',
         );
-      return optimizeBuilderPrompt({ ...input, model: input.models[0], catalog: available.data, text, signal });
+      const chatTarget = resolveBuilderChatTarget(
+        input.models[0],
+        available.data,
+        runtimeCapabilities.byok_llm_providers,
+      );
+      return optimizeBuilderPrompt({
+        ...input,
+        model: chatTarget.model,
+        backend: chatTarget.backend,
+        catalog: available.data,
+        text,
+        signal,
+      });
     },
     reply: sendChatReply,
     resolve,

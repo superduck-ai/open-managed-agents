@@ -12,6 +12,56 @@ import (
 	"uuid"
 )
 
+func TestChannelDirectChatPostgres(t *testing.T) {
+	store, database := newTranscriptArchiveTestDB(t)
+	ctx := t.Context()
+	scope := ChannelInputScope{OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), ChannelUUID: uuid.NewV4().String(), ChannelType: "feishu", AccountID: "app_fixture"}
+	const channelID = "chnl_menu_test"
+	_, err := database.ExecContext(ctx, `INSERT INTO channels(uuid,external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,binding_status,app_id)
+VALUES($1,$2,$3,$4,'agent_fixture','会话菜单','feishu','open','bound',$5)`, scope.ChannelUUID, channelID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][3]string{
+		{"group", "ou_actor", "oc_group"},
+		{"p2p", "ou_other", "oc_other"},
+	} {
+		input := ChannelInput{
+			MessageID: pair[2], ScopeKey: "chat:" + pair[2],
+			Payload: fmt.Sprintf(`{"chat_type":%q,"user_id":%q,"chat_id":%q}`, pair[0], pair[1], pair[2]),
+		}
+		if _, fresh, err := store.ReceiveChannelInput(ctx, scope, input); err != nil || !fresh {
+			t.Fatalf("写入测试消息失败: %v %v", fresh, err)
+		}
+	}
+	if got, err := store.FindChannelDirectChat(ctx, scope, channelID, "ou_actor"); got != "" || err != nil {
+		t.Fatalf("其他用户的私聊和本人的群聊都不能用于重置: %q %v", got, err)
+	}
+	legacy := transcriptTestScope()
+	legacy.OrganizationUUID, legacy.WorkspaceUUID = scope.OrganizationUUID, scope.WorkspaceUUID
+	sessionID := "ses_" + seedTranscriptArchiveSession(t, database, legacy)
+	if _, err := database.ExecContext(ctx, `UPDATE sessions SET metadata='{"chat_type":"p2p","app_id":"app_fixture","open_id":"ou_actor"}' WHERE external_id=$1`, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChannelSessionBinding(ctx, channelID, "chat:oc_legacy", sessionID, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.FindChannelDirectChat(ctx, scope, channelID, "ou_actor"); got != "oc_legacy" || err != nil {
+		t.Fatalf("无法读取旧版私聊绑定: %q %v", got, err)
+	}
+	input := ChannelInput{MessageID: "om_direct", ScopeKey: "chat:oc_direct", Payload: `{"chat_type":"p2p","user_id":"ou_actor","chat_id":"oc_direct"}`}
+	if _, fresh, err := store.ReceiveChannelInput(ctx, scope, input); err != nil || !fresh {
+		t.Fatalf("写入私聊输入失败: %v %v", fresh, err)
+	}
+	if got, err := store.FindChannelDirectChat(ctx, scope, channelID, "ou_actor"); got != "oc_direct" || err != nil {
+		t.Fatalf("应优先使用入站私聊记录: %q %v", got, err)
+	}
+	scope.WorkspaceUUID = uuid.NewV4().String()
+	if got, err := store.FindChannelDirectChat(ctx, scope, channelID, "ou_actor"); got != "" || err != nil {
+		t.Fatalf("不能读取其他工作区的私聊: %q %v", got, err)
+	}
+}
+
 func TestChannelInputsPostgres(t *testing.T) {
 	store, database := newTranscriptArchiveTestDB(t)
 	scope := ChannelInputScope{OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), ChannelUUID: uuid.NewV4().String(), ChannelType: "other", AccountID: "app_fixture"}

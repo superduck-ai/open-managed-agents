@@ -38,9 +38,14 @@ type fakeRuntimeStore struct {
 	inputKeys         map[string]string
 	receiveInputErr   error
 	inputOrder        []string
+	directChats       map[string]string
 	credential        string
 	credentialErr     error
 	env               string
+}
+
+func (f *fakeRuntimeStore) FindChannelDirectChat(_ context.Context, _ db.ChannelInputScope, _, actorID string) (string, error) {
+	return f.directChats[actorID], nil
 }
 
 func (f *fakeRuntimeStore) FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error) {
@@ -130,6 +135,7 @@ type fakeChannel struct {
 	appends        []string
 	downloads      map[string][]byte
 	startErr       error
+	sendErr        error
 	updateFailures int
 	updateAttempts int
 	streams        []*channeltypes.SendInput
@@ -138,6 +144,9 @@ type fakeChannel struct {
 func (f *fakeChannel) Send(_ context.Context, input *channeltypes.SendInput) (*channeltypes.SendResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return nil, f.sendErr
+	}
 	if input.Card == "" {
 		f.sends = append(f.sends, input.Text+input.Markdown)
 	}

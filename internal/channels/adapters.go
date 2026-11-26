@@ -13,7 +13,8 @@ func adapterConfig(worker *channelWorker, secret string) contracts.AdapterConfig
 		IncludeThinking: worker.record.IncludeThinking, ReplyInThread: worker.record.ReplyInThread,
 		FileMaxBytes: worker.supervisor.fileMaxBytes,
 		Online:       worker.observeOnline, Receive: worker.receiveChannelMessage, Action: worker.handleAction,
-		Prepare: worker.prepareInputMessage, Context: worker.baseContext,
+		NewSession: worker.receiveNewSessionMenu,
+		Prepare:    worker.prepareInputMessage, Context: worker.baseContext,
 		Busy: func(scope string) bool {
 			worker.mu.Lock()
 			defer worker.mu.Unlock()

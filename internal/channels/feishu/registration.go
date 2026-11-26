@@ -58,7 +58,7 @@ func registrationOptions(options *contracts.RegistrationOptions) *registration.O
 					"offline_access",
 				},
 			},
-			Events:    registration.AppAddonsEvents{Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1"}}},
+			Events:    registration.AppAddonsEvents{Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1", "application.bot.menu_v6"}}},
 			Callbacks: registration.AppAddonsCallbacks{Items: []string{"card.action.trigger"}},
 		},
 		OnQRCode:       func(info *registration.QRCodeInfo) { options.OnQRCode(info.URL, info.ExpireIn) },

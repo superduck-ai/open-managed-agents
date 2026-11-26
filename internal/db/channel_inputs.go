@@ -52,6 +52,10 @@ func (d *DB) ReceiveChannelInput(ctx context.Context, scope ChannelInputScope, i
 	return NewChannelInputMapper(d.mapperDB).Insert(ctx, scope, input)
 }
 
+func (d *DB) FindChannelDirectChat(ctx context.Context, scope ChannelInputScope, channelID, actorID string) (string, error) {
+	return NewChannelInputMapper(d.mapperDB).FindDirectChat(ctx, scope, channelID, actorID)
+}
+
 func (d *DB) ClaimChannelInput(ctx context.Context, scope ChannelInputScope, inputUUID, owner string) (ChannelInput, bool, error) {
 	return NewChannelInputMapper(d.mapperDB).Claim(ctx, scope, inputUUID, owner)
 }

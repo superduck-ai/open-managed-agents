@@ -50,12 +50,7 @@ func (s *Service) promptPairingOAuth(ctx context.Context, w *channelWorker, msg 
 	if err = s.store.HoldPairingOAuth(ctx, w.inputScope(), msg.Input.UUID, w.deliveryOwner, string(patch)); err != nil {
 		return true, err
 	}
-	closeErr := stream.Close(ctx)
-	pairing, err := s.store.FindScopePairing(ctx, w.record.WorkspaceUUID, id)
-	if err != nil || pairing.Status != "active" {
-		return true, errors.Join(closeErr, err)
-	}
-	return true, errors.Join(closeErr, s.resumePairingOAuthWaiters(ctx, w, msg, id, provider))
+	return true, stream.Close(ctx)
 }
 
 func (s *Service) pairingOAuthTarget(ctx context.Context, c *db.OAuthContinuation, completed bool) (OAuthTarget, *channelWorker, db.ChannelInput, error) {
@@ -172,22 +167,12 @@ func (s *Service) CompletePairingOAuth(ctx context.Context, workspace string, c 
 	if err = s.supervisor.ingress.ConfirmSelfPairing(ctx, channelIngress(t.Scope.Channel, msg, row.ScopeKey), receipt.PairingID, version); err != nil {
 		return err
 	}
-	return s.resumePairingOAuthWaiters(ctx, w, msg, receipt.PairingID, t.Request.Provider)
-}
-
-func (s *Service) resumePairingOAuthWaiters(ctx context.Context, w *channelWorker, msg *channelMessage, pairingID, provider string) error {
-	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ActorID: msg.UserID, PairingID: pairingID}, msg.ChatID, provider)
+	waiters, err := s.store.ResumeOAuthWaiters(ctx, w.inputScope(), db.ChannelPairingResume{ActorID: msg.UserID, PairingID: receipt.PairingID}, msg.ChatID, t.Request.Provider)
 	if err != nil {
 		return err
 	}
 	var dispatchErr error
 	for _, waiter := range waiters {
-		var msg channelMessage
-		if err := json.Unmarshal([]byte(waiter.Payload), &msg); err == nil && msg.PairingCard != "" {
-			if err := w.adapter.ResumeReply(msg.PairingCard).Update(ctx, contracts.Reply{Status: "已连接", Blocks: []contracts.ReplyBlock{{Text: "已连接"}}, Ended: true}); err != nil {
-				s.logger.WarnContext(ctx, "更新配对授权卡失败", "input_uuid", waiter.UUID, "error", err)
-			}
-		}
 		dispatchErr = errors.Join(dispatchErr, w.claimAndDispatchInput(ctx, waiter.UUID))
 	}
 	return dispatchErr

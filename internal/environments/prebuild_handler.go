@@ -153,12 +153,19 @@ func (svc *Prebuilds) currentPrebuildResponse(env db.Environment, task prebuildT
 		result.HasTemplateLogs = available && svc.templates.Capabilities().Logs && task.output.TemplateJobRef != ""
 	}
 	result.CanCancel = mutable && providerMatches && task.active() && !task.output.Submitting && !task.output.CancelRequested && (task.ref() == "" || svc.capabilities(task.stage()).Cancel)
-	if env.ResolvedTemplate != "" {
+	applyEnvironmentReadiness(result, env, task)
+	result.CanStart = mutable && !task.active() && result.State != "ready" && task.output.TemplateID == ""
+	return result
+}
+
+func applyEnvironmentReadiness(result *prebuildResponse, env db.Environment, task prebuildTask) {
+	switch {
+	case environmentTemplateSource(env) == templateSourceCurrent:
 		result.State, result.Stage = "ready", "template"
 		result.CanCancel = false
+	case result.State == "ready":
+		result.State, result.Stage = "running", "template"
 	}
-	result.CanStart = mutable && !task.active() && result.State != "ready"
-	return result
 }
 
 func (h *Handler) getPrebuild(w http.ResponseWriter, r *http.Request) error {

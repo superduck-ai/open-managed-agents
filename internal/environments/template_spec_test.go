@@ -1,8 +1,9 @@
 package environments
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -201,34 +202,43 @@ func TestResourceOnlyPrebuildStartsAtTemplateStage(t *testing.T) {
 	}
 }
 
-func TestResolveEnvironmentSandboxRequiresPrebuiltTemplate(t *testing.T) {
-	jobID := int64(7)
+func TestResolveEnvironmentSandboxTemplateSource(t *testing.T) {
+	previous, latest := int64(7), int64(8)
 	runner := &Runner{provider: e2bruntime.NewProvider(config.E2BConfig{Template: "base"})}
+	script := json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test","CLAUDE_FLAG":"on","ANTHROPIC_ENVIRONMENT_ID":"spoofed"}}`)
+	scriptWithPackages := json.RawMessage(`{"type":"cloud","init_script":"make all","packages":{"type":"packages","pip":["b","a"]}}`)
+	resources := json.RawMessage(`{"type":"cloud","resources":{"cpu":2000}}`)
+	builtWithoutPackages := json.RawMessage(`{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}`)
+	builtWithPackages := json.RawMessage(`{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":["a","b"]}`)
+	builtWithOtherPackages := json.RawMessage(`{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":["a"]}`)
 	for _, tc := range []struct {
-		name string
-		env  db.Environment
+		name         string
+		env          db.Environment
+		wantTemplate string
+		want         templateChoice
 	}{
-		{"script without build", db.Environment{Config: json.RawMessage(`{"type":"cloud","init_script":"make"}`), ResolvedTemplate: "base"}},
-		{"resources while building", db.Environment{Config: json.RawMessage(`{"type":"cloud","resources":{"cpu":2000}}`), BuildJobID: &jobID}},
+		{"unbuilt environment keeps its stored base", db.Environment{Config: script, ResolvedTemplate: "old-base"}, "old-base", templateChoice{source: templateSourceDefault}},
+		{"first build pending follows configured default", db.Environment{Config: script, BuildJobID: &latest}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackNotBuilt}},
+		{"resources first build failed uses configured default", db.Environment{Config: resources, BuildJobID: &latest}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackNotBuilt}},
+		{"completed build serves current template", db.Environment{Config: script, BuildJobID: &previous, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old"}, "tpl-old", templateChoice{source: templateSourceCurrent}},
+		{"template written back by an older instance is current", db.Environment{Config: script, BuildJobID: &latest, ResolvedTemplate: "tpl-legacy"}, "tpl-legacy", templateChoice{source: templateSourceCurrent}},
+		{"rebuild with unchanged packages serves previous template", db.Environment{Config: script, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old", ResolvedPackages: builtWithoutPackages}, "tpl-old", templateChoice{source: templateSourcePrevious}},
+		{"reordered packages still match the previous template", db.Environment{Config: scriptWithPackages, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old", ResolvedPackages: builtWithPackages}, "tpl-old", templateChoice{source: templateSourcePrevious}},
+		{"changed packages fall back to the default template", db.Environment{Config: scriptWithPackages, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old", ResolvedPackages: builtWithOtherPackages}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}},
+		{"removed packages fall back to the default template", db.Environment{Config: script, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old", ResolvedPackages: builtWithPackages}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}},
+		{"previous template without a build spec falls back", db.Environment{Config: script, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedTemplate: "tpl-old"}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesUnknown}},
+		{"template cleared by an older instance uses the default", db.Environment{Config: script, BuildJobID: &latest, ResolvedBuildJobID: &previous, ResolvedPackages: builtWithoutPackages}, "base", templateChoice{source: templateSourceDefault, fallback: templateFallbackNotBuilt}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := runner.resolveEnvironmentSandbox(tc.env, nil); !errors.Is(err, errEnvironmentTemplateNotReady) {
-				t.Fatalf("error = %v", err)
+			resolution, choice, err := runner.resolveEnvironmentSandbox(tc.env, nil)
+			if err != nil || choice.source != tc.want.source || choice.fallback != tc.want.fallback || resolution.Template != tc.wantTemplate {
+				t.Fatalf("resolution = %+v choice=%+v err=%v", resolution, choice, err)
 			}
 		})
 	}
-	env := db.Environment{
-		ExternalID:       "env_1",
-		Config:           json.RawMessage(`{"type":"cloud","init_script":"make","environment":{"MODE":"test","CLAUDE_FLAG":"on","ANTHROPIC_ENVIRONMENT_ID":"spoofed"}}`),
-		BuildJobID:       &jobID,
-		ResolvedTemplate: "built",
-	}
-	resolution, preinstalled, err := runner.resolveEnvironmentSandbox(env, nil)
-	if err != nil || !preinstalled || resolution.Template != "built" {
-		t.Fatalf("resolution = %+v preinstalled=%v err=%v", resolution, preinstalled, err)
-	}
-	if resolution.Envs["MODE"] != "test" || resolution.Envs["CLAUDE_FLAG"] != "on" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
-		t.Fatalf("envs = %+v", resolution.Envs)
+	resolution, _, err := runner.resolveEnvironmentSandbox(db.Environment{ExternalID: "env_1", Config: script}, nil)
+	if err != nil || resolution.Envs["MODE"] != "test" || resolution.Envs["CLAUDE_FLAG"] != "on" || resolution.Envs["ANTHROPIC_ENVIRONMENT_ID"] != "env_1" {
+		t.Fatalf("envs = %+v err=%v", resolution.Envs, err)
 	}
 }
 
@@ -260,5 +270,35 @@ func TestPlatformResponseNetworkingDefaultsToUnrestricted(t *testing.T) {
 		if err := json.Unmarshal(platformEnvironmentConfigForResponse(json.RawMessage(raw)), &response); err != nil || response.Networking.Type != want {
 			t.Fatalf("networking type for %s = %q, %v, want %q", raw, response.Networking.Type, err, want)
 		}
+	}
+}
+
+func TestReportTemplateSourceWarnsWhenSpecNotApplied(t *testing.T) {
+	work := &db.EnvironmentWork{ExternalID: "work_1", SessionExternalID: "sesn_1"}
+	for _, tc := range []struct {
+		name   string
+		config string
+		choice templateChoice
+		warns  bool
+	}{
+		{"default with init script warns", `{"type":"cloud","init_script":"make"}`, templateChoice{source: templateSourceDefault, fallback: templateFallbackNotBuilt}, true},
+		{"package change fallback with resources warns", `{"type":"cloud","resources":{"cpu":2000}}`, templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}, true},
+		{"default with packages only is silent", `{"type":"cloud","packages":{"pip":["a"]}}`, templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}, false},
+		{"previous template is silent", `{"type":"cloud","init_script":"make"}`, templateChoice{source: templateSourcePrevious}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &prebuildLogRecorder{}
+			runner := &Runner{logger: slog.New(recorder)}
+			env := db.Environment{ExternalID: "env_1", Config: json.RawMessage(tc.config)}
+			ctx, run := startSandboxRun(context.Background(), *work, runnerTriggerLazyMCP)
+			runner.reportTemplateSource(ctx, run, env, work, "base", tc.choice)
+			run.end(ctx, nil)
+			if warned := len(recorder.records) == 1 && recorder.records[0].level == slog.LevelWarn; warned != tc.warns || len(recorder.records) > 1 {
+				t.Fatalf("log records = %+v, want warning=%v", recorder.records, tc.warns)
+			}
+			if tc.warns && (recorder.records[0].attrs["environment_id"] != "env_1" || recorder.records[0].attrs["template_fallback"] != string(tc.choice.fallback)) {
+				t.Fatalf("warning attrs = %+v", recorder.records[0].attrs)
+			}
+		})
 	}
 }

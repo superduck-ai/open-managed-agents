@@ -194,7 +194,11 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 	}{
 		{"version changes identity", `{"type":"cloud","packages":{"apt":["a=2","b"]}}`, false},
 		{"manager changes identity", `{"type":"cloud","packages":{"pip":["a","b"]}}`, false},
-		{"order changes identity", `{"type":"cloud","packages":{"apt":["b","a"]}}`, false},
+		{"order within a manager is ignored", `{"type":"cloud","packages":{"apt":["b","a"]}}`, true},
+		{"repeated entries change identity", `{"type":"cloud","packages":{"apt":["b","a","a"]}}`, false},
+		{"added package changes identity", `{"type":"cloud","packages":{"apt":["b","a","c"]}}`, false},
+		{"removed package changes identity", `{"type":"cloud","packages":{"apt":["a"]}}`, false},
+		{"pinned version changes identity", `{"type":"cloud","packages":{"apt":["b","a=1.0"]}}`, false},
 		{"empty lists and unrelated settings are ignored", `{"type":"cloud","packages":{"apt":["a","b"],"pip":[]},"environment_variables":{"LANG":"en"}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,31 +208,6 @@ func TestPrebuildNormalizedPackagesEquality(t *testing.T) {
 			}
 			if samePackages(base, packages) != tc.same {
 				t.Fatalf("packages=%+v, want same=%v", packages, tc.same)
-			}
-		})
-	}
-}
-
-func TestPrebuildTemplateBinding(t *testing.T) {
-	jobID := int64(42)
-	provider := e2bruntime.NewProvider(config.E2BConfig{Template: "new-base"})
-	for _, tc := range []struct {
-		name     string
-		jobID    *int64
-		template string
-		resolved string
-		ready    bool
-	}{
-		{"unbuilt environment retains its base", nil, "old-base", "old-base", false},
-		{"pending uses provider fallback", &jobID, "", "new-base", false},
-		{"ready template survives base change", &jobID, "built-template", "built-template", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env := db.Environment{BuildJobID: tc.jobID, ResolvedTemplate: tc.template}
-			ready := hasPrebuiltTemplate(env)
-			resolution, err := provider.Resolve(env, nil)
-			if err != nil || ready != tc.ready || resolution.Template != tc.resolved {
-				t.Fatalf("template=%q ready=%v error=%v", resolution.Template, ready, err)
 			}
 		})
 	}
@@ -250,7 +229,7 @@ func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 		{"completed prebuild keeps its template", `{"type":"cloud","packages":{"pip":["requests"]}}`, &jobID, "built-template", "built-template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			current := db.Environment{Config: json.RawMessage(tc.config), BuildJobID: tc.jobID, ResolvedTemplate: tc.storedTemplate}
+			current := db.Environment{Config: json.RawMessage(tc.config), BuildJobID: tc.jobID, ResolvedBuildJobID: tc.jobID, ResolvedTemplate: tc.storedTemplate}
 			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(`{"type":"cloud"}`)})
 			if err != nil {
 				t.Fatal(err)
@@ -269,9 +248,10 @@ func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 func TestPrebuildReconcileRepairsInvalidStoredPackages(t *testing.T) {
 	jobID := int64(42)
 	current := db.Environment{
-		Config:           json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`),
-		BuildJobID:       &jobID,
-		ResolvedTemplate: "old-template",
+		Config:             json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`),
+		BuildJobID:         &jobID,
+		ResolvedBuildJobID: &jobID,
+		ResolvedTemplate:   "old-template",
 	}
 	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base-b"}}}
 	next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{
@@ -283,7 +263,7 @@ func TestPrebuildReconcileRepairsInvalidStoredPackages(t *testing.T) {
 	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
 		t.Fatal(err)
 	}
-	if next.BuildJobID != nil || next.ResolvedTemplate != "base-b" {
+	if next.BuildJobID != nil || next.ResolvedBuildJobID != nil || next.ResolvedTemplate != "base-b" {
 		t.Fatalf("repaired environment kept stale prebuild: job=%v template=%q", next.BuildJobID, next.ResolvedTemplate)
 	}
 }
@@ -293,6 +273,183 @@ func TestPrebuildReconcileRejectsInvalidReplacementPackages(t *testing.T) {
 	next := db.Environment{Config: json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`)}
 	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err == nil {
 		t.Fatal("invalid replacement packages accepted")
+	}
+}
+
+func TestPrebuildReconcileTemplateTransition(t *testing.T) {
+	active, pending := int64(41), int64(42)
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true, Template: config.TemplateBuildConfig{MaxResources: config.TemplateResourceLimit{CPU: 8000}}}}}
+	before := `{"type":"cloud","packages":{"type":"packages","pip":["a","b"]},"init_script":"make","resources":{"cpu":1000},"environment":{"A":"1"}}`
+	packages := json.RawMessage(`{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":["a","b"]}`)
+	for _, tc := range []struct {
+		name         string
+		update       string
+		archived     bool
+		disabled     bool
+		wantEnqueue  bool
+		wantTemplate string
+		wantActive   *int64
+	}{
+		{"environment variables only keep the build", `{"environment":{"A":"2"}}`, false, false, false, "tpl-old", &active},
+		{"networking only keeps the build", `{"networking":{"type":"limited","allowed_hosts":["example.com"]}}`, false, false, false, "tpl-old", &active},
+		{"package order only keeps the build", `{"packages":{"type":"packages","pip":["b","a"]}}`, false, false, false, "tpl-old", &active},
+		{"package change rebuilds and keeps the previous template", `{"packages":{"type":"packages","pip":["a","b","c"]}}`, false, false, true, "tpl-old", &active},
+		{"package version change rebuilds", `{"packages":{"type":"packages","pip":["a==1.0","b"]}}`, false, false, true, "tpl-old", &active},
+		{"init script change rebuilds", `{"init_script":"make all"}`, false, false, true, "tpl-old", &active},
+		{"init script removal rebuilds while packages remain", `{"init_script":null}`, false, false, true, "tpl-old", &active},
+		{"resources change rebuilds", `{"resources":{"cpu":2000}}`, false, false, true, "tpl-old", &active},
+		{"clearing the build spec returns to default", `{"packages":null,"init_script":null,"resources":null}`, false, false, false, "base", nil},
+		{"archived environment returns to default", `{"init_script":"make all"}`, true, false, false, "base", nil},
+		{"disabled prebuilds return to default", `{"packages":{"type":"packages","pip":["c"]}}`, false, true, false, "base", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &pending, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old", ResolvedPackages: packages}
+			if tc.archived {
+				now := time.Now()
+				current.ArchivedAt = &now
+			}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: !tc.disabled}}
+			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
+			if enqueued := errors.Is(err, errPrebuildUnavailable); enqueued != tc.wantEnqueue || (err != nil && !enqueued) {
+				t.Fatalf("reconcile error = %v, want enqueue=%v", err, tc.wantEnqueue)
+			}
+			if next.ResolvedTemplate != tc.wantTemplate || !reflect.DeepEqual(next.ResolvedBuildJobID, tc.wantActive) || (len(next.ResolvedPackages) > 0) != (tc.wantActive != nil) {
+				t.Fatalf("template=%q active=%v packages=%s", next.ResolvedTemplate, next.ResolvedBuildJobID, next.ResolvedPackages)
+			}
+			if !tc.wantEnqueue && tc.wantActive != nil && !reflect.DeepEqual(next.BuildJobID, current.BuildJobID) {
+				t.Fatalf("build job changed to %v", next.BuildJobID)
+			}
+		})
+	}
+}
+
+func TestPrebuildReconcileAdoptsTemplateFromOlderInstance(t *testing.T) {
+	jobID := int64(42)
+	before := `{"type":"cloud","packages":{"type":"packages","pip":["b","a"]},"init_script":"make"}`
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base"}, EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
+	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}}
+	for _, tc := range []struct {
+		name        string
+		update      string
+		wantEnqueue bool
+	}{
+		{"unchanged spec records the build in place", `{"environment":{"A":"1"}}`, false},
+		{"changed spec keeps the adopted template during the rebuild", `{"init_script":"make all"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(before), BuildJobID: &jobID, ResolvedTemplate: "tpl-legacy"}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(tc.update)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = service.reconcilePrebuild(context.Background(), nil, &current, &next)
+			if errors.Is(err, errPrebuildUnavailable) != tc.wantEnqueue || (err != nil && !tc.wantEnqueue) {
+				t.Fatalf("reconcile error = %v", err)
+			}
+			if next.ResolvedTemplate != "tpl-legacy" || next.ResolvedBuildJobID == nil || *next.ResolvedBuildJobID != jobID {
+				t.Fatalf("template=%q active=%v", next.ResolvedTemplate, next.ResolvedBuildJobID)
+			}
+			packages, known := decodePackagesSnapshot(next.ResolvedPackages)
+			if !known || packages == nil || !reflect.DeepEqual(packages.PIP, []string{"b", "a"}) {
+				t.Fatalf("packages snapshot = %s", next.ResolvedPackages)
+			}
+		})
+	}
+}
+
+func TestPrebuildResponseReadiness(t *testing.T) {
+	active, jobID := int64(41), int64(42)
+	failedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: jobID, State: rivertype.JobStateDiscarded},
+		Args:   prebuildJobArgs{ProviderKey: "provider"},
+	}}
+	resolvedTask := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: jobID, State: rivertype.JobStateCompleted},
+		Args:   prebuildJobArgs{ProviderKey: "provider"},
+	}, output: prebuildJobOutput{ImageRef: "image", TemplateID: "tpl-new"}}
+	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}
+	transition := db.Environment{BuildJobID: &jobID, ResolvedBuildJobID: &active, ResolvedTemplate: "tpl-old"}
+	for _, tc := range []struct {
+		name      string
+		env       db.Environment
+		task      prebuildTask
+		wantState string
+		wantStart bool
+	}{
+		{"failed rebuild can be retried", transition, failedTask, "failed", true},
+		{"completed build is ready", db.Environment{BuildJobID: &jobID, ResolvedBuildJobID: &jobID, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", false},
+		{"template written back by an older instance is ready", db.Environment{BuildJobID: &jobID, ResolvedTemplate: "tpl-new"}, resolvedTask, "ready", false},
+		{"job result read after a stale environment is not ready", transition, resolvedTask, "running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := service.currentPrebuildResponse(tc.env, tc.task)
+			if response.State != tc.wantState || response.CanStart != tc.wantStart {
+				t.Fatalf("response = %+v", response)
+			}
+		})
+	}
+}
+
+func TestPackageSpecNames(t *testing.T) {
+	for _, tc := range []struct{ manager, spec, want string }{
+		{"apt", "curl=7.88.1-10", "curl"},
+		{"apt", "curl/bookworm-backports", "curl"},
+		{"apt", "libc6:i386", "libc6:i386"},
+		{"pip", "Numpy==2.3.5", "numpy"},
+		{"pip", "zope.interface>=6", "zope-interface"},
+		{"pip", "requests[socks]~=2.32", "requests"},
+		{"pip", "pkg @ git+https://example.com/pkg.git", "pkg"},
+		{"npm", "typescript@5.9.3", "typescript"},
+		{"npm", "@scope/tool@1.0.0", "@scope/tool"},
+		{"npm", "@scope/tool", "@scope/tool"},
+		{"gem", "rake:13.2.1", "rake"},
+		{"cargo", "ripgrep@14.1.1", "ripgrep"},
+		{"go", "golang.org/x/tools/gopls@v0.16.0", "golang.org/x/tools/gopls"},
+	} {
+		if got := packageSpecName(tc.manager, tc.spec); got != tc.want {
+			t.Fatalf("packageSpecName(%q, %q) = %q, want %q", tc.manager, tc.spec, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizePackagesRejectsDuplicateNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, packages, wantError string
+	}{
+		{"repeated go module versions", `{"go":["example.com/tool@v1","example.com/tool@v2"]}`, `config.packages.go must not list package "example.com/tool" more than once`},
+		{"identical repeated entries", `{"apt":["curl","curl"]}`, `config.packages.apt must not list package "curl" more than once`},
+		{"normalized pip names", `{"pip":["Foo_Bar==1","foo-bar"]}`, `config.packages.pip must not list package "foo-bar" more than once`},
+		{"scoped npm versions", `{"npm":["@scope/tool@1","@scope/tool@2"]}`, `config.packages.npm must not list package "@scope/tool" more than once`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := normalizePackages(json.RawMessage(tc.packages)); err == nil || err.Error() != tc.wantError {
+				t.Fatalf("error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
+	if _, err := normalizePackages(json.RawMessage(`{"npm":["tool@1"],"pip":["tool==1"],"go":["example.com/a@v1","example.com/b@v1"]}`)); err != nil {
+		t.Fatalf("distinct packages rejected: %v", err)
+	}
+	handler := &Handler{cfg: config.Config{EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true}}}
+	current := db.Environment{Config: json.RawMessage(`{"type":"cloud"}`)}
+	_, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(`{"packages":{"type":"packages","go":["example.com/tool@v1","example.com/tool@v2"]}}`)})
+	var appError *apperr.Error
+	if !errors.As(err, &appError) || appError.Kind != apperr.InvalidArgument || !strings.Contains(appError.PublicMessage, `"example.com/tool"`) {
+		t.Fatalf("update error = %v", err)
+	}
+}
+
+func TestStoredDuplicatePackagesRemainReadable(t *testing.T) {
+	config := json.RawMessage(`{"type":"cloud","packages":{"type":"packages","go":["example.com/tool@v1","example.com/tool@v2"]}}`)
+	if _, err := decodeEnvironmentBuildSpec(config); err != nil {
+		t.Fatalf("decode stored duplicates: %v", err)
+	}
+	if _, provision, err := buildPackageManifest(config); err != nil || !provision {
+		t.Fatalf("manifest = %v, %v", provision, err)
 	}
 }
 
@@ -610,5 +767,36 @@ func TestAliyunFlowLogDownloadCursorRecovery(t *testing.T) {
 				t.Fatalf("requests = %d, want %d", requests, tc.wantRequests)
 			}
 		})
+	}
+}
+
+func TestPrebuildPackagesSnapshot(t *testing.T) {
+	packages, err := decodeEnvironmentPackages(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["b","a"],"npm":null,"go":["example.com/tool@v1"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(prebuildJobArgs{EnvironmentUUID: "env", Packages: resolvedPackagesArg(packages)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: encoded, Metadata: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := encodePackagesSnapshot(task.job.Args.Packages)
+	want := `{"type":"packages","apt":[],"cargo":[],"gem":[],"go":["example.com/tool@v1"],"npm":[],"pip":["b","a"]}`
+	if err != nil || string(snapshot) != want {
+		t.Fatalf("snapshot = %s, %v; must match the migration backfill format %s", snapshot, err, want)
+	}
+	empty, err := encodePackagesSnapshot(resolvedPackagesArg(nil))
+	if err != nil || string(empty) != `{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}` {
+		t.Fatalf("empty snapshot = %s, %v", empty, err)
+	}
+	if decoded, known := decodePackagesSnapshot(empty); !known || decoded != nil {
+		t.Fatalf("empty snapshot decoded to %+v, known=%v", decoded, known)
+	}
+	legacy, err := decodePrebuildTask(&rivertype.JobRow{EncodedArgs: []byte(`{"environment_uuid":"env","dockerfile":"FROM base"}`), Metadata: []byte(`{}`)})
+	if err != nil || legacy.job.Args.Packages != nil {
+		t.Fatalf("legacy args packages = %+v, %v", legacy.job.Args.Packages, err)
 	}
 }

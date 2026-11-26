@@ -93,6 +93,9 @@ func normalizePackages(raw json.RawMessage) (*environmentPackages, error) {
 	if err := packages.validate(); err != nil {
 		return nil, err
 	}
+	if err := packages.rejectDuplicateNames(); err != nil {
+		return nil, err
+	}
 	packages.ensureLists()
 	if err := packages.checkManifestSize(); err != nil {
 		return nil, err
@@ -142,6 +145,27 @@ func validatePackageSpecs(manager string, specs []string) error {
 
 func isPackageManagerOption(spec string) bool {
 	return strings.HasPrefix(strings.TrimSpace(spec), "-")
+}
+
+func encodePackagesSnapshot(packages *environmentPackages) (json.RawMessage, error) {
+	if packages == nil {
+		packages = emptyPackages()
+	}
+	return json.Marshal(packages)
+}
+
+func decodePackagesSnapshot(raw json.RawMessage) (*environmentPackages, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var packages environmentPackages
+	if err := json.Unmarshal(raw, &packages); err != nil {
+		return nil, false
+	}
+	if packages.empty() {
+		return nil, true
+	}
+	return packages.normalized(), true
 }
 
 func (p *environmentPackages) empty() bool {

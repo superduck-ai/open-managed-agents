@@ -49,12 +49,13 @@ func (svc *Prebuilds) Register(workers *river.Workers) {
 func (svc *Prebuilds) Configure(client *river.Client[*sql.Tx]) { svc.client = client }
 
 type prebuildJobArgs struct {
-	WorkspaceUUID   string              `json:"workspace_uuid"`
-	EnvironmentUUID string              `json:"environment_uuid"`
-	ProviderKey     string              `json:"provider_key"`
-	Dockerfile      string              `json:"dockerfile"`
-	BaseImage       string              `json:"base_image,omitempty"`
-	Template        *templateBuildInput `json:"template,omitempty"`
+	WorkspaceUUID   string               `json:"workspace_uuid"`
+	EnvironmentUUID string               `json:"environment_uuid"`
+	ProviderKey     string               `json:"provider_key"`
+	Dockerfile      string               `json:"dockerfile"`
+	BaseImage       string               `json:"base_image,omitempty"`
+	Template        *templateBuildInput  `json:"template,omitempty"`
+	Packages        *environmentPackages `json:"packages,omitempty"`
 }
 
 func (prebuildJobArgs) Kind() string { return PrebuildQueue }
@@ -188,6 +189,7 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		EnvironmentUUID: env.UUID,
 		ProviderKey:     svc.providerKey,
 		Template:        &template,
+		Packages:        resolvedPackagesArg(spec.Packages),
 	}
 	if spec.needsImage() {
 		args.Dockerfile = templateDockerfile(svc.cfg.Image.BaseImage, spec, svc.packages)
@@ -199,7 +201,9 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 		return err
 	}
 	env.BuildJobID = &result.Job.ID
-	env.ResolvedTemplate = ""
+	if env.ResolvedBuildJobID == nil {
+		env.ResolvedTemplate = ""
+	}
 	return nil
 }
 
@@ -208,23 +212,54 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 	if err != nil {
 		return err
 	}
+	var active db.Environment
 	if current != nil {
+		active = withLegacyResolution(*current)
 		previous, err := decodeEnvironmentBuildSpec(current.Config)
-		// A valid replacement can repair malformed packages already stored in the row.
-		// In that case the old prebuild must be treated as superseded.
 		if err == nil && sameBuildSpec(previous, spec) {
 			next.BuildJobID = current.BuildJobID
-			if current.BuildJobID != nil {
-				next.ResolvedTemplate = current.ResolvedTemplate
+			if current.BuildJobID != nil || active.ResolvedBuildJobID != nil {
+				copyResolution(next, active)
 			}
 			return nil
 		}
 	}
 	next.BuildJobID = nil
-	if spec == nil || next.ArchivedAt != nil || svc == nil || !svc.cfg.Enabled {
+	next.ResolvedBuildJobID, next.ResolvedPackages = nil, nil
+	enabled := svc != nil && svc.cfg.Enabled
+	if active.ResolvedBuildJobID != nil && spec != nil && next.ArchivedAt == nil && enabled {
+		copyResolution(next, active)
+	}
+	if spec == nil || next.ArchivedAt != nil || !enabled {
 		return nil
 	}
 	return svc.enqueue(ctx, tx, next, spec)
+}
+
+// During a rolling deployment an older instance binds a finished build by writing only
+// resolved_template. Treat that row as the current build and record its provenance.
+func withLegacyResolution(env db.Environment) db.Environment {
+	if env.BuildJobID == nil || env.ResolvedTemplate == "" || env.ResolvedBuildJobID != nil {
+		return env
+	}
+	env.ResolvedBuildJobID = env.BuildJobID
+	if packages, err := decodeEnvironmentPackages(env.Config); err == nil {
+		env.ResolvedPackages, _ = encodePackagesSnapshot(packages)
+	}
+	return env
+}
+
+func resolvedPackagesArg(packages *environmentPackages) *environmentPackages {
+	if packages == nil {
+		return emptyPackages()
+	}
+	return packages
+}
+
+func copyResolution(next *db.Environment, active db.Environment) {
+	next.ResolvedTemplate = active.ResolvedTemplate
+	next.ResolvedBuildJobID = active.ResolvedBuildJobID
+	next.ResolvedPackages = active.ResolvedPackages
 }
 
 // The environment row serializes API mutations and worker checkpoints. A stale
@@ -268,7 +303,13 @@ func (svc *Prebuilds) persistCheckpoint(ctx context.Context, task *prebuildTask)
 			return err
 		}
 		if task.output.TemplateID != "" {
-			return svc.db.ResolveEnvironmentPrebuildTx(ctx, tx, env.WorkspaceUUID, env.UUID, task.job.ID, task.output.TemplateID)
+			var packages json.RawMessage
+			if task.job.Args.Packages != nil {
+				if packages, err = encodePackagesSnapshot(task.job.Args.Packages); err != nil {
+					return err
+				}
+			}
+			return svc.db.ResolveEnvironmentPrebuildTx(ctx, tx, env.WorkspaceUUID, env.UUID, task.job.ID, task.output.TemplateID, packages)
 		}
 		return nil
 	})
@@ -277,7 +318,7 @@ func (svc *Prebuilds) persistCheckpoint(ctx context.Context, task *prebuildTask)
 
 func (svc *Prebuilds) StartOrRetryPrebuild(ctx context.Context, env db.Environment) error {
 	return svc.withLockedEnvironment(ctx, env, func(tx *yourbatis.Tx, current db.Environment) error {
-		if hasPrebuiltTemplate(current) {
+		if environmentTemplateSource(current) == templateSourceCurrent {
 			return nil
 		}
 		task, err := svc.loadCurrentPrebuild(ctx, tx, current)
@@ -436,18 +477,23 @@ func packageInstallEnvironment(key, value string, command []string) []string {
 	return append([]string{"env", key + "=" + value}, command...)
 }
 
-// Decoding normalizes absent/empty packages; installation order remains significant.
 func samePackages(previous, next *environmentPackages) bool {
 	if previous == nil || next == nil {
 		return previous == next
 	}
 	other := next.specsByManager()
 	for i, manager := range previous.specsByManager() {
-		if !slices.Equal(*manager.specs, *other[i].specs) {
+		if !slices.Equal(sortedSpecs(*manager.specs), sortedSpecs(*other[i].specs)) {
 			return false
 		}
 	}
 	return true
+}
+
+func sortedSpecs(specs []string) []string {
+	sorted := slices.Clone(specs)
+	slices.Sort(sorted)
+	return sorted
 }
 
 func prebuildProviderKey(cfg config.Config) string {
@@ -487,8 +533,59 @@ func prebuildProviderKey(cfg config.Config) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// The environment owns its completed template, independently of current build settings.
-// Environments without a build retain runtime package installation.
-func hasPrebuiltTemplate(env db.Environment) bool {
-	return env.BuildJobID != nil && env.ResolvedTemplate != ""
+type templateSource string
+
+const (
+	templateSourceCurrent  templateSource = "current"
+	templateSourcePrevious templateSource = "previous"
+	templateSourceDefault  templateSource = "default"
+)
+
+type templateFallback string
+
+const (
+	templateFallbackNotBuilt        templateFallback = "not_built"
+	templateFallbackPackagesChanged templateFallback = "packages_changed"
+	templateFallbackPackagesUnknown templateFallback = "packages_unknown"
+)
+
+type templateChoice struct {
+	source   templateSource
+	fallback templateFallback
+	template string
+}
+
+func environmentTemplateSource(env db.Environment) templateSource {
+	env = withLegacyResolution(env)
+	switch {
+	case env.ResolvedTemplate == "" || env.ResolvedBuildJobID == nil:
+		return templateSourceDefault
+	case env.BuildJobID != nil && *env.ResolvedBuildJobID == *env.BuildJobID:
+		return templateSourceCurrent
+	default:
+		return templateSourcePrevious
+	}
+}
+
+func chooseEnvironmentTemplate(env db.Environment) templateChoice {
+	switch source := environmentTemplateSource(env); {
+	case source == templateSourcePrevious:
+		return choosePreviousTemplate(env)
+	case source == templateSourceDefault && env.BuildJobID != nil:
+		return templateChoice{source: source, fallback: templateFallbackNotBuilt, template: env.ResolvedTemplate}
+	default:
+		return templateChoice{source: source, template: env.ResolvedTemplate}
+	}
+}
+
+func choosePreviousTemplate(env db.Environment) templateChoice {
+	built, known := decodePackagesSnapshot(env.ResolvedPackages)
+	if !known {
+		return templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesUnknown}
+	}
+	packages, err := decodeEnvironmentPackages(env.Config)
+	if err != nil || !samePackages(built, packages) {
+		return templateChoice{source: templateSourceDefault, fallback: templateFallbackPackagesChanged}
+	}
+	return templateChoice{source: templateSourcePrevious, template: env.ResolvedTemplate}
 }

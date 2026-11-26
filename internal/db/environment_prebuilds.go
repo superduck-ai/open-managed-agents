@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/superduck-ai/yourbatis"
@@ -52,8 +53,8 @@ func (d *DB) LockEnvironmentByUUIDTx(ctx context.Context, tx *yourbatis.Tx, work
 	return row.environment(), true, nil
 }
 
-func (d *DB) ResolveEnvironmentPrebuildTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string, jobID int64, template string) error {
-	rows, err := NewEnvironmentMapper(tx).ResolvePrebuild(ctx, workspaceUUID, environmentUUID, jobID, template)
+func (d *DB) ResolveEnvironmentPrebuildTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string, jobID int64, template string, packages json.RawMessage) error {
+	rows, err := NewEnvironmentMapper(tx).ResolvePrebuild(ctx, workspaceUUID, environmentUUID, jobID, template, agentJSONArg(packages))
 	if err != nil {
 		return err
 	}

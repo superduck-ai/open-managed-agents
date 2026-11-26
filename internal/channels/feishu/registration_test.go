@@ -25,4 +25,7 @@ func TestRegistrationAddonsSeparateCallbacks(t *testing.T) {
 	if !slices.Contains(addons.Events.Items.Tenant, "im.message.receive_v1") {
 		t.Fatal("消息事件订阅缺失")
 	}
+	if !slices.Contains(addons.Events.Items.Tenant, "application.bot.menu_v6") {
+		t.Fatal("机器人菜单事件订阅缺失")
+	}
 }

@@ -38,9 +38,14 @@ type fakeRuntimeStore struct {
 	inputKeys         map[string]string
 	receiveInputErr   error
 	inputOrder        []string
+	directChats       map[string]string
 	credential        string
 	credentialErr     error
 	env               string
+}
+
+func (f *fakeRuntimeStore) FindChannelDirectChat(_ context.Context, _ db.ChannelInputScope, _, actorID string) (string, error) {
+	return f.directChats[actorID], nil
 }
 
 func (f *fakeRuntimeStore) FindSessionIdentity(context.Context, string, string) (db.SessionIdentityRecord, error) {

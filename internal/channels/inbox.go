@@ -12,6 +12,25 @@ func (w *channelWorker) inputScope() db.ChannelInputScope {
 	return db.ChannelInputScope{OrganizationUUID: w.record.OrganizationUUID, WorkspaceUUID: w.record.WorkspaceUUID, ChannelUUID: w.record.UUID, ChannelType: w.record.ChannelType, AccountID: w.record.AppID}
 }
 
+func (w *channelWorker) receiveNewSessionMenu(ctx context.Context, eventID, actorID string) error {
+	if !w.active(ctx) {
+		return nil
+	}
+	chatID, err := w.supervisor.store.FindChannelDirectChat(ctx, w.inputScope(), w.record.ExternalID, actorID)
+	if err != nil {
+		return err
+	}
+	msg := &channelMessage{MessageID: "menu:" + eventID, ChatID: chatID, ChatType: "p2p", UserID: actorID, Content: "/new"}
+	if chatID != "" {
+		return w.receiveChannelMessage(ctx, msg)
+	}
+	allowed, err := w.authorize(ctx, msg)
+	if err != nil || !allowed {
+		return err
+	}
+	return w.replyText(ctx, msg, "发送一条消息即可开始新会话。")
+}
+
 func (w *channelWorker) receiveChannelMessage(ctx context.Context, msg *channelMessage) error {
 	if msg.MessageID == "" || msg.ChatID == "" || msg.UserID == "" {
 		return errors.New("渠道消息缺少消息、聊天或操作者标识")

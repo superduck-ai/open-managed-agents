@@ -120,6 +120,7 @@ type AdapterConfig struct {
 	FileMaxBytes                   int64
 	Online                         func(bool)
 	Receive                        func(context.Context, *Message) error
+	NewSession                     func(ctx context.Context, eventID, actorID string) error
 	Action                         func(context.Context, *ActionEvent) error
 	Prepare                        func(context.Context, *Message, string) error
 	Busy                           func(string) bool

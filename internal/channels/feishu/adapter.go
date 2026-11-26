@@ -14,6 +14,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel/safety"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkapplication "github.com/larksuite/oapi-sdk-go/v3/service/application/v6"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
@@ -121,10 +122,30 @@ func New(config Config) (contracts.Adapter, error) {
 	bot.OnReconnected(func() { config.Online(true) })
 	bot.OnDisconnected(func() { config.Online(false) })
 	wsClient.EventHandler().OnP2MessageReceiveV1(adapter.ReceiveEvent)
+	wsClient.EventHandler().OnP2BotMenuV6(adapter.receiveMenuEvent)
 	bot.OnCardAction(func(ctx context.Context, event *channeltypes.CardActionEvent) error {
 		return config.Action(ctx, NormalizeAction(event))
 	})
 	return adapter, nil
+}
+
+func (f *Adapter) receiveMenuEvent(ctx context.Context, event *larkapplication.P2BotMenuV6) error {
+	if event.EventV2Base == nil {
+		return nil
+	}
+	header := event.EventV2Base.Header
+	if header == nil || header.AppID != f.Config.AppID || header.EventID == "" {
+		return nil
+	}
+	menu := event.Event
+	if menu == nil || menu.EventKey == nil || *menu.EventKey != "chat_new" || menu.Operator == nil || menu.Operator.OperatorId == nil {
+		return nil
+	}
+	openID := menu.Operator.OperatorId.OpenId
+	if openID == nil || *openID == "" {
+		return nil
+	}
+	return f.Config.NewSession(ctx, header.EventID, *openID)
 }
 
 func NormalizeMessage(msg *channeltypes.NormalizedMessage) (*contracts.Message, error) {

@@ -141,6 +141,36 @@ func TestChannelInputDuplicateDoesNotReenterBatch(t *testing.T) {
 	}
 }
 
+func TestNewSessionMenuOnlyResetsClickingPrivateChat(t *testing.T) {
+	server, creates, requests := omaTestServer(t, 0)
+	store := &fakeRuntimeStore{
+		bindings:    map[string]string{"chat:oc_private": "sesn_1", "chat:oc_other": "sesn_other"},
+		directChats: map[string]string{"ou_actor": "oc_private"},
+	}
+	worker, _ := testWorker(t, store, server.URL)
+	worker.record.Mode = "pairing"
+	store.pairings = []db.ChannelPairingRecord{{Kind: "user", Target: "ou_actor", Status: "rejected"}}
+	if err := worker.receiveNewSessionMenu(t.Context(), "event_denied", "ou_actor"); err != nil {
+		t.Fatal(err)
+	}
+	if store.binding("chat:oc_private") != "sesn_1" || len(requests.snapshot()) != 0 {
+		t.Fatal("未获授权的菜单点击不能中断或重置会话")
+	}
+	store.pairings[0].Status = "approved"
+	for range 2 {
+		if err := worker.receiveNewSessionMenu(t.Context(), "event_allowed", "ou_actor"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForScope(t, worker, "chat:oc_private")
+	if store.binding("chat:oc_private") != "" || store.binding("chat:oc_other") != "sesn_other" {
+		t.Fatal("菜单只能移除点击者的私聊会话绑定")
+	}
+	if got := requests.snapshot(); len(got) != 1 || !strings.Contains(got[0], "user.interrupt") || creates.Load() != 0 {
+		t.Fatalf("菜单应只中断一次，并在收到下一条消息前延迟新建会话: %v %d", got, creates.Load())
+	}
+}
+
 func TestRestartPreservesPreparedBatchWithoutPlatformSDK(t *testing.T) {
 	server, creates, requests := omaTestServer(t, 0)
 	store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}

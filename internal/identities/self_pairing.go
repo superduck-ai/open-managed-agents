@@ -80,7 +80,7 @@ func (s *Service) activatePersonalPairing(ctx context.Context, ingress Ingress, 
 	if !identity.Enabled {
 		return conflict("业务身份已停用，请联系管理员", nil)
 	}
-	err = s.activatePairing(ctx, principal, row, identity, PairingWrite{AgentID: ingress.AgentExternalID, AgentVersion: version})
+	err = s.activatePairing(ctx, principal, row, identity, PairingWrite{AgentID: ingress.AgentExternalID, AgentVersion: version}, ingress.ResumeOAuth)
 	if errors.Is(err, db.ErrInvalidState) {
 		current, findErr := s.store.FindScopePairing(ctx, ingress.WorkspaceUUID, row.ExternalID)
 		if findErr != nil {

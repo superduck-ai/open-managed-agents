@@ -57,7 +57,7 @@ func TestCreateChannelRecordPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建渠道失败：%v", err)
 	}
-	if record.ExternalID != input.ExternalID || record.WorkspaceUUID != workspace {
+	if record.ExternalID != input.ExternalID || record.WorkspaceUUID != workspace || record.DirectInThread {
 		t.Fatalf("渠道记录 = %+v", record)
 	}
 
@@ -90,6 +90,15 @@ func TestCreateChannelRecordPostgres(t *testing.T) {
 	environment, err = store.GetChannelAgentEnvironment(ctx, organization, workspace, agentExternalID)
 	if err != nil || environment != "env_original" {
 		t.Fatalf("失败更新改动了原环境: %s %v", environment, err)
+	}
+	update.EnvironmentID = nil
+	update.DirectInThread = true
+	if _, err := store.UpdateChannelRecord(ctx, update); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.GetChannelRecordByID(ctx, organization, workspace, input.ExternalID)
+	if err != nil || !loaded.DirectInThread || loaded.ReplyInThread {
+		t.Fatalf("单聊和群聊回复设置必须独立持久化: %+v %v", loaded, err)
 	}
 	rejected := input
 	rejected.ExternalID = "ch_rejected_environment"

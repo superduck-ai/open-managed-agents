@@ -36,11 +36,15 @@ func (s *Service) OAuthContext(ctx context.Context, channelID, sessionID string)
 	if err := json.Unmarshal(session.Metadata, &metadata); err != nil {
 		return OAuthContext{}, err
 	}
-	if metadata["channel_id"] != channelID || metadata["app_id"] != worker.record.AppID || metadata["chat_type"] != "p2p" || metadata["actor_id"] == "" || !strings.HasPrefix(metadata["scope_id"], "chat:") {
+	scopeKey := metadata["scope_id"]
+	chatID := metadata["chat_id"]
+	if legacyChatID, ok := strings.CutPrefix(scopeKey, "chat:"); chatID == "" && ok {
+		chatID = legacyChatID
+	}
+	if metadata["channel_id"] != channelID || metadata["app_id"] != worker.record.AppID || metadata["chat_type"] != "p2p" || metadata["actor_id"] == "" || chatID == "" || !scopeMatchesChat(scopeKey, chatID) {
 		return OAuthContext{}, errors.New("个人 OAuth 只能用于原操作者的私聊会话")
 	}
-	chatID := strings.TrimPrefix(metadata["scope_id"], "chat:")
-	if worker.currentSession(ctx, metadata["scope_id"]) != sessionID {
+	if worker.currentSession(ctx, scopeKey) != sessionID {
 		return OAuthContext{}, db.ErrNotFound
 	}
 	allowed, err := worker.cardAuthorized(ctx, channelActionValue{ChatType: "p2p", OpenID: metadata["actor_id"]}, metadata["actor_id"], chatID)

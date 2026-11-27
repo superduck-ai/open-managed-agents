@@ -58,6 +58,9 @@ func (w *channelWorker) renewReplyDelivery(ctx context.Context, task *channelRep
 }
 
 func (w *channelWorker) openReply(ctx context.Context, task *channelReplyTask, msg *channelMessage) (channelReplyStream, error) {
+	if isDirectTopicScope(msg.ChatType, task.scopeKey) {
+		msg.ThreadReplyTo = msg.MessageID
+	}
 	if task.inputEventID == "" {
 		return w.adapter.OpenReply(ctx, msg)
 	}

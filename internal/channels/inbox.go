@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -68,6 +69,11 @@ func (w *channelWorker) claimAndDispatchInput(ctx context.Context, inputUUID str
 	}
 	msg.Input = &row
 	if row.State == "buffering" {
+		if msg.PairingCard != "" {
+			if err := w.adapter.ResumeReply(msg.PairingCard).Update(ctx, contracts.Reply{Status: "已连接", Blocks: []contracts.ReplyBlock{{Text: "已连接"}}, Ended: true}); err != nil {
+				w.supervisor.logger.WarnContext(ctx, "更新配对授权卡失败", "input_uuid", row.UUID, "error", err)
+			}
+		}
 		if msg.ChatID != "" && msg.ChatType == "p2p" && msg.PairingID == "" && parseChannelMounts(w.record.Mounts).PairingProvider != "" {
 			held, err := w.supervisor.pairingPrompt(ctx, w, &msg)
 			if err != nil || held {

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate, useParams } from '@tanstack/react-router';
 import { ArrowLeft, Pencil } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
@@ -254,10 +254,25 @@ export function ChannelDetailContent({
                     </div>
                   </div>
                 </DetailRow>
-                <DetailRow label={msg('managedAgents.channels.threadReplyMethod', '话题回复方式')}>
-                  {channel.reply_in_thread
-                    ? msg('managedAgents.channels.threadReplyDetail', '话题回复（在原始消息下延续讨论）')
-                    : msg('managedAgents.channels.mainReply', '主会话回复')}
+                <DetailRow label={msg('managedAgents.channels.replyMethod', '回复方式')}>
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                    {[
+                      { label: msg('managedAgents.channels.groupChat', '群聊'), inThread: channel.reply_in_thread },
+                      {
+                        label: msg('managedAgents.channels.directChat', '单聊'),
+                        inThread: channel.direct_reply_in_thread,
+                      },
+                    ].map(({ label, inThread }) => (
+                      <Fragment key={label}>
+                        <dt>{label}</dt>
+                        <dd>
+                          {inThread
+                            ? msg('managedAgents.channels.threadReply', '话题回复')
+                            : msg('managedAgents.channels.mainReply', '主会话回复')}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
                 </DetailRow>
                 <ChannelExecutionSummary channel={channel} />
                 <DetailRow label={msg('managedAgents.channels.mode', '渠道模式')}>

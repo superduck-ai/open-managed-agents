@@ -1,9 +1,16 @@
 package channels
 
 import (
+	"encoding/json/v2"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestDirectConversationIgnoresThreadAndKeepsLegacyHistory(t *testing.T) {
@@ -55,5 +62,48 @@ func TestDirectRepliesRemainFlatWhenGroupThreadsAreEnabled(t *testing.T) {
 	inputs := channel.sentInputs()
 	if len(inputs) != 3 || inputs[0].Card == "" || inputs[1].Text != "命令确认" || inputs[2].FileKey == "" {
 		t.Fatalf("私聊必须直接发卡片和文字: %+v", inputs)
+	}
+}
+
+func TestDirectTopicsRouteRepliesToTheirOriginalSessions(t *testing.T) {
+	var created atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/sessions" {
+			_, _ = fmt.Fprintf(w, `{"id":"sesn_%d"}`, created.Add(1))
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"status":"idle","agent":{"id":"agent_1"},"environment_id":"env_1"}`)
+	}))
+	t.Cleanup(server.Close)
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	worker.record.DirectInThread = true
+	for _, turn := range []struct {
+		message, root, thread, text, scope, session string
+	}{
+		{"om_help", "", "", "/help", "chat:oc_test", ""},
+		{"om_a", "", "", "任务 A", "thread:oc_test:om_a", "sesn_1"},
+		{"om_b", "om_a", "", "引用后提交任务 B", "thread:oc_test:om_b", "sesn_2"},
+		{"om_a1", "om_a", "omt_a", "追问 A", "thread:oc_test:om_a", "sesn_1"},
+		{"om_b1", "om_b", "omt_b", "追问 B", "thread:oc_test:om_b", "sesn_2"},
+		{"om_a2", "om_a", "omt_a", "/status", "thread:oc_test:om_a", ""},
+	} {
+		var event larkim.P2MessageReceiveV1
+		raw := fmt.Sprintf(`{"event":{"message":{"message_id":%q,"root_id":%q,"thread_id":%q,"chat_id":"oc_test","chat_type":"p2p"}}}`, turn.message, turn.root, turn.thread)
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		msg := feishuMessage(normalize.ParseMessage(&event))
+		msg.Content, msg.UserID = turn.text, "ou_test"
+		scope, err := worker.messageScopeKey(t.Context(), msg)
+		if err != nil || scope != turn.scope {
+			t.Fatalf("%s 的作用域 = %q，错误 = %v", turn.message, scope, err)
+		}
+		if turn.session != "" {
+			session, err := worker.sessionFor(t.Context(), msg, scope)
+			if err != nil || session != turn.session {
+				t.Fatalf("%s 的会话 = %q，错误 = %v", turn.message, session, err)
+			}
+		}
 	}
 }

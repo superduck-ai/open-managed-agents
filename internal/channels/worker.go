@@ -196,6 +196,9 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channelMessage, sco
 
 func channelSessionMetadata(record db.ChannelRecord, msg *channelMessage, scopeKey string) map[string]string {
 	metadata := map[string]string{"source": record.ChannelType, "channel_id": record.ExternalID, "app_id": record.AppID, "scope_id": scopeKey, "chat_type": channelChatType(msg.ChatType), "actor_id": msg.UserID}
+	if isDirectTopicScope(msg.ChatType, scopeKey) {
+		metadata["chat_id"] = msg.ChatID
+	}
 	if version := parseChannelMounts(record.Mounts).AgentVersion; version > 0 {
 		metadata["agent_version"] = strconv.Itoa(version)
 	}

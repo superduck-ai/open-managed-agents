@@ -382,6 +382,36 @@ function PairingProviderField({
   );
 }
 
+function ReplyMethodSelect({
+  labelledBy,
+  inThread,
+  onChange,
+}: {
+  labelledBy: string;
+  inThread: boolean;
+  onChange: (inThread: boolean) => void;
+}) {
+  const { msg } = useI18n();
+  const items = [
+    { value: 'thread', label: msg('managedAgents.channels.threadReply', '话题回复') },
+    { value: 'main', label: msg('managedAgents.channels.mainReply', '主会话回复') },
+  ];
+  return (
+    <Select value={inThread ? 'thread' : 'main'} onValueChange={(next) => onChange(next === 'thread')} items={items}>
+      <SelectTrigger className="w-full" aria-labelledby={labelledBy}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {items.map(({ value, label }) => (
+          <SelectItem key={value} value={value}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function StepStrategy<T extends ChannelInput>({
   value,
   onChange,
@@ -395,6 +425,9 @@ export function StepStrategy<T extends ChannelInput>({
 }) {
   const { msg } = useI18n();
   const modeId = useId();
+  const replyMethodId = useId();
+  const groupChatId = useId();
+  const directChatId = useId();
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -432,32 +465,25 @@ export function StepStrategy<T extends ChannelInput>({
           <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-3 border-b-[0.5px] border-border px-2.5 py-2 text-xs text-muted-foreground">
             <span>{msg('managedAgents.channels.type', '类型')}</span>
             <span>{msg('managedAgents.channels.identity', '身份设定')}</span>
-            <span>{msg('managedAgents.channels.replyMethod', '回复方式')}</span>
+            <span id={replyMethodId}>{msg('managedAgents.channels.replyMethod', '回复方式')}</span>
           </div>
           <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-3 px-2.5 py-2">
-            <span>{msg('managedAgents.channels.groupChat', '群聊')}</span>
+            <span id={groupChatId}>{msg('managedAgents.channels.groupChat', '群聊')}</span>
             <span>{msg('managedAgents.channels.identityBot', 'Bot')}</span>
-            <Select
-              value={value.reply_in_thread ? 'thread' : 'main'}
-              onValueChange={(next) => onChange({ ...value, reply_in_thread: next === 'thread' })}
-              items={[
-                { value: 'thread', label: msg('managedAgents.channels.threadReply', '话题回复') },
-                { value: 'main', label: msg('managedAgents.channels.mainReply', '主会话回复') },
-              ]}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="thread">{msg('managedAgents.channels.threadReply', '话题回复')}</SelectItem>
-                <SelectItem value="main">{msg('managedAgents.channels.mainReply', '主会话回复')}</SelectItem>
-              </SelectContent>
-            </Select>
+            <ReplyMethodSelect
+              labelledBy={`${groupChatId} ${replyMethodId}`}
+              inThread={value.reply_in_thread}
+              onChange={(inThread) => onChange({ ...value, reply_in_thread: inThread })}
+            />
           </div>
           <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-3 border-t-[0.5px] border-border px-2.5 py-2">
-            <span>{msg('managedAgents.channels.directChat', '单聊')}</span>
+            <span id={directChatId}>{msg('managedAgents.channels.directChat', '单聊')}</span>
             <span>{msg('managedAgents.channels.identityBot', 'Bot')}</span>
-            <span className="text-muted-foreground">—</span>
+            <ReplyMethodSelect
+              labelledBy={`${directChatId} ${replyMethodId}`}
+              inThread={value.direct_reply_in_thread ?? false}
+              onChange={(inThread) => onChange({ ...value, direct_reply_in_thread: inThread })}
+            />
           </div>
         </div>
       </div>

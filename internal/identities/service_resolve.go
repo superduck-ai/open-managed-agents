@@ -17,6 +17,7 @@ type Ingress struct {
 	ChannelType        string
 	ChannelMode        string
 	ConfirmedPairingID string
+	ResumeOAuth        *db.ChannelOAuthResume
 	AppID              string
 	AgentExternalID    string
 	AgentVersion       *int

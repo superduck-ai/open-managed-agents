@@ -14,6 +14,9 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channelMessage, 
 	if msg == nil || msg.UserID == "" || !w.active(ctx) {
 		return nil
 	}
+	if msg.ThreadID != "" && isDirectTopicScope(msg.ChatType, scopeKey) {
+		msg.ThreadReplyTo = msg.MessageID
+	}
 	text := msg.Content
 	if text == "" && len(msg.Resources) == 0 && (msg.Input == nil || msg.Input.State != "accepted") {
 		if err := w.replyText(ctx, msg, "请发送文本、图片或文件。"); err != nil {
@@ -58,8 +61,7 @@ func (w *channelWorker) runScoped(ctx context.Context, ticket *scopeTicket, msg 
 	if err != nil || !allowed {
 		return
 	}
-	parts := strings.Fields(text)
-	if len(parts) > 0 && slices.Contains([]string{"/help", "/resume", "/status", "/new", "/reset", "/stop"}, parts[0]) {
+	if isChannelCommand(text) {
 		if err := w.advanceInput(ctx, msg, db.ChannelInputAdvance{State: "command_sending"}); err != nil {
 			return
 		}
@@ -94,6 +96,11 @@ func (w *channelWorker) runScoped(ctx context.Context, ticket *scopeTicket, msg 
 	w.stopListeners(ticket.scopeKey, sessionID)
 	task := w.startReplyTask(ctx, ticket.scopeKey, sessionID)
 	w.deliver(task, msg, apiKey)
+}
+
+func isChannelCommand(text string) bool {
+	parts := strings.Fields(text)
+	return len(parts) > 0 && slices.Contains([]string{"/help", "/resume", "/status", "/new", "/reset", "/stop"}, parts[0])
 }
 
 func (w *channelWorker) baseContext() context.Context {

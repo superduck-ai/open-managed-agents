@@ -4,10 +4,27 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func (w *channelWorker) messageScopeKey(ctx context.Context, msg *channelMessage) (string, error) {
+	if msg.ChatType == "p2p" {
+		if !w.record.DirectInThread {
+			return "chat:" + msg.ChatID, nil
+		}
+		if msg.ThreadID != "" {
+			if msg.RootID == "" {
+				return "", errors.New("飞书单聊话题缺少根消息 ID")
+			}
+			return "thread:" + msg.ChatID + ":" + msg.RootID, nil
+		}
+		if isChannelCommand(msg.Content) {
+			return "chat:" + msg.ChatID, nil
+		}
+		return "thread:" + msg.ChatID + ":" + msg.MessageID, nil
+	}
 	if msg.ChatType == "group" && !w.record.ReplyInThread {
 		return "chat:" + msg.ChatID, nil
 	}
@@ -31,6 +48,10 @@ func (w *channelWorker) messageScopeKey(ctx context.Context, msg *channelMessage
 		return "", err
 	}
 	return scopeKey, nil
+}
+
+func isDirectTopicScope(chatType, scopeKey string) bool {
+	return chatType == "p2p" && strings.HasPrefix(scopeKey, "thread:")
 }
 
 func (w *channelWorker) legacyGroupScope(msg *channelMessage) string {

@@ -25,6 +25,7 @@ export interface Channel {
   include_thinking: boolean;
   include_tool_calls: boolean;
   reply_in_thread: boolean;
+  direct_reply_in_thread?: boolean;
   pending_pairings: number;
   created_at?: string;
   identity_id?: string;
@@ -41,6 +42,7 @@ export interface ChannelInput {
   include_thinking: boolean;
   include_tool_calls: boolean;
   reply_in_thread: boolean;
+  direct_reply_in_thread?: boolean;
   memory_store_id?: string | null;
   vault_id?: string | null;
   vault_ids?: string[];

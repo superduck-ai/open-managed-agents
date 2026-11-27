@@ -113,8 +113,8 @@ func (w *Adapter) sendMediaKey(ctx context.Context, msg *contracts.Message, msgT
 	if err != nil {
 		return "", err
 	}
-	if msg.ChatType == "group" && w.Config.ReplyInThread && msg.MessageID != "" {
-		return w.replyMessage(ctx, msg.MessageID, msgType, string(content))
+	if target := w.threadReplyTarget(msg); target != "" {
+		return w.replyMessage(ctx, target, msgType, string(content), "")
 	}
 	input := &channeltypes.SendInput{ChatID: msg.ChatID}
 	if msgType == "image" {

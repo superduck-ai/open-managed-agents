@@ -1,14 +1,15 @@
 package feishu
 
 import (
-	"context"
 	"encoding/json"
-	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	lark "github.com/larksuite/oapi-sdk-go/v3"
+	"github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 )
 
 func TestReplyMessageRequestsThreadReply(t *testing.T) {
@@ -18,7 +19,7 @@ func TestReplyMessageRequestsThreadReply(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/tenant_access_token/internal"):
 			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"token","expire":7200}`))
-		case strings.Contains(r.URL.Path, "/im/v1/messages/") && strings.HasSuffix(r.URL.Path, "/reply"):
+		case r.URL.Path == "/open-apis/im/v1/messages/om_anchor/reply":
 			body, _ := io.ReadAll(r.Body)
 			if err := json.Unmarshal(body, &replyBody); err != nil {
 				t.Errorf("解析回复请求: %v", err)
@@ -31,14 +32,14 @@ func TestReplyMessageRequestsThreadReply(t *testing.T) {
 	}))
 	defer server.Close()
 	adapter := &Adapter{Client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(server.URL)), Config: Config{ReplyInThread: true}}
-	messageID, err := adapter.replyMessage(context.Background(), "om_1", "text", `{"text":"好的"}`)
+	stream, err := adapter.OpenReply(t.Context(), &contracts.Message{ChatType: "p2p", MessageID: "om_input", ThreadReplyTo: "om_anchor"}, contracts.Reply{DeliveryKey: "oauth_key"})
 	if err != nil {
-		t.Fatalf("replyMessage: %v", err)
+		t.Fatal(err)
 	}
-	if messageID != "om_2" {
-		t.Fatalf("回复消息 ID = %q", messageID)
+	if stream.Receipt() != "om_2" {
+		t.Fatalf("回复消息 ID = %q", stream.Receipt())
 	}
-	if replyBody["reply_in_thread"] != true {
-		t.Fatalf("回复请求必须带 reply_in_thread=true，实际 %v", replyBody)
+	if replyBody["reply_in_thread"] != true || replyBody["uuid"] != "oauth_key" || replyBody["msg_type"] != "interactive" {
+		t.Fatalf("话题卡片必须使用话题回复并透传去重键，实际 %v", replyBody)
 	}
 }

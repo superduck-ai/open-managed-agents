@@ -44,31 +44,41 @@
     ORDER BY i.created_at,i.uuid LIMIT 100
   </select>
   <update id="HoldOAuth" result="rows">
-    UPDATE channel_inputs i SET state='pairing_wait',lease_owner='',payload=payload || CAST(#{patch} AS jsonb),updated_at=now()
-    WHERE <include refid="owned"/> AND i.uuid=#{inputUUID} AND i.state='buffering'
+    WITH pairing AS (
+      SELECT p.status,p.remote_id FROM channel_pairings p
+      WHERE p.organization_uuid=#{scope.OrganizationUUID} AND p.workspace_uuid=#{scope.WorkspaceUUID}
+        AND p.channel_uuid=#{scope.ChannelUUID} AND p.platform_account=#{scope.AccountID}
+        AND p.scope_kind='direct' AND p.external_id=CAST(#{patch} AS jsonb)->>'pairing_id'
+      FOR UPDATE
+    )
+    UPDATE channel_inputs i SET
+      state=CASE WHEN EXISTS (SELECT 1 FROM pairing p WHERE p.status='active' AND p.remote_id=i.payload->>'user_id')
+        THEN 'received' ELSE 'pairing_wait' END,
+      lease_owner='',lease_until=now(),payload=payload || CAST(#{patch} AS jsonb),updated_at=now()
+    WHERE <include refid="owned"/> AND i.state='buffering'
   </update>
   <select id="PairingInput" result="optional">
     SELECT <include refid="columns"/> FROM channel_inputs i WHERE <include refid="scope"/> AND i.uuid=#{inputUUID}
   </select>
   <sql id="pairingWait">
     <include refid="scope"/> AND i.state='pairing_wait'
-    AND i.scope_key=#{input.ScopeKey} AND i.payload->>'user_id'=#{input.ActorID}
+    AND i.payload->>'user_id'=#{input.ActorID}
     AND i.payload->>'pairing_id'=#{input.PairingID}
   </sql>
   <select id="HasPairingWait" result="scalar">
-    SELECT EXISTS (SELECT 1 FROM channel_inputs i WHERE <include refid="pairingWait"/> AND i.message_id=#{input.MessageID})
+    SELECT EXISTS (SELECT 1 FROM channel_inputs i WHERE <include refid="pairingWait"/> AND i.scope_key=#{input.ScopeKey} AND i.message_id=#{input.MessageID})
   </select>
   <select id="ResumeAfterPairing" result="optional">
     WITH resumed AS (
       UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
-      WHERE <include refid="pairingWait"/> AND i.message_id=#{input.MessageID}
+      WHERE <include refid="pairingWait"/> AND i.scope_key=#{input.ScopeKey} AND i.message_id=#{input.MessageID}
       RETURNING i.uuid::text AS uuid
     ) SELECT uuid FROM resumed
   </select>
   <select id="ResumeOAuthWaiters">
     WITH resumed AS (
       UPDATE channel_inputs i SET state='received',lease_until=now(),updated_at=now()
-      WHERE <include refid="pairingWait"/> AND i.payload->>'oauth_provider'=#{provider}
+      WHERE <include refid="pairingWait"/> AND i.payload->>'chat_id'=#{chatID} AND i.payload->>'oauth_provider'=#{provider}
       RETURNING i.*
     ) SELECT <include refid="columns"/> FROM resumed i ORDER BY i.created_at,i.uuid
   </select>

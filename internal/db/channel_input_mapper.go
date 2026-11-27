@@ -13,7 +13,7 @@ type ChannelInputMapper interface {
 	PairingInput(ctx context.Context, scope ChannelInputScope, inputUUID string) (ChannelInput, bool, error)
 	HasPairingWait(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (bool, error)
 	ResumeAfterPairing(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume) (string, bool, error)
-	ResumeOAuthWaiters(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume, provider string) ([]ChannelInput, error)
+	ResumeOAuthWaiters(ctx context.Context, scope ChannelInputScope, input ChannelPairingResume, chatID, provider string) ([]ChannelInput, error)
 	LockSources(ctx context.Context, scope ChannelInputScope, owner string, batch ChannelInputBatch) ([]ChannelInput, error)
 	GroupSources(ctx context.Context, scope ChannelInputScope, owner, anchorUUID string, batch ChannelInputBatch) error
 	Prepare(ctx context.Context, scope ChannelInputScope, inputUUID, owner string, batch ChannelInputBatch) (ChannelInput, bool, error)

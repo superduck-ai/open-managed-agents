@@ -242,29 +242,63 @@ func TestPairingOAuthResumesMatchingInputsOnce(t *testing.T) {
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO channels(uuid,external_id,organization_uuid,workspace_uuid,agent_external_id,name,channel_type,mode,binding_status,app_id) VALUES($1,'chnl_batch',$2,$3,'agent_fixture','配对恢复','feishu','pairing','bound',$4)`, scope.ChannelUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []struct{ id, actor, provider string }{{"one", "actor", "client"}, {"two", "actor", "client"}, {"other", "another", "client"}, {"old", "actor", "previous"}} {
-		row, _, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: input.id, ScopeKey: "chat", Payload: fmt.Sprintf(`{"user_id":%q,"pairing_id":"pair","oauth_provider":%q}`, input.actor, input.provider)})
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO channel_pairings(external_id,organization_uuid,workspace_uuid,channel_uuid,channel_external_id,scope_kind,platform_account,remote_id) VALUES('pair',$1,$2,$3,'chnl_batch','direct',$4,'actor')`, scope.OrganizationUUID, scope.WorkspaceUUID, scope.ChannelUUID, scope.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	const receipt = `{"pairing_id":"pair","oauth_card":"om_auth"}`
+	var lateInput ChannelInput
+	for _, input := range []struct{ id, chat, actor, provider string }{
+		{"one", "chat", "actor", "client"},
+		{"two", "chat", "actor", "client"},
+		{"late", "chat", "actor", "client"},
+		{"other_chat", "different", "actor", "client"},
+		{"other", "chat", "another", "client"},
+		{"old", "chat", "actor", "previous"},
+	} {
+		row, _, err := store.ReceiveChannelInput(t.Context(), scope, ChannelInput{MessageID: input.id, ScopeKey: "thread:" + input.chat + ":" + input.id, Payload: fmt.Sprintf(`{"chat_id":%q,"user_id":%q,"pairing_id":"pair","oauth_provider":%q}`, input.chat, input.actor, input.provider)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, found, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "worker"); err != nil || !found {
 			t.Fatalf("首次认领失败：%v", err)
 		}
-		if err := store.HoldPairingOAuth(t.Context(), scope, row.UUID, "worker", "{}"); err != nil {
+		if input.id == "late" {
+			lateInput = row
+			continue
+		}
+		if err := store.HoldPairingOAuth(t.Context(), scope, row.UUID, "worker", receipt); err != nil {
 			t.Fatal(err)
 		}
 	}
-	match := ChannelPairingResume{ActorID: "actor", PairingID: "pair", ScopeKey: "chat"}
-	rows, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	if err := store.ActivateScopePairingByID(t.Context(), ActivateScopePairingParams{
+		WorkspaceUUID: scope.WorkspaceUUID, ExternalID: "pair", IdentityUUID: uuid.NewV4().String(), AgentExternalID: "agent_fixture",
+		ResumeOAuth: &ChannelOAuthResume{Scope: scope, ActorID: "actor", ChatID: "chat", Provider: "client"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListRecoverableChannelInputs(t.Context(), scope)
 	if err != nil || len(rows) != 2 || rows[0].MessageID != "one" || rows[1].MessageID != "two" {
-		t.Fatalf("等待消息不匹配：%+v %v", rows, err)
+		t.Fatalf("激活后首次恢复前退出，等待消息不匹配：%+v %v", rows, err)
 	}
 	for _, row := range rows {
+		if row.ScopeKey != "thread:chat:"+row.MessageID || row.State != "received" {
+			t.Fatalf("等待消息恢复到了错误的作用域或状态：%+v", row)
+		}
 		if _, ok, err := store.ClaimChannelInput(t.Context(), scope, row.UUID, "restart"); err != nil || !ok {
 			t.Fatalf("恢复的消息无法认领：%v", err)
 		}
 	}
-	again, err := store.ResumeOAuthWaiters(t.Context(), scope, match, "client")
+	if err := store.HoldPairingOAuth(t.Context(), scope, lateInput.UUID, "worker", receipt); err != nil {
+		t.Fatal(err)
+	}
+	late, err := store.ListRecoverableChannelInputs(t.Context(), scope)
+	if err != nil || len(late) != 1 || late[0].UUID != lateInput.UUID || late[0].ScopeKey != lateInput.ScopeKey || late[0].State != "received" {
+		t.Fatalf("新进程未发现授权后登记的原话题消息：%+v %v", late, err)
+	}
+	if row, ok, err := store.ClaimChannelInput(t.Context(), scope, lateInput.UUID, "restart"); err != nil || !ok || row.State != "buffering" {
+		t.Fatalf("新进程无法认领授权后登记的消息：%+v %v", row, err)
+	}
+	again, err := store.ResumeOAuthWaiters(t.Context(), scope, ChannelPairingResume{ActorID: "actor", PairingID: "pair"}, "chat", "client")
 	if err != nil || len(again) != 0 {
 		t.Fatalf("重复回调恢复了已受理的消息：%+v %v", again, err)
 	}

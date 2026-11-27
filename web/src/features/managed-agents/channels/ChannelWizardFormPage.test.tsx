@@ -3,6 +3,7 @@ import { resetTestDom } from '../../../test/setup';
 import type { Channel, ChannelResource } from './api';
 import type { WizardValue } from './ChannelWizardForm';
 import { resourceFormValues } from '../resources/git-resource';
+import type { Locale } from '../../../shared/i18n';
 
 const { render, screen, fireEvent, cleanup, waitFor, within } = await import('@testing-library/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
@@ -39,11 +40,12 @@ function mount(
   saved: Channel | null = null,
   value = initialValue,
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  locale: Locale = 'zh-CN',
 ) {
   const navigated = mock(() => undefined);
   render(
     <QueryClientProvider client={client}>
-      <I18nProvider initialLocale="zh-CN">
+      <I18nProvider initialLocale={locale}>
         <ChannelWizardFormPage
           mode={saved ? 'edit' : 'create'}
           workspaceId="workspace-test"
@@ -590,6 +592,38 @@ test('渠道保存失败时只发送一份含环境的请求，不先修改环�
   expect(posts[0].path).not.toContain('/settings');
   expect(posts[0].body.environment_id).toBe('env-new');
   expect(navigated).not.toHaveBeenCalled();
+});
+
+test.each([
+  {
+    locale: 'zh-CN',
+    saveLabel: '保存配置',
+    expected: '该应用已绑定到其他渠道，请换一个应用。',
+  },
+  {
+    locale: 'en',
+    saveLabel: 'Save configuration',
+    expected: 'This app is already bound to another channel. Use a different app.',
+  },
+] as const)('渠道绑定冲突使用界面语言 $locale', async ({ locale, saveLabel, expected }) => {
+  resetTestDom('/');
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === 'POST') {
+      return Response.json(
+        { error: { type: 'conflict_error', code: 'channel_app_already_bound', message: '服务端冲突文案' } },
+        { status: 409 },
+      );
+    }
+    return Response.json(targets(String(input)));
+  }) as typeof fetch;
+  mount(
+    { ...channel, binding_status: 'bound', app_id: 'cli_test' },
+    { ...initialValue, app_id: 'cli_test', agentId: 'agent-test', environmentId: 'env-test' },
+    undefined,
+    locale,
+  );
+  fireEvent.click(screen.getByRole('button', { name: saveLabel }));
+  expect((await screen.findByRole('alert')).textContent).toBe(expected);
 });
 
 test('多Vault编辑完整回显，取消其中一项后只提交剩余列表', async () => {

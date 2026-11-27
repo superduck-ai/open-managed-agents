@@ -25,9 +25,9 @@ const (
 )
 
 // Error carries an application error's public contract and private cause.
-// Only PublicMessage is safe to expose to clients; Error() is not.
 type Error struct {
 	Kind Kind
+	Code string
 	// PublicMessage must be non-empty and safe to expose to clients.
 	PublicMessage string
 	cause         error

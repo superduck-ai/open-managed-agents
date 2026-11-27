@@ -47,6 +47,7 @@ type fakeLocalStore struct {
 	agentErr        error
 	created         db.ChannelRecordInput
 	createErr       error
+	updateErr       error
 	records         []db.ChannelRecord
 	pairings        []db.ChannelPairingRecord
 	environment     string
@@ -92,6 +93,9 @@ func (f *fakeLocalStore) GetChannelRecord(context.Context, string, string, strin
 }
 
 func (f *fakeLocalStore) UpdateChannelRecord(_ context.Context, input db.ChannelRecordUpdate) (db.ChannelRecord, error) {
+	if f.updateErr != nil {
+		return db.ChannelRecord{}, f.updateErr
+	}
 	record := f.records[0]
 	record.Name = input.Name
 	return record, nil

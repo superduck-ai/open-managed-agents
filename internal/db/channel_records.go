@@ -43,7 +43,7 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 		}
 		return nil
 	})
-	return record, err
+	return record, mapChannelAppBindingError(err)
 }
 
 func (d *DB) GetChannelRecord(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, externalID string) (ChannelRecord, error) {
@@ -98,7 +98,14 @@ func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate
 		}
 		return nil
 	})
-	return record, mapNoRows(err)
+	return record, mapChannelAppBindingError(mapNoRows(err))
+}
+
+func mapChannelAppBindingError(err error) error {
+	if isUniqueViolationOnConstraint(err, "channels_bound_app_v1_idx") {
+		return ErrChannelAppAlreadyBound
+	}
+	return err
 }
 
 func (d *DB) SoftDeleteChannelRecord(ctx context.Context, workspaceUUID, externalID string) error {

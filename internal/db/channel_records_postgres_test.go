@@ -123,6 +123,28 @@ func TestCreateChannelRecordPostgres(t *testing.T) {
 		t.Fatalf("正常更新环境未提交: %s %v", environment, err)
 	}
 
+	t.Run("应用绑定冲突", func(t *testing.T) {
+		bound := input
+		bound.EnvironmentID = nil
+		bound.ExternalID = "ch_bound_app"
+		bound.Enabled = false
+		bound.BindingStatus = "bound"
+		bound.AppID = "cli_bound"
+		if _, err := store.CreateChannelRecord(ctx, bound); err != nil {
+			t.Fatal(err)
+		}
+		duplicate := bound
+		duplicate.ExternalID = "ch_duplicate_app"
+		if _, err := store.CreateChannelRecord(ctx, duplicate); !errors.Is(err, ErrChannelAppAlreadyBound) {
+			t.Fatalf("重复绑定已停用渠道的应用应返回绑定冲突，实际 %v", err)
+		}
+		update.BindingStatus = "bound"
+		update.AppID = bound.AppID
+		if _, err := store.UpdateChannelRecord(ctx, update); !errors.Is(err, ErrChannelAppAlreadyBound) {
+			t.Fatalf("改绑已占用的应用应返回绑定冲突，实际 %v", err)
+		}
+	})
+
 	t.Run("卡片回执与恢复许可", func(t *testing.T) {
 		testChannelReplyDeliveriesPostgres(t, store, database, ChannelDeliveryScope{OrganizationUUID: organization, WorkspaceUUID: workspace, ChannelExternalID: input.ExternalID}, otherWorkspace)
 	})

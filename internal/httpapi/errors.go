@@ -7,10 +7,10 @@ import (
 )
 
 type Error struct {
-	Code    string
 	Status  int
 	Type    string
 	Message string
+	Code    string
 }
 
 func (e *Error) Error() string {
@@ -22,14 +22,14 @@ func NewError(status int, typ, message string) *Error {
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, err *Error) {
-	detail := map[string]string{"type": err.Type, "message": err.Message}
+	publicError := map[string]string{"type": err.Type, "message": err.Message}
 	if err.Code != "" {
-		detail["code"] = err.Code
+		publicError["code"] = err.Code
 	}
 	WriteJSON(w, err.Status, map[string]any{
 		"type":       "error",
 		"request_id": RequestID(r.Context()),
-		"error":      detail,
+		"error":      publicError,
 	})
 }
 

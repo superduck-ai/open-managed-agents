@@ -90,7 +90,7 @@ func writeUsageScopeConflict(w http.ResponseWriter) {
 }
 
 func writeLLMProviderBackendError(w http.ResponseWriter) {
-	writeLLMProviderError(w, http.StatusBadRequest, "api_backend_invalid", "api_backend must be messages or chat_completions")
+	writeLLMProviderError(w, http.StatusBadRequest, "api_backend_invalid", "api_backend must be messages, chat_completions or responses")
 }
 
 func trajectoryWorkspaceRequired() error {

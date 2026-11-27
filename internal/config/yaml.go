@@ -89,35 +89,42 @@ func validateConfigFile(path string) error {
 }
 
 func loadYAMLConfig(path string) (Config, error) {
+	input := newYAMLConfig()
+	if err := readYAMLConfig(path, &input); err != nil {
+		return Config{}, err
+	}
+	return input.resolve(), nil
+}
+
+func readYAMLConfig[T any](path string, input *T) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("read config file %q: %w", path, err)
+		return fmt.Errorf("read config file %q: %w", path, err)
 	}
-	input := newYAMLConfig()
 	if len(bytes.TrimSpace(data)) == 0 {
-		return input.resolve(), nil
+		return nil
 	}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
-		return Config{}, fmt.Errorf("decode config file %q: %w", path, err)
+		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
 	var extraDocument yaml.Node
 	if err := decoder.Decode(&extraDocument); !errors.Is(err, io.EOF) {
 		if err != nil {
-			return Config{}, fmt.Errorf("decode config file %q: %w", path, err)
+			return fmt.Errorf("decode config file %q: %w", path, err)
 		}
-		return Config{}, fmt.Errorf("decode config file %q: multiple YAML documents are not supported", path)
+		return fmt.Errorf("decode config file %q: multiple YAML documents are not supported", path)
 	}
 
-	if err := validateYAMLNode(&document, reflect.TypeFor[yamlConfig](), nil); err != nil {
-		return Config{}, fmt.Errorf("inspect config file %q: %w", path, err)
+	if err := validateYAMLNode(&document, reflect.TypeFor[T](), nil); err != nil {
+		return fmt.Errorf("inspect config file %q: %w", path, err)
 	}
-	if err := document.Decode(&input); err != nil {
-		return Config{}, fmt.Errorf("decode config file %q: %w", path, err)
+	if err := document.Decode(input); err != nil {
+		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
-	return input.resolve(), nil
+	return nil
 }
 
 // validateYAMLNode preserves strict unknown-field and null rejection before
@@ -247,6 +254,8 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		value *string
 	}{
 		{name: "llm_provider_presets_file", value: &cfg.LLMProviderPresetsFile},
+		{name: "optional_config_file", value: &cfg.OptionalConfigFile},
+		{name: "pricing.snapshot_file", value: &cfg.Pricing.SnapshotFile},
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},
 		{name: "environment_runner.manager_artifact.path", value: &cfg.EnvironmentRunner.ManagerArtifact.Path},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},

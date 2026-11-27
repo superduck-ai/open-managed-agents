@@ -11,12 +11,14 @@ type AssistantPart = Extract<LanguageModelV4Message, { role: "assistant" }>["con
 
 interface ReplayBlocks {
   response?: { format?: string };
-  blocks?: { signature?: string; redactedData?: string }[];
+  blocks?: SignedReasoning[];
 }
 
 interface SignedReasoning {
   signature?: string;
   redactedData?: string;
+  itemId?: string;
+  reasoningEncryptedContent?: string;
 }
 
 export async function callOptions(options: GenerateOptions, route: AiSdkRoute, attachments?: AttachmentStore): Promise<LanguageModelV4CallOptions> {
@@ -123,6 +125,10 @@ function assistantParts(message: AssistantMessage, route: AiSdkRoute, toolNames:
 }
 
 function reasoningPart(text: string, replay: SignedReasoning, route: AiSdkRoute): AssistantPart {
+  if (route.replayFormat === "oma-responses-v1") return { type: "reasoning", text, providerOptions: { openai: {
+    ...(replay.itemId ? { itemId: replay.itemId } : {}),
+    ...(replay.reasoningEncryptedContent !== undefined ? { reasoningEncryptedContent: replay.reasoningEncryptedContent } : {}),
+  } } };
   if (!route.signedReasoning) return { type: "reasoning", text };
   if (replay.signature) return { type: "reasoning", text, providerOptions: { anthropic: { signature: replay.signature } } };
   if (replay.redactedData) return { type: "reasoning", text, providerOptions: { anthropic: { redactedData: replay.redactedData } } };

@@ -89,6 +89,17 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 		t.Fatalf("已开始的请求不能结算：%v", err)
 	}
 
+	for _, late := range []SessionEvent{
+		event("late_running", "session.status_running", `{"type":"session.status_running"}`, now),
+		event("late_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"end_turn"}}`, now),
+		event("late_primary_running", "session.thread_status_running", `{"type":"session.thread_status_running"}`, now),
+	} {
+		changes, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{late})
+		if err != nil || len(changes.Events) != 0 {
+			t.Fatalf("迟到状态覆盖预算暂停: %s, %+v, %v", late.EventType, changes, err)
+		}
+	}
+
 	setBudget(json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"100","currency":"USD"}}`), 100, nil)
 	changes, err = store.AppendSessionBudgetReachedEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{usage, idle}, transition)
 	if err != nil || len(changes.Events) != 0 {
@@ -132,6 +143,10 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	session, _, err = store.GetSession(t.Context(), scope.WorkspaceUUID, sessionID)
 	if err != nil || session.Status != "running" {
 		t.Fatalf("子线程结束时，主线程仍在执行，会话状态为 %q：%v", session.Status, err)
+	}
+	finished := event("resumed_idle", "session.status_idle", `{"type":"session.status_idle","stop_reason":{"type":"end_turn"}}`, now)
+	if changes, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{finished}); err != nil || len(changes.Events) == 0 {
+		t.Fatalf("提高预算后无法正常结束: %+v, %v", changes, err)
 	}
 	setBudget(nil, 0, &now)
 	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{message}, nil); err != nil {

@@ -17,9 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func TestChatBrainBudget(t *testing.T) {
@@ -36,8 +34,6 @@ func TestChatBrainBudget(t *testing.T) {
 	node := startBrainNode(t, &brainEnv, cfg, "budget")
 	defer node.stop(t)
 	const modelID = "claude-sonnet-4-6"
-	price := db.CatalogPrice{Model: modelID, Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceModel: modelID, Rates: &billing.Rates{Input: new("1000"), Output: new("1000")}}}
-	requireOK(t, e.database.ReplaceModelPriceCatalog(t.Context(), "openrouter", []db.CatalogPrice{price}))
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
 		"version": e.agent.CurrentVersion, "model": map[string]string{"id": modelID},
 		"tools": []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": true, "permission_policy": map[string]string{"type": "always_allow"}}}},

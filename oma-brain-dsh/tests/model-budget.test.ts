@@ -8,7 +8,7 @@ function budgetResponse(state: "available" | "reached", status: number) {
   return new Response(null, { status, headers: { "X-Oma-Session-Budget": state } });
 }
 
-function budgetCall(backend: "messages" | "chat_completions",
+function budgetCall(backend: "messages" | "chat_completions" | "responses",
   fetcher: (...args: Parameters<typeof fetch>) => Promise<Response>, signal?: AbortSignal) {
   const a = assignment();
   a.launch.models!["test-model"]!.api_backend = backend;
@@ -73,7 +73,7 @@ test("cancelling a paused turn discards its pending request", async () => {
   expect(methods).toEqual(["POST", "HEAD"]);
 });
 
-test.each(["messages", "chat_completions"] as const)("%s resumes with the identical request only after the budget opens", async (backend) => {
+test.each(["messages", "chat_completions", "responses"] as const)("%s resumes with the identical request only after the budget opens", async (backend) => {
   const bodies: string[] = [];
   let probes = 0;
   const call = await budgetCall(backend, async (_input, init) => {

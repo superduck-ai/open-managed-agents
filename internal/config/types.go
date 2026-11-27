@@ -19,6 +19,7 @@ type Config struct {
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	Channels               ChannelsConfig             `yaml:"channels"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
+	OptionalConfigFile     string                     `yaml:"optional_config_file,omitempty"`
 	WebTools               WebToolsConfig             `yaml:"web_tools"`
 	EnvironmentPackages    EnvironmentPackageConfig   `yaml:"environment_packages"`
 	EnvironmentPrebuilds   EnvironmentPrebuildConfig  `yaml:"environment_prebuilds"`
@@ -43,6 +44,7 @@ type Config struct {
 	TelemetryExport        TelemetryExportConfig      `yaml:"telemetry_export"`
 	Vault                  VaultConfig                `yaml:"vault"`
 	Bootstrap              BootstrapConfig            `yaml:"bootstrap"`
+	Pricing                PricingConfig              `yaml:"pricing"`
 }
 
 type WebToolsConfig struct {

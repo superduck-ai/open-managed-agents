@@ -48,7 +48,8 @@ COPY --from=web-builder /web/dist /web-dist
 
 
 RUN useradd --no-create-home --shell /bin/false oma \
-    && chown -R oma:oma /web-dist
+    && mkdir -p /etc/open-managed-agents/data \
+    && chown -R oma:oma /web-dist /etc/open-managed-agents/data
 USER oma
 
 EXPOSE 8080

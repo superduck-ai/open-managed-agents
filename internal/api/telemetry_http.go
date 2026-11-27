@@ -163,7 +163,7 @@ func endRequestSpan(span trace.Span, r *http.Request, route string, status int, 
 
 func workerTraceParent(r *http.Request) string {
 	path := r.URL.Path
-	if path == "/v1/messages" || path == "/v1/chat/completions" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
+	if path == "/v1/messages" || path == "/v1/chat/completions" || path == "/v1/responses" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
 		return r.Header.Get(telemetry.TraceParentHeader)
 	}
 	return ""

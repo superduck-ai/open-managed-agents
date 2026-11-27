@@ -77,8 +77,8 @@ func normalizeLLMProviderPreset(preset *LLMProviderPreset) error {
 	if preset.Name == "" || utf8.RuneCountInString(preset.Name) > 100 {
 		return errors.New("name must contain 1 to 100 characters")
 	}
-	if preset.APIBackend != "messages" && preset.APIBackend != "chat_completions" {
-		return errors.New("api_backend must be messages or chat_completions")
+	if preset.APIBackend != "messages" && preset.APIBackend != "chat_completions" && preset.APIBackend != "responses" {
+		return errors.New("api_backend must be messages, chat_completions or responses")
 	}
 	u, err := url.Parse(preset.BaseURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

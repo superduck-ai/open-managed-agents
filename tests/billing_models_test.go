@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 )
@@ -63,9 +64,10 @@ func TestModelPriceReconciliation(t *testing.T) {
 			seen[tc.Model] = true
 		}
 	}
-	workspaceUUID := uuid.NewV4().String()
-	provider := seedTestLLMProviderForWorkspace(t, app, uuid.NewV4().String(), workspaceUUID, "多模型计费对账", "https://example.test", "fixture-key", models...)
-	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", prices); err != nil {
+	organizationID, workspaceID := uuid.NewV4().String(), uuid.NewV4().String()
+	seedTestLLMProviderForWorkspace(t, app, organizationID, workspaceID, "默认网关", "https://example.test", "fixture-key", "other")
+	provider := seedTestLLMProviderForWorkspace(t, app, organizationID, workspaceID, "多模型计费对账", "https://example.test", "fixture-key", models...)
+	if err := app.prices.Replace("openrouter", prices); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {
@@ -87,8 +89,10 @@ func TestModelPriceReconciliation(t *testing.T) {
 			for _, stream := range []bool{false, true} {
 				t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 					store := &billingRecordedStore{database: app.db}
-					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: app.db.BillingCalculator(), Source: "api"}
-					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: workspaceUUID})
+					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
+						return llmproviders.LoadCatalog(ctx, app.db, org)
+					}, app.prices), Source: "api"}
+					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: workspaceID})
 					request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?stream=%t", upstream.URL, stream), strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.Model)))
 					if err != nil {
 						t.Fatal(err)
@@ -134,7 +138,7 @@ func TestModelPriceReconciliation(t *testing.T) {
 					if err := app.db.SQLDB().QueryRowContext(t.Context(), "SELECT CURRENT_TIMESTAMP").Scan(&databaseNow); err != nil {
 						t.Fatal(err)
 					}
-					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{workspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
+					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{workspaceID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
 					rows, err := app.db.AggregateUsage(t.Context(), query)
 					if err != nil {
 						t.Fatal(err)

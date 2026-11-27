@@ -426,3 +426,51 @@ test('skills route and navigation stay accessible on external runtime when skill
   );
   expect(screen.getByText('Skills Enabled Body')).toBeTruthy();
 });
+
+test('credential-vaults route and navigation stay accessible on external runtime when credential_vaults is enabled', () => {
+  const vaultsEnabledCaps: RuntimeCapabilities = {
+    ...externalCaps,
+    credential_vaults: true,
+    skills: true,
+    deployments: true,
+    memory_stores: true,
+  };
+  const mainHrefs = visibleConsoleNavigation(vaultsEnabledCaps).flatMap((item) =>
+    item.type === 'link' ? [item.href] : item.children.map((child) => child.href),
+  );
+  expect(mainHrefs).toContain('/credential-vaults');
+  expect(allowedResourceSources(vaultsEnabledCaps)).toContain('credential-vaults');
+
+  const vaultsEnabledWorkspace: Workspace = {
+    ...externalWorkspace,
+    runtime: {
+      ...externalWorkspace.runtime!,
+      capabilities: vaultsEnabledCaps,
+    },
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider
+          value={{
+            orgUuid: 'org-1',
+            workspaces: [defaultWorkspace, vaultsEnabledWorkspace],
+            activeWorkspace: vaultsEnabledWorkspace,
+            activeWorkspaceId: vaultsEnabledWorkspace.id,
+            isLoading: false,
+            error: null,
+            selectWorkspace: () => undefined,
+            createWorkspace: async () => vaultsEnabledWorkspace,
+            refreshWorkspaces: async () => undefined,
+          }}
+        >
+          <RuntimeCapabilityGuard currentPath="/workspaces/wrkspc_qoder/credential-vaults">
+            <div>Vaults Enabled Body</div>
+          </RuntimeCapabilityGuard>
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText('Vaults Enabled Body')).toBeTruthy();
+});

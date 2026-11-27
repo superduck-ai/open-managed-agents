@@ -246,6 +246,20 @@ func TestRequireCapabilityMiddleware(t *testing.T) {
 		})
 	}
 
+	t.Run("allows qoder on credential_vaults", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/vaults", nil)
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
+			OrganizationUUID: orgUUID,
+			WorkspaceUUID:    qoderWsUUID,
+			RuntimeProvider:  agentruntime.ProviderQoderCloud.String(),
+		}))
+		server.requireCapability(agentruntime.CapabilityCredentialVaults)(okHandler).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("allows qoder on skills", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/v1/skills", nil)

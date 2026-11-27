@@ -273,7 +273,7 @@ func NewServer(deps ServerDeps) *Server {
 		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity).WithRuntimeResolver(runtimeResolver),
 		identities:        identityHandler,
 		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")).WithRuntimeResolver(runtimeResolver),
-		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
+		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease).WithRuntimeResolver(runtimeResolver),
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,
 	}

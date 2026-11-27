@@ -128,6 +128,12 @@ func mapUpstreamAPIError(apiErr *upstreamAPIError) error {
 		return apperr.New(apperr.RequestTooLarge, "file exceeds qoder runtime size limit", apiErr)
 	case http.StatusTooManyRequests:
 		return apperr.New(apperr.RateLimited, "qoder runtime rate limit exceeded", errors.Join(ErrUpstreamRateLimited, apiErr))
+	case http.StatusNotImplemented:
+		msg := apiErr.Message
+		if msg == "" {
+			msg = "feature is not available on qoder runtime"
+		}
+		return apperr.New(apperr.NotImplemented, msg, apiErr)
 	case http.StatusGatewayTimeout:
 		return apperr.New(apperr.Timeout, "qoder runtime request timed out", errors.Join(ErrUpstreamUnavailable, apiErr))
 	case 529:

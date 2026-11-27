@@ -13,6 +13,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -28,13 +29,14 @@ import (
 const maxVaultBodySize = 4 << 20
 
 type Handler struct {
-	cfg       config.Config
-	db        *db.DB
-	secretSvc *secrets.Service
-	webhooks  webhookEnqueuer
-	logger    *slog.Logger
-	validator *Injector
-	router    chi.Router
+	cfg             config.Config
+	db              *db.DB
+	secretSvc       *secrets.Service
+	webhooks        webhookEnqueuer
+	runtimeResolver *agentruntime.Resolver
+	logger          *slog.Logger
+	validator       *Injector
+	router          chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -181,6 +183,9 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.createVaultExternal(w, r, principal)
+	}
 	request, err := httpapi.DecodeObjectBodyAs[createVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		return invalidRequest(err)
@@ -225,6 +230,9 @@ func (h *Handler) listVaults(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.listVaultsExternal(w, r, principal)
+	}
 	limit, err := parseLimit(r)
 	if err != nil {
 		return invalidRequest(err)
@@ -265,6 +273,9 @@ func (h *Handler) retrieveVaultRoute(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.retrieveVaultExternal(w, r, principal, vaultID)
+	}
 	record, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -282,6 +293,9 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.updateVaultExternal(w, r, principal, vaultID)
+	}
 	current, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -323,6 +337,9 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.archiveVaultExternal(w, r, principal, vaultID)
+	}
 	result, err := h.db.ArchiveVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -353,6 +370,9 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.deleteVaultExternal(w, r, principal, vaultID)
+	}
 	credentialIDs, err := h.db.DeleteVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -382,6 +402,9 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.createCredentialExternal(w, r, principal, vaultID)
+	}
 	vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -466,6 +489,9 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) e
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
+	if isExternalRuntime(principal) {
+		return h.listCredentialsExternal(w, r, principal, vaultID)
+	}
 	if _, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return vaultNotFound(vaultID, err)
@@ -508,6 +534,13 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) e
 }
 
 func (h *Handler) retrieveCredentialRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireAPIKey(r)
+	if err != nil {
+		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.retrieveCredentialExternal(w, r, principal, chi.URLParam(r, "vault_id"), chi.URLParam(r, "credential_id"))
+	}
 	credential, err := h.authorizeCredential(r)
 	if err != nil {
 		return err
@@ -522,6 +555,9 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
+	if isExternalRuntime(principal) {
+		return h.updateCredentialExternal(w, r, principal, vaultID, credentialID)
+	}
 	current, err := h.db.GetVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -587,6 +623,9 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
+	if isExternalRuntime(principal) {
+		return h.archiveCredentialExternal(w, r, principal, vaultID, credentialID)
+	}
 	record, changed, err := h.db.ArchiveVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -608,6 +647,9 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
+	if isExternalRuntime(principal) {
+		return h.deleteCredentialExternal(w, r, principal, vaultID, credentialID)
+	}
 	if err := h.db.DeleteVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return credentialNotFound(credentialID, err)
@@ -640,6 +682,13 @@ func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Prin
 }
 
 func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireAPIKey(r)
+	if err != nil {
+		return err
+	}
+	if isExternalRuntime(principal) {
+		return vaultValidationNotAvailable()
+	}
 	credential, err := h.authorizeCredential(r)
 	if err != nil {
 		return err

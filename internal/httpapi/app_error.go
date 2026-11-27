@@ -113,6 +113,8 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 		return errorMapping{http.StatusGone, "invalid_request_error", "gone"}, true
 	case apperr.Overloaded:
 		return errorMapping{529, "overloaded_error", "overloaded"}, true
+	case apperr.NotImplemented:
+		return errorMapping{http.StatusNotImplemented, "feature_not_available", "not_implemented"}, true
 	default:
 		return errorMapping{}, false
 	}

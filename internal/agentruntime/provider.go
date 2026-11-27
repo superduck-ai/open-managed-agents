@@ -127,3 +127,18 @@ type SkillRuntime interface {
 	GetSkillVersion(ctx context.Context, scope Scope, skillID string, version string) (SkillVersion, error)
 	DeleteSkillVersion(ctx context.Context, scope Scope, skillID string, version string) error
 }
+
+type VaultRuntime interface {
+	CreateVault(ctx context.Context, scope Scope, input CreateVaultInput) (Vault, error)
+	GetVault(ctx context.Context, scope Scope, vaultID string) (Vault, error)
+	ListVaults(ctx context.Context, scope Scope, query ListVaultsQuery) (Page[Vault], error)
+	UpdateVault(ctx context.Context, scope Scope, vaultID string, input UpdateVaultInput) (Vault, error)
+	ArchiveVault(ctx context.Context, scope Scope, vaultID string) (Vault, error)
+	DeleteVault(ctx context.Context, scope Scope, vaultID string) error
+	CreateVaultCredential(ctx context.Context, scope Scope, vaultID string, input CreateVaultCredentialInput) (VaultCredential, error)
+	GetVaultCredential(ctx context.Context, scope Scope, vaultID string, credentialID string) (VaultCredential, error)
+	ListVaultCredentials(ctx context.Context, scope Scope, vaultID string, query ListVaultCredentialsQuery) (Page[VaultCredential], error)
+	UpdateVaultCredential(ctx context.Context, scope Scope, vaultID string, credentialID string, input UpdateVaultCredentialInput) (VaultCredential, error)
+	ArchiveVaultCredential(ctx context.Context, scope Scope, vaultID string, credentialID string) (VaultCredential, error)
+	DeleteVaultCredential(ctx context.Context, scope Scope, vaultID string, credentialID string) error
+}

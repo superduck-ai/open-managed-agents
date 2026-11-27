@@ -175,6 +175,10 @@ func (r *Runtime) CreateSession(ctx context.Context, scope agentruntime.Scope, i
 	if err != nil {
 		return agentruntime.Session{}, err
 	}
+	translatedVaultIDs, err := r.translateOwnedVaultIDs(ctx, scope, input.VaultIDs)
+	if err != nil {
+		return agentruntime.Session{}, err
+	}
 	initialEvents, err := decodeEventPayloads(input.InitialEvents)
 	if err != nil {
 		return agentruntime.Session{}, err
@@ -191,7 +195,7 @@ func (r *Runtime) CreateSession(ctx context.Context, scope agentruntime.Scope, i
 		Agent:         agentField,
 		EnvironmentID: remoteEnvID,
 		Title:         input.Title,
-		VaultIDs:      input.VaultIDs,
+		VaultIDs:      translatedVaultIDs,
 		Metadata:      injectWatermark(input.Metadata, scope),
 		Resources:     translatedResources,
 		InitialEvents: initialEvents,
@@ -806,7 +810,7 @@ func (r *Runtime) mapQoderSession(
 		EnvironmentID: resolvedEnvID,
 		Title:         remote.Title,
 		Status:        remote.Status,
-		VaultIDs:      remote.VaultIDs,
+		VaultIDs:      r.mapRemoteVaultIDs(ctx, scope, remote.VaultIDs),
 		Metadata:      stripWatermark(remote.Metadata),
 		Resources:     resources,
 		Budget:        budget,

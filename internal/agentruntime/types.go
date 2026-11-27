@@ -622,3 +622,59 @@ type ListSkillVersionsQuery struct {
 	Limit  int
 	Offset int
 }
+
+type Vault struct {
+	ID          string
+	DisplayName string
+	Metadata    map[string]string
+	ArchivedAt  *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CreateVaultInput struct {
+	DisplayName string
+	Metadata    map[string]string
+}
+
+type UpdateVaultInput struct {
+	DisplayName *string
+	Metadata    map[string]string
+	MetadataSet bool
+}
+
+type ListVaultsQuery struct {
+	IncludeArchived bool
+	Limit           int
+	Offset          int
+}
+
+type VaultCredential struct {
+	ID          string
+	VaultID     string
+	DisplayName string
+	Metadata    map[string]string
+	Auth        json.RawMessage
+	ArchivedAt  *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CreateVaultCredentialInput struct {
+	DisplayName string
+	Metadata    map[string]string
+	Auth        json.RawMessage
+}
+
+type UpdateVaultCredentialInput struct {
+	DisplayName *string
+	Metadata    map[string]string
+	MetadataSet bool
+	Auth        json.RawMessage
+}
+
+type ListVaultCredentialsQuery struct {
+	IncludeArchived bool
+	Limit           int
+	Offset          int
+}

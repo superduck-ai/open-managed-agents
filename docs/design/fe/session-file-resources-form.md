@@ -32,6 +32,10 @@ Git repository 的公开请求字段如下；API 类型沿用 `github_repository
 - Mount path 可省略，默认由服务端按仓库名生成 `/workspace/<repo>`。它与 File 的 `/mnt/session/uploads` 路径规则分开；Git 表单接受 `/workspace` 下的绝对路径。
 - 前端检查必填字段、URL、SHA 和基础路径形状；Git ref、跨仓库路径冲突、资源数量与完整安全规则以后端为权威。
 
+Git Smart HTTP 请求匹配已挂载仓库时，由该仓库资源决定认证方式。填写令牌时使用资源令牌，留空时匿名访问。其他 Git 远端可以使用 Vault 凭据。 [Vault 的 Git 认证规则](../be/vault-runtime.md#git-smart-http-authorization)
+
+检出与提交 PR 可以使用不同的 Git 远端。从 GitLab 检出并向 GitHub 提交 PR 时，保留 GitLab 为 `origin`，另加 `github` 远端用于推送分支。
+
 ### Deployment 编辑
 
 编辑 Deployment 默认展示原资源摘要。只修改名称、环境或触发器等设置时，请求省略 `resources`，避免覆盖通过 API 创建的 Git/File 资源。

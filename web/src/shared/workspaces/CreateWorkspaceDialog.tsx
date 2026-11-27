@@ -15,27 +15,89 @@ import {
 import { Field, FieldDescription, FieldLabel } from '../ui/field';
 import { Input } from '../ui/input';
 import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { listOrganizationRuntimeProfiles, type OrganizationRuntimeProfile } from './api';
+import { useWorkspace } from './context';
 import { workspaceColors } from './presentation';
 
 type CreateWorkspaceDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (name: string, displayColor: string) => Promise<void>;
+  onCreate: (name: string, displayColor: string, runtimeProfileId?: string) => Promise<void>;
   trigger?: React.ReactElement;
+  orgUuid?: string;
 };
 
-export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }: CreateWorkspaceDialogProps) {
+function useAvailableRuntimeProfiles(open: boolean, orgUuid?: string) {
+  const [profiles, setProfiles] = useState<OrganizationRuntimeProfile[]>([]);
+  const [defaultProfileId, setDefaultProfileId] = useState('');
+
+  useEffect(() => {
+    if (!open || !orgUuid) {
+      setProfiles([]);
+      setDefaultProfileId('');
+      return;
+    }
+    let active = true;
+    void listOrganizationRuntimeProfiles(orgUuid)
+      .then((result) => {
+        if (!active) return;
+        const available = result.profiles.filter(
+          (profile) => profile.status !== 'archived' && profile.status !== 'disabled',
+        );
+        setProfiles(available);
+        const preferred =
+          available.find((profile) => profile.id === result.defaultProfileId) ??
+          available.find((profile) => profile.uuid === result.defaultProfileUuid) ??
+          available[0];
+        setDefaultProfileId(preferred ? preferred.id || preferred.uuid : '');
+      })
+      .catch(() => {
+        if (!active) return;
+        setProfiles([]);
+        setDefaultProfileId('');
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, orgUuid]);
+
+  return { profiles, defaultProfileId };
+}
+
+function runtimeProfileOptionValue(profile: OrganizationRuntimeProfile) {
+  return profile.id || profile.uuid;
+}
+
+export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger, orgUuid }: CreateWorkspaceDialogProps) {
   const { msg } = useI18n();
+  const workspaceContext = useWorkspace();
+  const effectiveOrgUuid = orgUuid ?? workspaceContext.orgUuid;
+  const { profiles: runtimeProfiles, defaultProfileId } = useAvailableRuntimeProfiles(open, effectiveOrgUuid);
   const nameRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState('');
   const [selectedColor, setSelectedColor] = useState(workspaceColors[1].value);
+  const [selectedRuntimeProfileId, setSelectedRuntimeProfileId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
+
+  useEffect(() => {
+    if (defaultProfileId) {
+      setSelectedRuntimeProfileId((current) => current || defaultProfileId);
+    }
+  }, [defaultProfileId]);
+
+  const showRuntimeSelector = runtimeProfiles.length > 1;
+  const activeRuntimeProfileId = showRuntimeSelector
+    ? runtimeProfiles.some((profile) => runtimeProfileOptionValue(profile) === selectedRuntimeProfileId)
+      ? selectedRuntimeProfileId
+      : defaultProfileId
+    : '';
   const canCreate = name.trim().length > 0 && !submitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -52,7 +114,11 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
     setSubmitting(true);
     setError('');
     try {
-      await onCreate(name.trim(), selectedColor);
+      if (showRuntimeSelector && activeRuntimeProfileId) {
+        await onCreate(name.trim(), selectedColor, activeRuntimeProfileId);
+      } else {
+        await onCreate(name.trim(), selectedColor);
+      }
       onOpenChange(false);
     } catch (createError) {
       setError(
@@ -68,6 +134,11 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
     }
   };
 
+  const runtimeItems = runtimeProfiles.map((profile) => ({
+    value: runtimeProfileOptionValue(profile),
+    label: profile.name,
+  }));
+
   return (
     <Dialog
       open={open}
@@ -82,6 +153,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
         if (!next) {
           setName('');
           setSelectedColor(workspaceColors[1].value);
+          setSelectedRuntimeProfileId('');
           setSubmitting(false);
           setError('');
         }
@@ -134,6 +206,47 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
                   ))}
                 </RadioGroup>
               </Field>
+
+              {showRuntimeSelector ? (
+                <Field className="gap-2">
+                  <FieldLabel htmlFor="workspace-runtime-profile">
+                    {msg('workspace.runtimeEngine', 'Runtime engine')}
+                  </FieldLabel>
+                  <Select
+                    value={activeRuntimeProfileId}
+                    items={runtimeItems}
+                    onValueChange={(nextValue) => {
+                      if (nextValue) {
+                        setSelectedRuntimeProfileId(nextValue);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      id="workspace-runtime-profile"
+                      aria-label={msg('workspace.runtimeEngine', 'Runtime engine')}
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {runtimeProfiles.map((profile) => {
+                        const value = runtimeProfileOptionValue(profile);
+                        return (
+                          <SelectItem key={value} value={value} label={profile.name}>
+                            {profile.name}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    {msg(
+                      'workspace.runtimeEngineHelp',
+                      "Choose which managed agent runtime powers this workspace. This can't be changed after creation.",
+                    )}
+                  </FieldDescription>
+                </Field>
+              ) : null}
 
               <Field className="gap-2">
                 <FieldLabel htmlFor="workspace-geo">{msg('workspace.geo', 'Workspace geo')}</FieldLabel>

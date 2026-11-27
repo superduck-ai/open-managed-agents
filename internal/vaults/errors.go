@@ -253,3 +253,11 @@ func invalidVaultCreateMetadata() error {
 func disabledOAuthProvider() error {
 	return apperr.New(apperr.InvalidArgument, "OAuth provider is disabled for new credentials", nil)
 }
+
+func vaultRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Internal, "Vault runtime is not configured", cause)
+}
+
+func vaultValidationNotAvailable() error {
+	return apperr.New(apperr.NotImplemented, "Credential OAuth validation is not available on this runtime", nil)
+}

@@ -1,7 +1,8 @@
 import type { AuthAccount } from '../../shared/auth/api';
 import type { I18nContextValue } from '../../shared/i18n/context';
 import type { Workspace } from '../../shared/workspaces/api';
-import { consoleNavigation, placeholderIcons, type IconComponent } from '../../shared/navigation/navigation';
+import type { RuntimeCapabilities } from '../../shared/workspaces/runtime';
+import { visibleConsoleNavigation, placeholderIcons, type IconComponent } from '../../shared/navigation/navigation';
 import { productIcons } from '../../shared/icons/product-icons';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { visibleSettingsGroups } from '../../shared/navigation/settings-navigation';
@@ -37,13 +38,14 @@ export function navigationSearchRecords(
   orgUuid: string | undefined,
   workspaceId: string,
   msg: I18nContextValue['msg'],
+  capabilities?: RuntimeCapabilities,
 ): SearchRecord[] {
-  const main = consoleNavigation.flatMap((item) =>
+  const main = visibleConsoleNavigation(capabilities).flatMap((item) =>
     item.type === 'link'
       ? [{ ...item, context: '' }]
       : item.children.map((child) => ({ ...child, context: msg(item.labelId, item.label) })),
   );
-  const settings = visibleSettingsGroups(account, orgUuid).flatMap((group) =>
+  const settings = visibleSettingsGroups(account, orgUuid, capabilities).flatMap((group) =>
     group.children.map((item) => ({ ...item, context: msg(group.labelId, group.label) })),
   );
   return [...main, ...settings].map((item) => ({

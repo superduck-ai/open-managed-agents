@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -30,11 +31,12 @@ import (
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	store  storage.ObjectStore
-	logger *slog.Logger
-	router chi.Router
+	cfg             config.Config
+	db              *db.DB
+	store           storage.ObjectStore
+	runtimeResolver *agentruntime.Resolver
+	logger          *slog.Logger
+	router          chi.Router
 }
 
 type fileMetadata struct {
@@ -72,6 +74,11 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 	return h
 }
 
+func (h *Handler) WithRuntimeResolver(resolver *agentruntime.Resolver) *Handler {
+	h.runtimeResolver = resolver
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
@@ -84,6 +91,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
+		return
+	}
+	if isExternalRuntime(principal) {
+		h.uploadExternal(w, r, principal)
 		return
 	}
 
@@ -171,6 +182,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
 		return
 	}
+	if isExternalRuntime(principal) {
+		h.listExternal(w, r, principal)
+		return
+	}
 	limit, err := parseLimit(r)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
@@ -232,6 +247,10 @@ func (h *Handler) downloadRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.retrieveMetadataExternal(w, r, principal, fileID)
+		return
+	}
 	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -247,6 +266,10 @@ func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileI
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.deleteExternal(w, r, principal, fileID)
+		return
+	}
 	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -293,6 +316,10 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		h.downloadExternal(w, r, principal, fileID)
+		return
+	}
 	record, ok := h.visibleFile(w, r, principal.WorkspaceUUID, fileID, "File not found: "+fileID, "Could not download file", "get file before download")
 	if !ok {
 		return
@@ -315,6 +342,10 @@ func (h *Handler) consoleFileContent(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
 		return
 	}
+	if isExternalRuntime(principal) {
+		h.consoleFileContentExternal(w, r, principal)
+		return
+	}
 	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))
 	if err != nil {
 		h.writePreviewLookupError(w, r, err)
@@ -331,6 +362,10 @@ func (h *Handler) consoleFileMetadata(w http.ResponseWriter, r *http.Request) {
 	principal, ok := consoleFilePrincipal(r)
 	if !ok {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	if isExternalRuntime(principal) {
+		h.consoleFileMetadataExternal(w, r, principal)
 		return
 	}
 	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))

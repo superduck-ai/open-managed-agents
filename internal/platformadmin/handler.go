@@ -19,13 +19,14 @@ import (
 type SessionLoader func(*http.Request) (platformsession.Session, error)
 
 type Handler struct {
-	service        *Service
-	oauthProviders *OAuthProviderService
-	load           SessionLoader
-	verify         func(context.Context, string) (db.PlatformAdminAccount, error)
-	enabled        bool
-	mu             sync.Mutex
-	lookups        map[string]time.Time
+	service         *Service
+	oauthProviders  *OAuthProviderService
+	runtimeProfiles *RuntimeProfileService
+	load            SessionLoader
+	verify          func(context.Context, string) (db.PlatformAdminAccount, error)
+	enabled         bool
+	mu              sync.Mutex
+	lookups         map[string]time.Time
 }
 
 type accountContextKey struct{}
@@ -52,6 +53,14 @@ func (h *Handler) WithOAuthProviders(service *OAuthProviderService) *Handler {
 	return h
 }
 
+func (h *Handler) WithRuntimeProfiles(service *RuntimeProfileService) *Handler {
+	if h == nil {
+		return nil
+	}
+	h.runtimeProfiles = service
+	return h
+}
+
 func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.authorize)
@@ -69,10 +78,18 @@ func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r.Post("/oauth-providers", h.createOAuthProvider)
 	r.Patch("/oauth-providers/{providerId}", h.updateOAuthProvider)
 	r.Delete("/oauth-providers/{providerId}", h.deleteOAuthProvider)
+	r.Get("/runtime-profiles", h.listRuntimeProfiles)
+	r.Post("/runtime-profiles", h.createRuntimeProfile)
+	r.Patch("/runtime-profiles/{profileId}", h.updateRuntimeProfile)
+	r.Delete("/runtime-profiles/{profileId}", h.deleteRuntimeProfile)
+	r.Post("/runtime-profiles/{profileId}/test", h.testRuntimeProfile)
 	r.Route("/organizations/{organizationUuid}", func(r chi.Router) {
 		r.Use(h.organizationScope)
 		r.Get("/", h.organization)
 		r.Patch("/", h.updateOrganization)
+		r.With(h.requireOrganization).Get("/runtime-policy", h.getOrganizationRuntimePolicy)
+		r.With(h.requireOrganization).Put("/runtime-policy", h.updateOrganizationRuntimePolicy)
+		r.With(h.requireOrganization).Patch("/runtime-policy", h.updateOrganizationRuntimePolicy)
 		r.With(h.requireOrganization).Get("/members", h.members)
 		r.With(h.requireOrganization).Get("/workspaces", h.workspaces)
 		r.Post("/administrators", h.grantAdministrator)
@@ -268,6 +285,120 @@ func (h *Handler) deleteOAuthProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) requireRuntimeProfiles(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	if h.runtimeProfiles != nil {
+		return true
+	}
+	h.fail(w, r, ErrUnavailable)
+	return false
+}
+
+func (h *Handler) listRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	views, err := h.runtimeProfiles.List(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, views)
+}
+
+func (h *Handler) createRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	input, err := decodeRequest[RuntimeProfileCreateInput](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view, err := h.runtimeProfiles.Create(r.Context(), actorFromRequest(r), input)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusCreated, view)
+}
+
+func (h *Handler) updateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	input, err := decodeRequest[RuntimeProfileUpdateInput](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view, err := h.runtimeProfiles.Update(r.Context(), actorFromRequest(r), chi.URLParam(r, "profileId"), input)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, view)
+}
+
+func (h *Handler) deleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	input, err := decodeRequest[struct {
+		ExpectedVersion int64 `json:"expected_version"`
+	}](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err := h.runtimeProfiles.Delete(r.Context(), actorFromRequest(r), chi.URLParam(r, "profileId"), input.ExpectedVersion); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) testRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	result, err := h.runtimeProfiles.TestConnection(r.Context(), actorFromRequest(r), chi.URLParam(r, "profileId"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, result)
+}
+
+func (h *Handler) getOrganizationRuntimePolicy(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	view, err := h.runtimeProfiles.GetOrganizationPolicy(r.Context(), chi.URLParam(r, "organizationUuid"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, view)
+}
+
+func (h *Handler) updateOrganizationRuntimePolicy(w http.ResponseWriter, r *http.Request) {
+	if !h.requireRuntimeProfiles(w, r) {
+		return
+	}
+	input, err := decodeRequest[UpdateOrganizationRuntimePolicyInput](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view, err := h.runtimeProfiles.UpdateOrganizationPolicy(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), input)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, view)
 }
 
 func (h *Handler) writeChange(w http.ResponseWriter, r *http.Request, result Organization, err error) {

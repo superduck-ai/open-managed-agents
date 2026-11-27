@@ -18,10 +18,11 @@ type dataResidencyRequest struct {
 }
 
 type createWorkspaceRequest struct {
-	Name          string                `json:"name"`
-	DataResidency *dataResidencyRequest `json:"data_residency"`
-	ExternalKeyID *string               `json:"external_key_id"`
-	Tags          map[string]string     `json:"tags"`
+	Name             string                `json:"name"`
+	DataResidency    *dataResidencyRequest `json:"data_residency"`
+	ExternalKeyID    *string               `json:"external_key_id"`
+	Tags             map[string]string     `json:"tags"`
+	RuntimeProfileID *string               `json:"runtime_profile_id"`
 }
 
 type updateWorkspaceRequest struct {

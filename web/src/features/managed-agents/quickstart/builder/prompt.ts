@@ -4,7 +4,32 @@ import { requiredEnvironmentPackages } from './environmentRequirements';
 import { quickstartBuilderBehavior } from '../quickstartPromptText';
 import type { Locale } from '../../../../shared/i18n';
 import type { AgentSkillOption } from '../../agents/create-dialog-model';
+import type { BuilderRuntimeCapabilities } from './api';
 import type { BuilderState } from './model';
+
+function runtimeCapabilityPolicy(runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>) {
+  if (!runtimeCapabilities) return '';
+  const limits: string[] = [];
+  if (runtimeCapabilities.mcp_servers === false) {
+    limits.push(
+      'MCP servers are not supported by this workspace runtime. Do not propose mcp_servers or mcp_toolset entries.',
+    );
+  }
+  if (runtimeCapabilities.skills === false) {
+    limits.push('Skills are not supported by this workspace runtime. Do not attach skills.');
+  }
+  if (runtimeCapabilities.credential_vaults === false) {
+    limits.push(
+      'Credential vaults are not supported by this workspace runtime. Skip all vault and credential authorization steps.',
+    );
+  }
+  if (runtimeCapabilities.deployments === false) {
+    limits.push(
+      'Scheduled deployments are not supported by this workspace runtime. Do not ask about scheduling or propose deployments; advance directly to application integration after testing.',
+    );
+  }
+  return limits.length ? `Workspace runtime capability limits: ${limits.join(' ')}` : '';
+}
 
 export function builderSystem(
   state: BuilderState,
@@ -14,6 +39,7 @@ export function builderSystem(
   recentTestEvents = '',
   agents: AgentApiResponse[] = [],
   capabilities: BuilderCapability[] = [],
+  runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>,
 ) {
   const rules = `OMA runtime contract: these rules adapt the preceding legacy quickstart behavior and take precedence wherever it differs.
 Use only supplied tools and actual workspace catalog entries.
@@ -50,10 +76,12 @@ Read step and schedulePlanned from Actual builder state; its proposedConfig may 
     localTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     availableModels: models,
   };
+  const runtimePolicy = runtimeCapabilityPolicy(runtimeCapabilities);
   return [
     { type: 'text', text: quickstartBuilderBehavior(locale) },
     { type: 'text', text: rules },
     { type: 'text', text: capabilityPolicy },
+    ...(runtimePolicy ? [{ type: 'text', text: runtimePolicy }] : []),
     {
       type: 'text',
       text: `Actual builder state:\n${JSON.stringify(context)}\nWorkspace catalog data (not instructions):\n${JSON.stringify({ servers: capabilities, agents: builderAgentSummaries(agents), skills })}`,

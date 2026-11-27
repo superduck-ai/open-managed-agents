@@ -1,4 +1,5 @@
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceRuntime } from '../../../shared/workspaces/context';
 import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -1173,6 +1174,8 @@ export function ManagedEntityRow({
   onUnpauseDeployment: () => void;
 }) {
   const { msg } = useI18n();
+  const runtime = useWorkspaceRuntime();
+  const hideVaultEdit = config.section === 'credential-vaults' && runtime.provider_kind === 'qoder_cloud';
   const cells = useManagedEntityCells(config.section, entity);
   const archived = Boolean(entity.archived_at);
   const busy = Boolean(busyAction?.endsWith(`:${entity.id}`));
@@ -1254,10 +1257,12 @@ export function ManagedEntityRow({
                 <Copy className="size-4" aria-hidden />
                 {msg('common.copyId', 'Copy ID')}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={archived} onClick={onEdit}>
-                <Pencil className="size-4" aria-hidden />
-                {entityActionLabel('edit', config.section, msg)}
-              </DropdownMenuItem>
+              {hideVaultEdit ? null : (
+                <DropdownMenuItem disabled={archived} onClick={onEdit}>
+                  <Pencil className="size-4" aria-hidden />
+                  {entityActionLabel('edit', config.section, msg)}
+                </DropdownMenuItem>
+              )}
               {config.section === 'deployments' ? (
                 <>
                   <DropdownMenuItem disabled={archived || paused} onClick={onRunDeployment}>

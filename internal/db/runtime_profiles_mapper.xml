@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="RuntimeProfileMapper">
+    <sql id="columns">
+        id,
+        uuid,
+        external_id,
+        scope,
+        organization_uuid,
+        name,
+        provider_kind,
+        endpoint_url,
+        isolation_mode,
+        config,
+        capability_overrides,
+        CAST(secret_envelope AS text) AS secret_envelope,
+        credential_hint,
+        credential_revision,
+        status,
+        last_health_status,
+        last_health_checked_at,
+        last_health_error,
+        version,
+        created_at,
+        updated_at
+    </sql>
+
+    <sql id="aliasedColumns">
+        rp.id,
+        rp.uuid,
+        rp.external_id,
+        rp.scope,
+        rp.organization_uuid,
+        rp.name,
+        rp.provider_kind,
+        rp.endpoint_url,
+        rp.isolation_mode,
+        rp.config,
+        rp.capability_overrides,
+        CAST(rp.secret_envelope AS text) AS secret_envelope,
+        rp.credential_hint,
+        rp.credential_revision,
+        rp.status,
+        rp.last_health_status,
+        rp.last_health_checked_at,
+        rp.last_health_error,
+        rp.version,
+        rp.created_at,
+        rp.updated_at
+    </sql>
+
+    <select id="ListPlatform" resultType="runtimeProfileRow">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_profiles
+        WHERE scope = 'platform'
+        ORDER BY created_at ASC, id ASC
+    </select>
+
+    <select id="FindByUUID" resultType="runtimeProfileRow">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_profiles
+        WHERE uuid = #{profileUUID}
+    </select>
+
+    <select id="FindByExternalID" resultType="runtimeProfileRow">
+        SELECT
+        <include refid="columns"/>
+        FROM runtime_profiles
+        WHERE external_id = #{externalID}
+    </select>
+
+    <insert id="Insert" result="returning" resultType="runtimeProfileRow">
+        INSERT INTO runtime_profiles (
+            uuid,
+            external_id,
+            scope,
+            organization_uuid,
+            name,
+            provider_kind,
+            endpoint_url,
+            isolation_mode,
+            config,
+            capability_overrides,
+            secret_envelope,
+            credential_hint,
+            credential_revision,
+            status,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.Scope},
+            #{params.OrganizationUUID},
+            #{params.Name},
+            #{params.ProviderKind},
+            #{params.EndpointURL},
+            #{params.IsolationMode},
+            CAST(#{params.Config} AS jsonb),
+            CAST(#{params.CapabilityOverrides} AS jsonb),
+            CAST(#{params.SecretEnvelope,sensitive=true} AS jsonb),
+            #{params.CredentialHint},
+            #{params.CredentialRevision},
+            #{params.Status},
+            #{params.CreatedAt},
+            #{params.UpdatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <update id="UpdateByUUID" result="returning" resultType="runtimeProfileRow">
+        UPDATE runtime_profiles
+        SET name = #{params.Name},
+            endpoint_url = #{params.EndpointURL},
+            isolation_mode = #{params.IsolationMode},
+            config = CAST(#{params.Config} AS jsonb),
+            capability_overrides = CAST(#{params.CapabilityOverrides} AS jsonb),
+            secret_envelope = CAST(#{params.SecretEnvelope,sensitive=true} AS jsonb),
+            credential_hint = #{params.CredentialHint},
+            credential_revision = #{params.CredentialRevision},
+            status = #{params.Status},
+            updated_at = #{params.UpdatedAt},
+            version = version + 1
+        WHERE uuid = #{params.UUID}
+        AND version = #{params.Version}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UpdateHealthByUUID" result="rows">
+        UPDATE runtime_profiles
+        SET last_health_status = #{params.LastHealthStatus},
+            last_health_error = #{params.LastHealthError},
+            last_health_checked_at = #{params.LastHealthCheckedAt},
+            updated_at = NOW()
+        WHERE uuid = #{params.UUID}
+    </update>
+
+    <delete id="DeleteByUUID" result="rows">
+        DELETE FROM runtime_profiles
+        WHERE uuid = #{profileUUID}
+        AND version = #{expectedVersion}
+    </delete>
+
+    <select id="FindOrganizationPolicy" resultType="organizationRuntimePolicyRow">
+        SELECT
+            uuid AS organization_uuid,
+            default_runtime_profile_uuid,
+            CAST(COALESCE(to_jsonb(allowed_runtime_profile_uuids), CAST('[]' AS jsonb)) AS text) AS allowed_runtime_profile_uuids_json
+        FROM organizations
+        WHERE uuid = #{organizationUUID}
+    </select>
+
+    <update id="UpdateOrganizationPolicy" result="returning" resultType="organizationRuntimePolicyRow">
+        UPDATE organizations
+        SET default_runtime_profile_uuid = #{params.DefaultRuntimeProfileUUID},
+            allowed_runtime_profile_uuids = ARRAY(
+                SELECT CAST(value AS uuid)
+                FROM jsonb_array_elements_text(CAST(#{params.AllowedRuntimeProfileUUIDsJSON} AS jsonb)) AS value
+            ),
+            updated_at = NOW()
+        WHERE uuid = #{params.OrganizationUUID}
+        RETURNING
+            uuid AS organization_uuid,
+            default_runtime_profile_uuid,
+            CAST(COALESCE(to_jsonb(allowed_runtime_profile_uuids), CAST('[]' AS jsonb)) AS text) AS allowed_runtime_profile_uuids_json
+    </update>
+
+    <select id="FindByWorkspace" resultType="runtimeProfileRow">
+        SELECT
+        <include refid="aliasedColumns"/>
+        FROM workspaces w
+        JOIN runtime_profiles rp ON rp.uuid = w.runtime_profile_uuid
+        WHERE w.organization_uuid = #{organizationUUID}
+        AND w.uuid = #{workspaceUUID}
+    </select>
+</mapper>

@@ -1,10 +1,17 @@
 import { type DeploymentApiResponse, type ManagedEntityFormValues, type SessionApiResponse } from '../types';
 
 /** Budget wire shape: integer-cent USD amount as a string (CMA-compatible). */
-export type BudgetWire = {
+export type UsdBudgetWire = {
   type: 'limit';
   max_list_cost: { amount: string; currency: string };
 };
+
+export type CreditsBudgetWire = {
+  type: 'limit';
+  max_credit_cost: string;
+};
+
+export type BudgetWire = UsdBudgetWire | CreditsBudgetWire;
 
 export type BudgetParseResult = { ok: true; cents: number | null } | { ok: false };
 
@@ -29,26 +36,48 @@ export function parseBudgetUsdInput(input: string): BudgetParseResult {
   return { ok: true, cents };
 }
 
-export function budgetWireBody(cents: number): BudgetWire {
+export function budgetWireBody(cents: number): UsdBudgetWire {
   return { type: 'limit', max_list_cost: { amount: String(cents), currency: 'USD' } };
 }
 
-/** Body fragment for create requests: budget present only when set. */
-export function budgetCreateBody(values: ManagedEntityFormValues): BudgetWire | undefined {
-  const parsed = parseBudgetUsdInput(values.budgetUsd);
-  return parsed.ok && parsed.cents !== null ? budgetWireBody(parsed.cents) : undefined;
+export function budgetCreditsWireBody(cents: number): CreditsBudgetWire {
+  return { type: 'limit', max_credit_cost: (cents / 100).toFixed(2) };
 }
 
-/** Body fragment for update requests: sent only when edited, null clears. */
+export function budgetCreateBody(values: ManagedEntityFormValues): BudgetWire | undefined {
+  if (values.budgetMode === 'none') {
+    return undefined;
+  }
+  const parsed = parseBudgetUsdInput(values.budgetUsd);
+  if (!parsed.ok || parsed.cents === null) {
+    return undefined;
+  }
+  return values.budgetMode === 'credits' ? budgetCreditsWireBody(parsed.cents) : budgetWireBody(parsed.cents);
+}
+
 export function budgetUpdateBody(values: ManagedEntityFormValues): BudgetWire | null | undefined {
   const parsed = parseBudgetUsdInput(values.budgetUsd);
   const original = parseBudgetUsdInput(values.originalBudgetUsd);
   if (parsed.ok && original.ok && parsed.cents === original.cents) return undefined;
-  return parsed.ok && parsed.cents !== null ? budgetWireBody(parsed.cents) : null;
+  if (!parsed.ok || parsed.cents === null) return null;
+  return values.budgetMode === 'credits' ? budgetCreditsWireBody(parsed.cents) : budgetWireBody(parsed.cents);
 }
 
 export function budgetValid(values: ManagedEntityFormValues): boolean {
   return parseBudgetUsdInput(values.budgetUsd).ok;
+}
+
+function entityBudgetCreditsCents(entity: unknown): number | null {
+  const budget = (entity as { budget?: unknown } | null | undefined)?.budget;
+  if (!budget || typeof budget !== 'object') {
+    return null;
+  }
+  const raw = (budget as { max_credit_cost?: unknown }).max_credit_cost;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const parsed = parseBudgetUsdInput(raw);
+  return parsed.ok ? parsed.cents : null;
 }
 
 function entityBudgetCents(entity: unknown): number | null {
@@ -61,9 +90,8 @@ function entityBudgetCents(entity: unknown): number | null {
   return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
-/** Populates the form dollars input from an entity budget (empty when unset). */
 export function entityBudgetUsdInput(entity: unknown): string {
-  const cents = entityBudgetCents(entity);
+  const cents = entityBudgetCents(entity) ?? entityBudgetCreditsCents(entity);
   return cents === null ? '' : formatUsdCentsPlain(cents);
 }
 
@@ -81,7 +109,6 @@ export type SessionBudgetState = {
   reached: boolean;
 };
 
-/** Derives budget vs. spend from the session API payload; null when unbudgeted. */
 export function sessionBudgetState(session: SessionApiResponse): SessionBudgetState | null {
   const budgetCents = entityBudgetCents(session);
   if (budgetCents === null) {
@@ -96,10 +123,12 @@ export function sessionBudgetState(session: SessionApiResponse): SessionBudgetSt
   };
 }
 
-/** Detail-row display value for a deployment/session budget. */
 export function entityBudgetDisplay(entity: DeploymentApiResponse | SessionApiResponse): string {
-  const cents = entityBudgetCents(entity);
-  return cents === null ? '—' : formatUsdCents(cents);
+  const usdCents = entityBudgetCents(entity);
+  if (usdCents !== null) return formatUsdCents(usdCents);
+  const creditCents = entityBudgetCreditsCents(entity);
+  if (creditCents !== null) return `${formatUsdCentsPlain(creditCents)} Credits`;
+  return '—';
 }
 
 export function isBudgetReachedError(message: string | null): boolean {

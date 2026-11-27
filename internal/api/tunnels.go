@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
@@ -34,14 +35,24 @@ func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Log
 }
 
 func (s *Server) resolveTunnelConsoleScope(w http.ResponseWriter, r *http.Request) (tunnels.ConsoleScope, bool) {
-	scope, ok := platformapi.ResolveConsoleWorkspaceRequest(w, r, s.db)
+	scope, ok := platformapi.ResolveConsoleWorkspaceRequest(w, r, s.consoleScopeStore)
 	if !ok {
 		return tunnels.ConsoleScope{}, false
 	}
-	principal, _ := auth.PrincipalFromContext(r.Context()) // The Console resolver already requires a principal.
+	principal, _ := auth.PrincipalFromContext(r.Context())
 	principal, accessErr := s.resolvePlatformWorkspace(r, principal, scope.WorkspaceUUID)
 	if accessErr != nil {
 		httpapi.WriteError(w, r, accessErr)
+		return tunnels.ConsoleScope{}, false
+	}
+	if capErr := s.checkWorkspaceCapability(
+		r.Context(),
+		scope.OrganizationUUID,
+		principal.WorkspaceUUID,
+		principal.RuntimeProvider,
+		agentruntime.CapabilityMCPTunnels,
+	); capErr != nil {
+		httpapi.WriteError(w, r, capErr)
 		return tunnels.ConsoleScope{}, false
 	}
 	return tunnels.ConsoleScope{OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID}, true

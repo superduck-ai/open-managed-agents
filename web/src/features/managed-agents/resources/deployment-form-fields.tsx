@@ -1,6 +1,7 @@
 import { AgentSelectField } from '../agents/AgentSelectField';
 import { type ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceCapabilities, useWorkspaceRuntime } from '../../../shared/workspaces/context';
 import { FieldGroup } from '../../../shared/ui/field';
 import {
   DeploymentTextField,
@@ -45,6 +46,9 @@ export function DeploymentFormFields({
   onChange: (patch: Partial<ManagedEntityFormValues>) => void;
 }) {
   const { msg } = useI18n();
+  const capabilities = useWorkspaceCapabilities();
+  const runtime = useWorkspaceRuntime();
+  const showDeploymentBudget = runtime.provider_kind !== 'qoder_cloud';
   return (
     <>
       <DeploymentSection title={msg('managedAgents.deployments.configuration', 'Configuration')}>
@@ -79,7 +83,9 @@ export function DeploymentFormFields({
           manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
           onChange={(environmentId) => onChange({ environmentId })}
         />
-        <BudgetField values={values} onChange={onChange} />
+        {showDeploymentBudget ? (
+          <BudgetField values={values} mode={capabilities.session_budget} onChange={onChange} />
+        ) : null}
         <DeploymentTextArea
           label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
           value={values.initialMessage}
@@ -92,16 +98,18 @@ export function DeploymentFormFields({
         />
       </DeploymentSection>
       <DeploymentSection title={msg('managedAgents.deployments.resources', 'Resources')}>
-        <DeploymentAddSelectField
-          label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
-          optional
-          valueLabel={msg('managedAgents.credentialVaults.kind', 'vault')}
-          selectedIds={values.vaultIds}
-          options={vaults}
-          manageHref={`/workspaces/${workspaceId}/vaults`}
-          manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
-          onChange={(vaultIds) => onChange({ vaultIds })}
-        />
+        {capabilities.credential_vaults ? (
+          <DeploymentAddSelectField
+            label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
+            optional
+            valueLabel={msg('managedAgents.credentialVaults.kind', 'vault')}
+            selectedIds={values.vaultIds}
+            options={vaults}
+            manageHref={`/workspaces/${workspaceId}/vaults`}
+            manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
+            onChange={(vaultIds) => onChange({ vaultIds })}
+          />
+        ) : null}
         <ManagedResourceFields
           values={values}
           workspaceId={workspaceId}

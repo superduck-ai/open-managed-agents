@@ -13,8 +13,10 @@ import {
 } from '../organizations/platform-scope';
 import { canManageMembers } from '../permissions/members';
 import { createConsoleWorkspace, listConsoleWorkspaces, type CreateWorkspaceInput, type Workspace } from './api';
-import { WorkspaceContext } from './context';
+import { useWorkspaceCapabilities, useWorkspaceRuntime, WorkspaceContext } from './context';
 import { OrganizationContext } from '../organizations/context';
+
+export { useWorkspaceCapabilities, useWorkspaceRuntime };
 import {
   chooseWorkspace,
   fallbackOrganization,

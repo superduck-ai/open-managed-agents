@@ -8,6 +8,7 @@ import { loadBuilderCapabilities, builderCapabilityDirectory } from './capabilit
 import { loadMcpDirectoryServers } from '../../agents/tools/api';
 import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
+import type { RuntimeCapabilities } from '../../../../shared/workspaces/runtime';
 import { listOrganizationLLMProviders } from '../../../llm-providers/api';
 import { listCreateAgentSkills } from '../../agents/create-dialog-api';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
@@ -25,15 +26,36 @@ import { allPages, loadQuickstartResources, findQuickstartSession, createQuickst
 import { environmentInputSchema, validatedDeployment } from './tools';
 import { invalidateBuilderTest, builderTestBinding, type BuilderState, type BuilderTool } from './model';
 
-export async function loadBuilderCatalog(orgUuid: string, workspaceId: string) {
+export type BuilderRuntimeCapabilities = Pick<
+  RuntimeCapabilities,
+  'byok_llm_providers' | 'skills' | 'mcp_servers' | 'credential_vaults' | 'deployments'
+>;
+
+export type BuilderChatTarget = {
+  model: string;
+  backend: 'messages' | 'chat_completions';
+};
+
+export async function loadBuilderCatalog(
+  orgUuid: string,
+  workspaceId: string,
+  runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>,
+) {
+  const byokEnabled = runtimeCapabilities?.byok_llm_providers ?? true;
+  const skillsEnabled = runtimeCapabilities?.skills ?? true;
+  const mcpServersEnabled = runtimeCapabilities?.mcp_servers ?? true;
   const [resources, skills, providers] = await Promise.all([
     loadQuickstartResources(workspaceId),
-    listCreateAgentSkills(workspaceId),
-    listOrganizationLLMProviders(orgUuid),
+    skillsEnabled ? listCreateAgentSkills(workspaceId) : Promise.resolve([]),
+    byokEnabled
+      ? listOrganizationLLMProviders(orgUuid)
+      : orgUuid
+        ? listOrganizationLLMProviders(orgUuid).catch(() => [])
+        : Promise.resolve([]),
   ]);
-  const capabilities = await loadBuilderCapabilities(orgUuid, workspaceId, resources.agents);
-  const metadata = capabilities.length ? await loadMcpDirectoryServers().catch(() => []) : [];
-  const directory = builderCapabilityDirectory(capabilities, metadata);
+  const capabilities = mcpServersEnabled ? await loadBuilderCapabilities(orgUuid, workspaceId, resources.agents) : [];
+  const metadata = mcpServersEnabled && capabilities.length ? await loadMcpDirectoryServers().catch(() => []) : [];
+  const directory = mcpServersEnabled ? builderCapabilityDirectory(capabilities, metadata) : [];
   return { ...resources, capabilities, directory, skills, providers };
 }
 export type BuilderCatalog = Awaited<ReturnType<typeof loadBuilderCatalog>>;
@@ -45,6 +67,30 @@ export function builderBackend(model: string, catalog: BuilderCatalog) {
   const candidates = catalog.providers.filter((provider) => provider.models.some((item) => model === item.id));
   if (candidates.length === 1) return candidates[0].api_backend;
   throw new Error('Unable to resolve the builder model provider. Refresh the model catalog.');
+}
+export function selectOrganizationBuilderChatTarget(catalog: BuilderCatalog): BuilderChatTarget | null {
+  const provider = catalog.providers.find((item) => item.models.length > 0 && item.has_api_key !== false);
+  const firstModel = provider?.models[0];
+  if (!provider || !firstModel?.id) return null;
+  const prefix = provider.slug || provider.id;
+  return {
+    model: prefix ? `${prefix}/${firstModel.id}` : firstModel.id,
+    backend: provider.api_backend,
+  };
+}
+export function resolveBuilderChatTarget(
+  workspaceModel: string,
+  catalog: BuilderCatalog,
+  byokLlmProviders = true,
+): BuilderChatTarget {
+  if (byokLlmProviders) {
+    return { model: workspaceModel, backend: builderBackend(workspaceModel, catalog) };
+  }
+  const target = selectOrganizationBuilderChatTarget(catalog);
+  if (!target) {
+    throw new Error('No organization chat model is configured for conversational building.');
+  }
+  return target;
 }
 const mcpSchema = z.object({ name: z.string(), url: z.string() });
 const credentialAuthSchema = z.object({ type: z.enum(['static_bearer', 'mcp_oauth']), mcp_server_url: z.string() });

@@ -46,10 +46,11 @@ type consoleWorkspaceCreator interface {
 }
 
 type createConsoleWorkspaceRequest struct {
-	Name          string `json:"name"`
-	DisplayColor  string `json:"display_color"`
-	Color         string `json:"color"`
-	DataResidency any    `json:"data_residency"`
+	Name             string `json:"name"`
+	DisplayColor     string `json:"display_color"`
+	Color            string `json:"color"`
+	DataResidency    any    `json:"data_residency"`
+	RuntimeProfileID string `json:"runtime_profile_id"`
 }
 
 type createConsoleAPIKeyRequest struct {
@@ -118,9 +119,14 @@ func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 				return
 			}
 		}
+		profilesByUUID := loadRuntimeProfilesByUUID(r.Context(), store)
 		out := make([]map[string]any, 0, len(workspaces))
 		for _, workspace := range workspaces {
-			entry := formatConsoleWorkspace(workspace)
+			var profile *db.RuntimeProfile
+			if found, ok := profilesByUUID[workspace.RuntimeProfileUUID]; ok {
+				profile = &found
+			}
+			entry := formatConsoleWorkspace(workspace, profile)
 			entry["api_keys_count"] = apiKeyCounts[workspace.UUID]
 			out = append(out, entry)
 		}
@@ -163,12 +169,18 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 		if displayColor == "" {
 			displayColor = "#9B87F5"
 		}
+		runtimeProfileUUID, runtimeErr := resolveConsoleWorkspaceRuntimeProfile(r.Context(), store, orgUUID, body.RuntimeProfileID)
+		if runtimeErr != nil {
+			writeConsoleWorkspaceRuntimeError(w, runtimeErr)
+			return
+		}
 		workspace, err := workspaceCreator.CreateConsoleWorkspace(r.Context(), CreateConsoleWorkspaceInput{
-			OrgUUID:       orgUUID,
-			Name:          name,
-			DisplayColor:  displayColor,
-			Color:         displayColor,
-			DataResidency: normalizeConsoleWorkspaceDataResidency(body.DataResidency),
+			OrgUUID:            orgUUID,
+			Name:               name,
+			DisplayColor:       displayColor,
+			Color:              displayColor,
+			DataResidency:      normalizeConsoleWorkspaceDataResidency(body.DataResidency),
+			RuntimeProfileUUID: runtimeProfileUUID,
 		})
 		if errors.Is(err, db.ErrDuplicate) {
 			workspaceAlreadyExists(w)
@@ -178,14 +190,16 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to create workspace")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))
+		profile := loadSingleRuntimeProfile(r.Context(), store, workspace.RuntimeProfileUUID)
+		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace, profile))
 	}
 }
 
 type updateConsoleWorkspaceRequest struct {
-	Name         string `json:"name"`
-	DisplayColor string `json:"display_color"`
-	Color        string `json:"color"`
+	Name             string  `json:"name"`
+	DisplayColor     string  `json:"display_color"`
+	Color            string  `json:"color"`
+	RuntimeProfileID *string `json:"runtime_profile_id"`
 }
 
 func handleUpdateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
@@ -205,6 +219,10 @@ func handleUpdateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 		body, err := readRequiredJSON[updateConsoleWorkspaceRequest](r, false)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "workspace name is required"})
+			return
+		}
+		if body.RuntimeProfileID != nil {
+			writeConsoleWorkspaceRuntimeImmutable(w)
 			return
 		}
 		name := strings.TrimSpace(body.Name)
@@ -235,7 +253,8 @@ func handleUpdateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to update workspace")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))
+		profile := loadSingleRuntimeProfile(r.Context(), store, workspace.RuntimeProfileUUID)
+		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace, profile))
 	}
 }
 
@@ -264,7 +283,8 @@ func handleArchiveConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to archive workspace")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace))
+		profile := loadSingleRuntimeProfile(r.Context(), store, workspace.RuntimeProfileUUID)
+		writeJSON(w, http.StatusOK, formatConsoleWorkspace(workspace, profile))
 	}
 }
 
@@ -489,22 +509,32 @@ func consoleWorkspaceScopeFromRequest(
 	lister consoleWorkspaceLister,
 	orgUUID string,
 ) (WorkspaceScope, bool) {
+	_, scope, ok := consoleWorkspaceFromRequest(w, r, lister, orgUUID)
+	return scope, ok
+}
+
+func consoleWorkspaceFromRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	lister consoleWorkspaceLister,
+	orgUUID string,
+) (ConsoleWorkspace, WorkspaceScope, bool) {
 	workspaceReference := strings.TrimSpace(chi.URLParam(r, "workspaceId"))
 	if workspaceReference == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "invalid_request",
 			"message": "workspace_id is required",
 		})
-		return WorkspaceScope{}, false
+		return ConsoleWorkspace{}, WorkspaceScope{}, false
 	}
 	if lister == nil {
 		internalError(w, "failed to load workspaces")
-		return WorkspaceScope{}, false
+		return ConsoleWorkspace{}, WorkspaceScope{}, false
 	}
 	workspaces, err := lister.ListConsoleWorkspaces(r.Context(), orgUUID, true)
 	if err != nil {
 		internalError(w, "failed to load workspaces")
-		return WorkspaceScope{}, false
+		return ConsoleWorkspace{}, WorkspaceScope{}, false
 	}
 	scope, err := ResolveWorkspaceScope(workspaceReference, workspaces)
 	if err == nil {
@@ -512,25 +542,30 @@ func consoleWorkspaceScopeFromRequest(
 		principal, authenticated := auth.PrincipalFromContext(r.Context())
 		if !ok || !authenticated {
 			workspaceAccessDenied(w)
-			return WorkspaceScope{}, false
+			return ConsoleWorkspace{}, WorkspaceScope{}, false
 		}
 		_, access, accessErr := workspaceaccess.New(accessStore).ResolvePrincipal(r.Context(), principal, scope.UUID)
 		if accessErr == nil && access.UseResources() {
-			return scope, true
+			for _, workspace := range workspaces {
+				if workspace.UUID == scope.UUID {
+					return workspace, scope, true
+				}
+			}
+			return ConsoleWorkspace{UUID: scope.UUID, ExternalID: scope.DisplayID}, scope, true
 		}
 		workspaceAccessDenied(w)
-		return WorkspaceScope{}, false
+		return ConsoleWorkspace{}, WorkspaceScope{}, false
 	}
 	for _, workspace := range workspaces {
 		matches := workspaceReference == workspace.UUID || workspaceReference == workspace.ExternalID ||
 			(workspaceReference == defaultConsoleWorkspaceID && workspace.IsDefault)
 		if matches && workspace.ArchivedAt != nil {
 			workspaceAccessDenied(w)
-			return WorkspaceScope{}, false
+			return ConsoleWorkspace{}, WorkspaceScope{}, false
 		}
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace not found"})
-	return WorkspaceScope{}, false
+	return ConsoleWorkspace{}, WorkspaceScope{}, false
 }
 
 func parseConsoleAPIKeyExpiresAt(raw *string) (*time.Time, error) {
@@ -631,7 +666,7 @@ func formatConsoleAPIKey(key ConsoleAPIKey) map[string]any {
 	}
 }
 
-func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
+func formatConsoleWorkspace(workspace ConsoleWorkspace, profile *db.RuntimeProfile) map[string]any {
 	externalMapping := any(nil)
 	if len(workspace.ExternalMapping) > 0 {
 		externalMapping = workspace.ExternalMapping
@@ -669,6 +704,7 @@ func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
 		"compartment_id":           workspace.ExternalID,
 		"inference_data_retention": false,
 		"archived_at":              optionalTimeString(workspace.ArchivedAt),
+		"runtime":                  buildConsoleWorkspaceRuntime(workspace, profile),
 	}
 }
 

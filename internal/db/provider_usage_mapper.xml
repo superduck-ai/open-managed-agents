@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ProviderUsageMapper">
+    <sql id="columns">
+        id,
+        organization_uuid,
+        workspace_uuid,
+        runtime_profile_uuid,
+        provider_kind,
+        session_external_id,
+        remote_session_id,
+        metric_unit,
+        CAST(cumulative_amount AS double precision) AS cumulative_amount,
+        CAST(delta_amount AS double precision) AS delta_amount,
+        raw_usage,
+        sampled_at
+    </sql>
+
+    <insert id="Upsert" result="returning" resultType="ProviderUsageRecord">
+        INSERT INTO provider_usage_records (
+            organization_uuid,
+            workspace_uuid,
+            runtime_profile_uuid,
+            provider_kind,
+            session_external_id,
+            remote_session_id,
+            metric_unit,
+            cumulative_amount,
+            delta_amount,
+            raw_usage,
+            sampled_at
+        ) VALUES (
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.RuntimeProfileUUID},
+            #{params.ProviderKind},
+            #{params.SessionExternalID},
+            #{params.RemoteSessionID},
+            #{params.MetricUnit},
+            #{params.CumulativeAmount},
+            #{params.DeltaAmount},
+            CAST(#{params.RawUsage} AS jsonb),
+            #{params.SampledAt}
+        )
+        ON CONFLICT (workspace_uuid, session_external_id, metric_unit, sampled_at) DO UPDATE SET
+            cumulative_amount = EXCLUDED.cumulative_amount,
+            delta_amount = EXCLUDED.delta_amount,
+            raw_usage = EXCLUDED.raw_usage
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="SumByWorkspace" resultType="ProviderUsageSummary">
+        SELECT
+            metric_unit,
+            CAST(COALESCE(SUM(delta_amount), 0) AS double precision) AS total_delta,
+            COUNT(DISTINCT session_external_id) AS session_count
+        FROM provider_usage_records
+        <where>
+            organization_uuid = #{query.OrganizationUUID}
+            AND workspace_uuid = #{query.WorkspaceUUID}
+            <if test="len(query.SessionExternalIDs) &gt; 0">
+                AND session_external_id IN <foreach collection="query.SessionExternalIDs" item="sessionID" open="(" close=")" separator=", ">#{sessionID}</foreach>
+            </if>
+            <if test="query.Start != nil">
+                AND sampled_at &gt;= #{query.Start}
+            </if>
+            <if test="query.End != nil">
+                AND sampled_at &lt; #{query.End}
+            </if>
+        </where>
+        GROUP BY metric_unit
+        ORDER BY metric_unit ASC
+    </select>
+</mapper>

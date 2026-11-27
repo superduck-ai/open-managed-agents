@@ -41,6 +41,39 @@ import {
 } from './sessionTraceModel';
 
 import { latestSessionIdlePresentationState, sessionExecutionStateLabel } from './sessionExecutionState';
+import { extractProviderCreditsUsage } from './sessionProviderUsage';
+import type { RuntimeUsageMeteringMode } from '../../../shared/workspaces/runtime';
+
+function buildSummaryUsageChip(
+  session: SessionApiResponse,
+  events: QuickstartSessionEvent[],
+  formatters: ReturnType<typeof useFormatters>,
+  msg: I18nMsg,
+  usageMetering: RuntimeUsageMeteringMode,
+): SessionDetailSummaryChip | null {
+  if (usageMetering === 'provider_credits') {
+    const credits = extractProviderCreditsUsage(session, events);
+    if (!credits) {
+      return null;
+    }
+    return {
+      key: 'cost',
+      icon: ReceiptText,
+      value: msg('managedAgents.sessions.detail.creditsCount', '{credits} credits', {
+        credits: formatters.number(credits.totalCredits, { maximumFractionDigits: 4 }),
+      }),
+    };
+  }
+  const listCost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
+  if (!listCost) {
+    return null;
+  }
+  return {
+    key: 'cost',
+    icon: ReceiptText,
+    value: formatters.currency(listCost.amount, listCost.currency),
+  };
+}
 
 export function buildSessionDetailSummary(
   session: SessionApiResponse,
@@ -48,6 +81,7 @@ export function buildSessionDetailSummary(
   formatters: ReturnType<typeof useFormatters>,
   msg: I18nMsg,
   nowMs = Date.now(),
+  usageMetering: RuntimeUsageMeteringMode = 'token_and_cost',
 ) {
   const title = session.title || session.id;
   const idleState =
@@ -87,13 +121,9 @@ export function buildSessionDetailSummary(
   if (elapsedMs > 0) {
     chips.push({ key: 'duration', icon: Timer, value: formatSessionDuration(elapsedMs, formatters, msg) });
   }
-  const listCost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
-  if (listCost) {
-    chips.push({
-      key: 'cost',
-      icon: ReceiptText,
-      value: formatters.currency(listCost.amount, listCost.currency),
-    });
+  const usageChip = buildSummaryUsageChip(session, events, formatters, msg, usageMetering);
+  if (usageChip) {
+    chips.push(usageChip);
   }
   chips.push({
     key: 'created',

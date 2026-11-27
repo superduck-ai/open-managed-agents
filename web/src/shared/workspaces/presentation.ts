@@ -50,13 +50,18 @@ export function workspaceIdFromPath(pathname: string) {
   }
 }
 
-export function buildCreateWorkspaceInput(name: string, displayColor: string): CreateWorkspaceInput {
+export function buildCreateWorkspaceInput(
+  name: string,
+  displayColor: string,
+  runtimeProfileId?: string,
+): CreateWorkspaceInput {
   return {
     name,
     display_color: displayColor,
     data_residency: {
       workspace_geo: 'us',
     },
+    ...(runtimeProfileId ? { runtime_profile_id: runtimeProfileId } : {}),
   };
 }
 

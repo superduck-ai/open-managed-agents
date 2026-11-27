@@ -22,6 +22,7 @@ const (
 	RequestTooLarge
 	Unavailable
 	Gone
+	NotImplemented
 )
 
 // Error carries an application error's public contract and private cause.

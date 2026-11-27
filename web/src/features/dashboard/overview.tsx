@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useWorkspace, getPrimaryOrganizationUuid } from '@/shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities, getPrimaryOrganizationUuid } from '@/shared/workspaces/context';
 import { useAuth } from '@/shared/auth/context';
 import { isModelConfigurationUnavailable } from '@/shared/api/client';
 import { listCreateAgentModels } from '../managed-agents/agents/create-dialog-api';
@@ -56,6 +56,7 @@ function overviewMetrics(data: WorkspaceOverview | undefined, period: string, zh
 
 function useOverview(workspaceId: string) {
   const { orgUuid } = useWorkspace();
+  const capabilities = useWorkspaceCapabilities();
   const { account } = useAuth();
   const organizationUuid = orgUuid || getPrimaryOrganizationUuid(account) || '';
   const [period, setPeriod] = useState('30');
@@ -75,11 +76,25 @@ function useOverview(workspaceId: string) {
   const models = useQuery({
     queryKey: ['overview-models', account?.uuid, organizationUuid, workspaceId],
     queryFn: () => listCreateAgentModels(workspaceId),
-    enabled: Boolean(data && data.agent_count === 0 && !ready),
+    enabled: Boolean(capabilities.byok_llm_providers && data && data.agent_count === 0 && !ready),
     retry: false,
   });
-  const needsModels = isModelConfigurationUnavailable(models.error) || (models.isSuccess && models.data.length === 0);
-  return { overview, data, ready, overviewAgents, selectedAgent, points, needsModels, period, setPeriod, setAgent };
+  const needsModels =
+    capabilities.byok_llm_providers &&
+    (isModelConfigurationUnavailable(models.error) || (models.isSuccess && models.data.length === 0));
+  return {
+    overview,
+    data,
+    ready,
+    overviewAgents,
+    selectedAgent,
+    points,
+    needsModels,
+    period,
+    setPeriod,
+    setAgent,
+    capabilities,
+  };
 }
 
 function OverviewStart({
@@ -132,8 +147,19 @@ export function OverviewPage() {
   const { locale, msg } = useI18n();
   const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
   const workspacePath = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
-  const { overview, data, ready, overviewAgents, selectedAgent, points, needsModels, period, setPeriod, setAgent } =
-    useOverview(workspaceId);
+  const {
+    overview,
+    data,
+    ready,
+    overviewAgents,
+    selectedAgent,
+    points,
+    needsModels,
+    period,
+    setPeriod,
+    setAgent,
+    capabilities,
+  } = useOverview(workspaceId);
   const zh = locale === 'zh-CN';
   const text = (chinese: string, english: string) => (zh ? chinese : english);
 
@@ -170,16 +196,33 @@ export function OverviewPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-44">
                 {[
-                  { label: text('智能体', 'Agent'), path: 'agent-quickstart', icon: productIcons.agents },
-                  { label: text('会话', 'Session'), path: 'sessions', icon: productIcons.sessions },
-                  { label: text('部署', 'Deployment'), path: 'deployments', icon: productIcons.deployments },
-                  { label: text('环境', 'Environment'), path: 'environments/new', icon: productIcons.environments },
-                ].map(({ label, path, icon: Icon }) => (
-                  <DropdownMenuItem key={path} render={<a href={`${workspacePath}/${path}`} />}>
-                    <Icon className="size-4" aria-hidden />
-                    {label}
-                  </DropdownMenuItem>
-                ))}
+                  {
+                    label: text('智能体', 'Agent'),
+                    path: 'agent-quickstart',
+                    icon: productIcons.agents,
+                    enabled: true,
+                  },
+                  { label: text('会话', 'Session'), path: 'sessions', icon: productIcons.sessions, enabled: true },
+                  {
+                    label: text('部署', 'Deployment'),
+                    path: 'deployments',
+                    icon: productIcons.deployments,
+                    enabled: capabilities.deployments,
+                  },
+                  {
+                    label: text('环境', 'Environment'),
+                    path: 'environments/new',
+                    icon: productIcons.environments,
+                    enabled: true,
+                  },
+                ]
+                  .filter((item) => item.enabled)
+                  .map(({ label, path, icon: Icon }) => (
+                    <DropdownMenuItem key={path} render={<a href={`${workspacePath}/${path}`} />}>
+                      <Icon className="size-4" aria-hidden />
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -324,35 +367,40 @@ export function OverviewPage() {
                 text: text('复用指令、工具和文件', 'Reuse instructions, tools and files'),
                 path: 'skills',
                 icon: productIcons.skills,
+                enabled: true,
               },
               {
                 title: text('部署', 'Deployments'),
                 text: text('按计划自动运行智能体', 'Run agents on a schedule'),
                 path: 'scheduled-deployments',
                 icon: productIcons.deployments,
+                enabled: capabilities.deployments,
               },
               {
                 title: text('记忆', 'Memory'),
                 text: text('保留跨会话的上下文', 'Keep context across sessions'),
                 path: 'memory',
                 icon: productIcons.memory,
+                enabled: true,
               },
-            ].map(({ title, text, path, icon: Icon }) => (
-              <a
-                key={path}
-                href={documentationHref(path, locale)}
-                target="_blank"
-                rel="noreferrer"
-                className="group flex items-start gap-3 rounded p-1 outline-none focus-visible:ring-[0.5px] focus-visible:ring-foreground"
-              >
-                <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="text-sm font-medium group-hover:underline">{title}</span>
-                  {!ready ? <span className="mt-1 block text-xs leading-5 text-muted-foreground">{text}</span> : null}
-                </span>
-                <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              </a>
-            ))}
+            ]
+              .filter((item) => item.enabled)
+              .map(({ title, text, path, icon: Icon }) => (
+                <a
+                  key={path}
+                  href={documentationHref(path, locale)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group flex items-start gap-3 rounded p-1 outline-none focus-visible:ring-[0.5px] focus-visible:ring-foreground"
+                >
+                  <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-sm font-medium group-hover:underline">{title}</span>
+                    {!ready ? <span className="mt-1 block text-xs leading-5 text-muted-foreground">{text}</span> : null}
+                  </span>
+                  <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                </a>
+              ))}
           </div>
         </section>
       </section>

@@ -1,10 +1,11 @@
-import { Box, Mail, Settings, UsersRound } from 'lucide-react';
+import { Box, Cpu, Mail, Settings, UsersRound } from 'lucide-react';
 
 export const organizationSections = [
   { value: 'profile', labelId: 'platformAdmin.organizationDetails', label: 'Organization details', icon: Settings },
   { value: 'members', labelId: 'platformAdmin.organizationMembers', label: 'Organization members', icon: UsersRound },
   { value: 'workspaces', labelId: 'platformAdmin.workspaces', label: 'Workspaces', icon: Box },
   { value: 'invitations', labelId: 'platformAdmin.memberInvitations', label: 'Member invitations', icon: Mail },
+  { value: 'runtime', labelId: 'platformAdmin.runtimePolicy', label: 'Runtime policy', icon: Cpu },
 ] as const;
 
 export type OrganizationSection = (typeof organizationSections)[number]['value'];

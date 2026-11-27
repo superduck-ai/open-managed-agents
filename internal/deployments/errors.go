@@ -46,6 +46,10 @@ func deploymentRunPermissionDenied() error {
 	return apperr.New(apperr.PermissionDenied, "Credential cannot access deployment runs", nil)
 }
 
+func deploymentRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Internal, "Deployment runtime is not configured", cause)
+}
+
 func environmentLoadError(err error, environmentID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return apperr.New(apperr.NotFound, "Environment not found: "+environmentID, err)

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -20,6 +21,11 @@ func (h *Handler) WithSandboxReclaimer(reclaimer sandboxReclaimer) *Handler {
 	return h
 }
 
+func (h *Handler) WithRuntimeResolver(resolver *agentruntime.Resolver) *Handler {
+	h.runtimeResolver = resolver
+	return h
+}
+
 // NewHandler 要求显式注入与 environment runner 和 code-session HTTP Handler 共用的 Service，
 // 并把自身注册为公开事件 sink；这样 worker 输出会进入同一 session stream，而不会落到另一份 Service 状态。
 func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service, webhookEvents webhookEnqueuer, eventBus sessionfanout.EventBus, secretService *secrets.Service, logger *slog.Logger) *Handler {
@@ -31,17 +37,18 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 		eventBus = sessionfanout.NewLocal()
 	}
 	h := &Handler{
-		secretService: secretService,
-		eventPayloads: codeSessionService.EventPayloadStore(),
-		cfg:           cfg,
-		db:            database,
-		codeSessions:  codeSessionService,
-		webhooks:      webhookEvents,
-		logger:        logger,
-		errorAdapter:  httpapi.NewErrorAdapter(logger),
-		streams:       newStreamHub(),
-		eventBus:      eventBus,
-		previews:      newWorkerPreviewConverter(),
+		secretService:    secretService,
+		eventPayloads:    codeSessionService.EventPayloadStore(),
+		cfg:              cfg,
+		db:               database,
+		codeSessions:     codeSessionService,
+		webhooks:         webhookEvents,
+		logger:           logger,
+		errorAdapter:     httpapi.NewErrorAdapter(logger),
+		streams:          newStreamHub(),
+		eventBus:         eventBus,
+		previews:         newWorkerPreviewConverter(),
+		eventIdempotency: newEventIdempotencyCache(externalEventIdempotencyTTL, externalEventIdempotencyMaxEntries),
 	}
 	eventBus.Register(h.receiveFanout, h.resetFanout)
 	codeSessionService.SetPublicEventSink(h)

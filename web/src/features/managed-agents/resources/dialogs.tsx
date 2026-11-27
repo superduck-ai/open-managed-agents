@@ -1,6 +1,7 @@
 import { toast } from '../../../shared/ui/sonner';
 import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
+import { useWorkspaceCapabilities, useWorkspaceRuntime } from '../../../shared/workspaces/context';
 import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
 import { useAuth } from '../../../shared/auth/context';
 import { listAllWorkspaceMCPServers, type WorkspaceMCPServer } from '../../../shared/api/workspaceMCPServers';
@@ -226,6 +227,8 @@ export function CredentialDialog({
     setOpen(false);
   };
 
+  const runtime = useWorkspaceRuntime();
+  const lockCredentialDisplayName = mode === 'edit' && runtime.provider_kind === 'qoder_cloud';
   const authTypeOptions = useMemo(() => {
     if (credential) {
       return [{ id: values.authType, label: credentialAuthTypeLabel(values.authType, msg) }];
@@ -543,8 +546,11 @@ export function CredentialDialog({
                   'Example credential',
                 )}
                 optional={mode === 'create'}
-                onChange={(displayName) => patchValues({ displayName })}
-                autoFocus
+                disabled={lockCredentialDisplayName}
+                onChange={(displayName) => {
+                  if (!lockCredentialDisplayName) patchValues({ displayName });
+                }}
+                autoFocus={!lockCredentialDisplayName}
               />
               <ManagedSelectField
                 label={msg('managedAgents.credentialVaults.credentialDialog.type', 'Type')}
@@ -889,6 +895,7 @@ function GenericManagedEntityDialog({
   onSubmit,
 }: ManagedEntityDialogProps) {
   const { msg } = useI18n();
+  const capabilities = useWorkspaceCapabilities();
   const [open, setOpen] = useState(true);
   const dialogProps = {
     open,
@@ -900,9 +907,10 @@ function GenericManagedEntityDialog({
   const initialValues = useMemo<ManagedEntityFormValues>(
     () => ({
       ...initialFormValues(section, entity),
+      ...(section === 'deployments' ? { budgetMode: capabilities.session_budget } : {}),
       ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
     }),
-    [entity, lockedAgent, section],
+    [capabilities.session_budget, entity, lockedAgent, section],
   );
   const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
   const [submitError, setSubmitError] = useState<string | null>(null);

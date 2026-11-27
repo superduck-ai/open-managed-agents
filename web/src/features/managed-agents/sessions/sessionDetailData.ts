@@ -23,6 +23,18 @@ export const SessionDetailDeltaFramesContext = createContext<SessionDetailDeltaF
 
 const SESSION_IDLE_RECONCILIATION_GRACE_MS = 1500;
 
+export function isRequiresActionIdleEvent(event: QuickstartSessionEvent): boolean {
+  if (!sessionEventType(event).endsWith('status_idle')) {
+    return false;
+  }
+  const stopReason = event.stop_reason;
+  if (!stopReason || typeof stopReason !== 'object' || Array.isArray(stopReason)) {
+    return false;
+  }
+  const stopType = (stopReason as Record<string, unknown>).type;
+  return typeof stopType === 'string' && stopType.trim().toLowerCase() === 'requires_action';
+}
+
 export function useSessionDetailEventData({
   sessionId,
   workspaceId,
@@ -313,6 +325,17 @@ export async function runSessionEventStreamLoop({
     signal.addEventListener('abort', abortAttempt, { once: true });
     let historyScan: Promise<void> | undefined;
     let historyError: unknown;
+    let historySynced = false;
+    const bufferedStreamEvents: QuickstartSessionEvent[] = [];
+    const flushBufferedStreamEvents = () => {
+      if (!bufferedStreamEvents.length) {
+        return;
+      }
+      const queued = bufferedStreamEvents.splice(0, bufferedStreamEvents.length);
+      queued.forEach((queuedEvent) =>
+        mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, queuedEvent),
+      );
+    };
     try {
       if (consecutiveFailures >= 3) {
         await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, mode: 'refresh' });
@@ -337,7 +360,9 @@ export async function runSessionEventStreamLoop({
             mode: 'refresh',
           })
             .then(() => {
+              historySynced = true;
               if (!attempt.signal.aborted) {
+                flushBufferedStreamEvents();
                 onCacheChange();
                 onHistorySynced?.();
                 onConnectionChange?.(true);
@@ -349,9 +374,16 @@ export async function runSessionEventStreamLoop({
             });
         },
         onEvent: (event) => {
+          if (!historySynced) {
+            bufferedStreamEvents.push(event);
+          }
           mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
           const incompletePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId, threadId);
-          if (sessionEventType(event).endsWith('status_idle') && incompletePreviewIds.size) {
+          if (
+            sessionEventType(event).endsWith('status_idle') &&
+            !isRequiresActionIdleEvent(event) &&
+            incompletePreviewIds.size
+          ) {
             scheduleIdleReconciliation(incompletePreviewIds);
           } else if (!incompletePreviewIds.size) {
             cancelIdleReconciliation();
@@ -362,7 +394,6 @@ export async function runSessionEventStreamLoop({
           onCacheChange();
         },
       });
-      // Let a completed scan settle, but never hold a closed stream open for a stalled page.
       await Promise.race([historyScan, new Promise<void>((resolve) => window.setTimeout(resolve, 0))]);
       if (historyError) throw historyError;
       throw new Error('Session event stream ended');

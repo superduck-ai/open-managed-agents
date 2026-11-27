@@ -21,7 +21,9 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from '../../../shared/ui/message-scroller';
-import { useWorkspace } from '../../../shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities } from '../../../shared/workspaces/context';
+import type { RuntimeBudgetMode } from '../../../shared/workspaces/runtime';
+import { extractSessionCreditsBudget } from './sessionProviderUsage';
 import {
   addSessionFileResource,
   archiveManagedEntity,
@@ -190,16 +192,30 @@ function budgetToastMessage(cents: number | null, msg: (key: string, fallback: s
 
 function SessionBudgetBannerSection({
   budget,
+  budgetMode,
+  creditsBudget,
   archived,
   busy,
   onChangeBudget,
 }: {
   budget: SessionBudgetState | null;
+  budgetMode: RuntimeBudgetMode;
+  creditsBudget: string | null;
   archived: boolean;
   busy: boolean;
   onChangeBudget: (usd: string | null) => Promise<void>;
 }) {
-  if (!budget || archived) return null;
+  const { msg } = useI18n();
+  if (archived || budgetMode === 'none') return null;
+  if (budgetMode === 'credits') {
+    if (!creditsBudget) return null;
+    return (
+      <p className="mx-4 mb-2 text-xs text-muted-foreground @min-[640px]:mx-6 @min-[1024px]:mx-8">
+        {msg('managedAgents.budget.creditsSummary', 'Budget {credits} credits', { credits: creditsBudget })}
+      </p>
+    );
+  }
+  if (!budget) return null;
   return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
 }
 
@@ -243,6 +259,7 @@ function SessionNotFound({
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const queryClient = useQueryClient();
   const { activeWorkspaceId } = useWorkspace();
+  const capabilities = useWorkspaceCapabilities();
   const { msg } = useI18n();
   const formatters = useFormatters();
   const location = useLocation();
@@ -540,8 +557,11 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [activeLane, filteredEntries, query, timeline],
   );
   const summary = useMemo(
-    () => (session ? buildSessionDetailSummary(session, events, formatters, msg, summaryClock) : null),
-    [events, formatters, msg, session, summaryClock],
+    () =>
+      session
+        ? buildSessionDetailSummary(session, events, formatters, msg, summaryClock, capabilities.usage_metering)
+        : null,
+    [capabilities.usage_metering, events, formatters, msg, session, summaryClock],
   );
   const currentViewCopyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries), [filteredEntries]);
   const fullTranscriptCopyPayload = useMemo(() => sessionDetailEventCopyPayload(entries), [entries]);
@@ -568,7 +588,9 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             ? { ...currentSession, status: 'running' }
             : currentSession,
         );
-        setEventRefreshKey((value) => value + 1);
+        if (!eventData.connected) {
+          setEventRefreshKey((value) => value + 1);
+        }
       } catch (error) {
         setMutationError(errorMessage(error));
         throw error;
@@ -859,6 +881,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         />
         <SessionBudgetBannerSection
           budget={budget}
+          budgetMode={capabilities.session_budget}
+          creditsBudget={extractSessionCreditsBudget(session)}
           archived={archived}
           busy={busyAction === 'budget'}
           onChangeBudget={handleBudgetChange}
@@ -904,6 +928,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   session={session}
                   workspaceId={activeWorkspaceId}
                   refreshKey={refreshKey}
+                  artifactDiscovery={capabilities.artifact_discovery}
+                  hasEvents={entries.length > 0}
                   mainLane={activeLane === SESSION_MAIN_LANE_ID}
                   filtered={hasFilter}
                 >

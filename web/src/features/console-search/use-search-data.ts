@@ -2,7 +2,7 @@ import { useContext, useEffect, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { AuthContext } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { useWorkspace } from '../../shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities, useWorkspaceRuntime } from '../../shared/workspaces/context';
 import { PlatformAdminContext } from '../platform-admin/context';
 import { navigationSearchRecords, workspaceSearchRecords, searchMatches } from './search-data';
 import { searchResourcePage, resourceContextLabel, type ResourceCursor } from './resource-search';
@@ -14,6 +14,8 @@ export function useSearchData(query: string) {
   const auth = useContext(AuthContext);
   const platform = useContext(PlatformAdminContext);
   const { orgUuid, activeWorkspaceId, workspaces } = useWorkspace();
+  const runtime = useWorkspaceRuntime();
+  const capabilities = useWorkspaceCapabilities();
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query.trim()), 200);
@@ -22,11 +24,11 @@ export function useSearchData(query: string) {
   const resources = useInfiniteQuery({
     queryKey: platform
       ? ['platform-admin', 'console-search', platform.bootstrap.account.uuid, debounced]
-      : ['console-search', auth?.account?.uuid, orgUuid, activeWorkspaceId, debounced],
+      : ['console-search', auth?.account?.uuid, orgUuid, activeWorkspaceId, runtime.profile_uuid, debounced],
     queryFn: ({ pageParam, signal }) =>
       platform
         ? searchOrganizationPage(platform.client, debounced, pageParam, signal)
-        : searchResourcePage(queryClient, orgUuid || '', activeWorkspaceId, debounced, pageParam),
+        : searchResourcePage(queryClient, orgUuid || '', activeWorkspaceId, debounced, pageParam, capabilities),
     initialPageParam: {} as ResourceCursor,
     getNextPageParam: (last) => last.next,
     enabled: Boolean(
@@ -40,7 +42,7 @@ export function useSearchData(query: string) {
   });
   const pages = platform
     ? platformNavigationSearchRecords(platform.bootstrap.platform_access.permissions, msg)
-    : navigationSearchRecords(auth?.account, orgUuid, activeWorkspaceId, msg);
+    : navigationSearchRecords(auth?.account, orgUuid, activeWorkspaceId, msg, capabilities);
   const rawResources = debounced === query.trim() ? resources.data?.pages.flatMap((page) => page.records) || [] : [];
   const resourceRecords = [
     ...new Map(rawResources.map((record) => [`${record.context}:${record.id}`, record])).values(),

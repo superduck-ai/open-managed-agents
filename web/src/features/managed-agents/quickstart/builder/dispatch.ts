@@ -9,6 +9,7 @@ import {
   missingBuilderCredentials,
   selectBuilderEnvironment,
   type BuilderCatalog,
+  type BuilderRuntimeCapabilities,
 } from './api';
 import { builderNextStep, invalidateBuilderTest, type BuilderState, type BuilderTool } from './model';
 import { proposedAgentConfig, validateBuilderTool, environmentInputSchema, validatedDeployment } from './tools';
@@ -27,7 +28,37 @@ type ToolContext = {
   catalog: BuilderCatalog;
   models: string[];
   workspaceId: string;
+  runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>;
 };
+const vaultToolNames = new Set([
+  'list_vaults',
+  'pick_vault',
+  'select_vault',
+  'create_vault',
+  'create_vault_credential',
+]);
+const deploymentToolNames = new Set(['flag_schedule_intent', 'create_deployment']);
+
+function assertToolRuntimeCapability(toolName: string, runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>) {
+  if (runtimeCapabilities?.credential_vaults === false && vaultToolNames.has(toolName)) {
+    throw new Error('Credential vaults are not supported by this workspace runtime.');
+  }
+  if (runtimeCapabilities?.deployments === false && deploymentToolNames.has(toolName)) {
+    throw new Error('Scheduled deployments are not supported by this workspace runtime.');
+  }
+}
+
+function assertConfigRuntimeCapabilities(
+  config: { mcp_servers: unknown[]; skills: unknown[] },
+  runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>,
+) {
+  if (runtimeCapabilities?.mcp_servers === false && config.mcp_servers.length > 0) {
+    throw new Error('MCP servers are not supported by this workspace runtime.');
+  }
+  if (runtimeCapabilities?.skills === false && config.skills.length > 0) {
+    throw new Error('Skills are not supported by this workspace runtime.');
+  }
+}
 function savedResources(state: BuilderState) {
   if (!state.agent || !state.environment) throw new Error('Save the agent and choose an environment first.');
 }
@@ -42,9 +73,10 @@ async function vaultOptions(context: ToolContext) {
 }
 const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> | PreparedTool> = {
   ask_user_questions: () => ({ gate: true }),
-  build_agent_config: ({ state, tool, models, catalog }) => {
+  build_agent_config: ({ state, tool, models, catalog, runtimeCapabilities }) => {
     beforeTest(state);
     const config = proposedAgentConfig(tool, state, models);
+    assertConfigRuntimeCapabilities(config, runtimeCapabilities);
     assertBuilderCapabilities(config, catalog.capabilities);
     for (const skill of config.skills)
       if (!catalog.skills.some((option) => option.id === skill.skill_id))
@@ -75,11 +107,17 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
       },
     };
   },
-  list_capabilities: ({ catalog }) => ({
-    result: {
-      servers: catalog.capabilities,
-      authorization: 'Not verified for this session. Discovery is not an execution result.',
-    },
+  list_capabilities: ({ catalog, runtimeCapabilities }) => ({
+    result:
+      runtimeCapabilities?.mcp_servers === false
+        ? {
+            servers: [],
+            authorization: 'MCP servers are not supported by this workspace runtime.',
+          }
+        : {
+            servers: catalog.capabilities,
+            authorization: 'Not verified for this session. Discovery is not an execution result.',
+          },
   }),
   list_environments: ({ catalog }) => ({
     result: catalog.environments
@@ -142,7 +180,7 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
       ? { gate: true }
       : { result: `Credentials already cover ${server.name}.` };
   },
-  agent_ready: async ({ state, tool, catalog, workspaceId }) => {
+  agent_ready: async ({ state, tool, catalog, workspaceId, runtimeCapabilities }) => {
     savedResources(state);
     if (stableStringify(state.config) !== stableStringify(state.savedConfig))
       throw new Error('Save or discard the proposed agent changes before testing.');
@@ -151,7 +189,10 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
       workspaceId,
       requiredEnvironmentPackages(state.savedConfig ?? state.config),
     );
-    const missing = await missingBuilderCredentials(state, catalog, workspaceId);
+    const missing =
+      runtimeCapabilities?.credential_vaults === false
+        ? []
+        : await missingBuilderCredentials(state, catalog, workspaceId);
     if (missing.length)
       throw new Error(
         `Choose a vault and authorize or explicitly skip these services: ${missing.map((server) => server.name).join(', ')}`,
@@ -217,6 +258,7 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
 };
 export async function prepareBuilderTool(context: ToolContext): Promise<PreparedTool> {
   validateBuilderTool(context.tool);
+  assertToolRuntimeCapability(context.tool.name, context.runtimeCapabilities);
   const handler = handlers[context.tool.name];
   if (!handler) throw new Error('Unsupported builder tool.');
   return handler(context);

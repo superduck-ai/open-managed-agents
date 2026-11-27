@@ -11,6 +11,10 @@ import (
 
 var errConsoleOrganizationAdminRequired = errors.New("organization administrator required")
 var errConsoleAPIKeyCreatorUnavailable = errors.New("API key creator resolver unavailable")
+var errRuntimeProfileStoreUnavailable = errors.New("runtime profile store unavailable")
+var errRuntimeProfileNotFound = errors.New("runtime profile not found")
+var errRuntimeProfileInactive = errors.New("runtime profile is not active")
+var errRuntimeProfileNotAllowed = errors.New("runtime profile is not allowed for this organization")
 
 func validateConsoleOrganizationAdminRole(role string) error {
 	if role != "admin" {
@@ -107,4 +111,23 @@ func writeLLMProviderManagementDenied(w http.ResponseWriter) {
 
 func writeLLMProviderCreatorRequired(w http.ResponseWriter) {
 	writeLLMProviderError(w, http.StatusForbidden, "llm_provider_creator_required", "An authenticated account is required to create an LLM provider.")
+}
+
+func writeConsoleWorkspaceRuntimeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errRuntimeProfileNotFound):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_runtime_profile", "message": "Runtime profile not found."})
+	case errors.Is(err, errRuntimeProfileInactive):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runtime_profile_inactive", "message": "Runtime profile is not active."})
+	case errors.Is(err, errRuntimeProfileNotAllowed):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runtime_profile_not_allowed", "message": "Runtime profile is not allowed for this organization."})
+	case errors.Is(err, errRuntimeProfileStoreUnavailable):
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "runtime_profile_unavailable", "message": "Runtime profiles are unavailable."})
+	default:
+		internalError(w, "failed to validate runtime profile")
+	}
+}
+
+func writeConsoleWorkspaceRuntimeImmutable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runtime_profile_immutable", "message": "Workspace runtime profile cannot be changed after creation."})
 }

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -43,11 +44,12 @@ var (
 )
 
 type Handler struct {
-	webhooks     webhookEnqueuer
-	db           *db.DB
-	deployments  *deployments.Store
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	webhooks        webhookEnqueuer
+	db              *db.DB
+	deployments     *deployments.Store
+	runtimeResolver *agentruntime.Resolver
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
 }
 
 type agentResponse struct {
@@ -133,6 +135,11 @@ func (h *Handler) WithChannels(channelHandler http.Handler) *Handler {
 	return h
 }
 
+func (h *Handler) WithRuntimeResolver(resolver *agentruntime.Resolver) *Handler {
+	h.runtimeResolver = resolver
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
@@ -145,6 +152,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		return agentAuthenticationRequired()
+	}
+	if isExternalRuntime(principal) {
+		return h.createExternal(w, r, principal)
 	}
 
 	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
@@ -192,6 +202,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
+	}
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
 		return invalidRequest(err)
@@ -243,6 +256,9 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return agentAuthenticationRequired()
 	}
+	if isExternalRuntime(principal) {
+		return h.searchExternal(w, r, principal)
+	}
 	body, err := decodeSearchRequest(w, r)
 	if err != nil {
 		return invalidRequest(err)
@@ -278,6 +294,9 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, agentID)
+	}
 	rawVersion := strings.TrimSpace(r.URL.Query().Get("version"))
 	var record db.Agent
 	var err error
@@ -306,6 +325,9 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.updateExternal(w, r, principal, agentID)
+	}
 
 	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
@@ -379,6 +401,9 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.archiveExternal(w, r, principal, agentID)
+	}
 	record, changed, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -399,6 +424,9 @@ func (h *Handler) versionsRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.versionsExternal(w, r, principal, agentID)
+	}
 
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {

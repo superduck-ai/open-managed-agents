@@ -7,6 +7,7 @@ import {
 } from '../../shared/navigation/navigation-paths';
 import { currentOrganizationName, isSettingsPath, settingScope } from '../../shared/navigation/settings-navigation';
 import { SettingsNavigation, SettingsLocation, SettingsAccess, CompactNavigationGroup } from './SettingsNavigation';
+import { RuntimeCapabilityGuard } from './RuntimeCapabilityGuard';
 import { useSettingsHistory } from './use-settings-navigation';
 import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
 import { ConsoleTopbar } from '../../features/console-topbar/ConsoleTopbar';
@@ -51,6 +52,7 @@ import {
   useSidebar,
 } from '@/shared/ui/sidebar';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/shared/ui/tooltip';
+import { Badge } from '@/shared/ui/badge';
 import { Skeleton } from '@/shared/ui/skeleton';
 import {
   DropdownMenu,
@@ -68,15 +70,16 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { AuthContext, useAuth } from '../../shared/auth/context';
 import type { AuthAccount } from '../../shared/auth/api';
-import { useWorkspace } from '../../shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
+import { workspaceRuntimeBadgeLabel } from '../../shared/workspaces/runtime';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import { buildCreateWorkspaceInput, workspaceColor, workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import { localeLabels, useI18n, useLocale } from '../../shared/i18n';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
-  consoleNavigation,
   sortedResourceNavigation,
+  visibleConsoleNavigation,
   type NavGroupItem,
   type NavLinkItem,
 } from '../../shared/navigation/navigation';
@@ -176,7 +179,9 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           )}
         >
           <SettingsAccess currentPath={currentPath} account={account}>
-            {children}
+            <RuntimeCapabilityGuard currentPath={currentPath} onNavigate={onNavigate}>
+              {children}
+            </RuntimeCapabilityGuard>
           </SettingsAccess>
         </div>
       </SidebarInset>
@@ -187,6 +192,8 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
   const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
+  const capabilities = useWorkspaceCapabilities();
+  const navigationItems = visibleConsoleNavigation(capabilities);
   const { state, isMobile, setOpenMobile } = useSidebar();
   const collapsed = state === 'collapsed' && !isMobile;
   const settings = isSettingsPath(currentPath);
@@ -220,7 +227,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
         ) : (
           <nav data-sidebar-navigation="main" aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
             <SidebarMenu>
-              {consoleNavigation.map((item) =>
+              {navigationItems.map((item) =>
                 item.type === 'link' ? (
                   <SidebarLink
                     key={item.href}
@@ -382,8 +389,8 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
     selectWorkspace(workspace.id);
   };
 
-  const handleCreate = async (name: string, displayColor: string) => {
-    const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
+  const handleCreate = async (name: string, displayColor: string, runtimeProfileId?: string) => {
+    const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor, runtimeProfileId));
     if (!organizations) await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
   };
 
@@ -422,8 +429,9 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     name={localizedWorkspaceName(activeWorkspace.name, msg)}
                     isLoading={isLoading}
                   />
-                  <span className="truncate text-xs text-sidebar-foreground/70">
-                    {msg('settings.workspaces.workspace', 'Workspace')}
+                  <span className="flex min-w-0 items-center gap-1.5 text-xs text-sidebar-foreground/70">
+                    <span className="truncate">{msg('settings.workspaces.workspace', 'Workspace')}</span>
+                    <WorkspaceRuntimeBadge runtime={activeWorkspace.runtime} />
                   </span>
                 </span>
                 <navigationIcons.chevronRight
@@ -459,6 +467,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                       />
                     </span>
                     <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
+                    <WorkspaceRuntimeBadge runtime={workspace.runtime} />
                   </DropdownMenuItem>
                 ))}
               </div>
@@ -754,6 +763,22 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   if (typeof window !== 'undefined') {
     window.location.assign(nextPath);
   }
+}
+
+function WorkspaceRuntimeBadge({ runtime }: { runtime?: Workspace['runtime'] }) {
+  const label = workspaceRuntimeBadgeLabel(runtime);
+  if (!label) {
+    return null;
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="h-4 max-w-24 shrink-0 truncate px-1.5 text-[10px] font-medium leading-none"
+      title={label}
+    >
+      {label}
+    </Badge>
+  );
 }
 
 function WorkspaceSwitcherTitle({ name, isLoading }: { name: string; isLoading: boolean }) {

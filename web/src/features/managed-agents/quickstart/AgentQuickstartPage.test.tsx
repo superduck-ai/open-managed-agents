@@ -1,5 +1,6 @@
 import { installSessionRuntime } from './sessionRuntime.test-utils';
 import { afterEach, expect, test, spyOn } from 'bun:test';
+import { defaultNativeCapabilities, type WorkspaceRuntimeSummary } from '../../../shared/workspaces/runtime';
 import {
   fireEvent,
   mockAgentsApi,
@@ -926,3 +927,72 @@ test('a completed Session has no recurring retrievals while visible or on an ear
   });
   expect(retrievals).toBe(before);
 }, 8000);
+
+const qoderRuntimeFixture: WorkspaceRuntimeSummary = {
+  profile_uuid: '00000000-0000-4000-8000-000000000099',
+  profile_id: 'rprof_qoder',
+  profile_name: 'Qoder Cloud',
+  provider_kind: 'qoder_cloud',
+  capabilities: {
+    ...defaultNativeCapabilities,
+    byok_llm_providers: false,
+    skills: false,
+    credential_vaults: false,
+    deployments: false,
+    mcp_servers: false,
+    memory_stores: true,
+  },
+};
+
+test('external runtime with empty models shows runtime-aware retry state instead of LLMProviderRequired', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/wrkspc_qoder/agent-quickstart?mode=api');
+  mockAgentsApi([]);
+  let available = false;
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).includes('/v1/models')) {
+      return available
+        ? jsonResponse({ data: [{ id: 'qmodel_latest', display_name: 'QModel Latest' }], has_more: false })
+        : jsonResponse({ data: [], has_more: false });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  renderManagedAgentsPage('quickstart', 'en', {
+    workspaceId: 'wrkspc_qoder',
+    runtime: qoderRuntimeFixture,
+  });
+
+  expect(await screen.findByTestId('external-runtime-models-unavailable')).toBeTruthy();
+  expect(screen.getByText(/Qoder Cloud/)).toBeTruthy();
+  expect(screen.queryByTestId('llm-provider-required')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Configure models' })).toBeNull();
+
+  available = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+});
+
+test('external runtime manual quickstart creates agent and environment using runtime model', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/wrkspc_qoder/agent-quickstart?mode=api');
+  const api = mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).includes('/v1/models')) {
+      return jsonResponse({ data: [{ id: 'qmodel_latest', display_name: 'QModel Latest' }], has_more: false });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  renderManagedAgentsPage('quickstart', 'en', {
+    workspaceId: 'wrkspc_qoder',
+    runtime: qoderRuntimeFixture,
+    models: [{ id: 'qmodel_latest', displayName: 'QModel Latest' }],
+  });
+
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  expect(await screen.findByRole('heading', { name: 'Configure the runtime environment' })).toBeTruthy();
+  const created = api.requests.find((request) => request.method === 'POST' && request.url.startsWith('/v1/agents?'));
+  expect(created?.body).toMatchObject({ model: 'qmodel_latest', mcp_servers: [], skills: [] });
+});

@@ -6,6 +6,7 @@ import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/
 import { quickstartBuildAgentConfigInput } from '../../agentConfig';
 import { platformQuickstartTools } from '../platformQuickstartRequest';
 import { previewSchedule } from '../../resources/deployment-schedule';
+import type { BuilderRuntimeCapabilities } from './api';
 import type { BuilderState, BuilderTool } from './model';
 
 const configurationDescription =
@@ -118,28 +119,43 @@ export function validatedDeployment(tool: BuilderTool) {
     throw new Error('Invalid deployment schedule or timezone.');
   return { ...input, timezone };
 }
-export function builderTools(models: string[]) {
-  return Object.entries(builderToolInputs).map(([name, schema]) => {
-    const official = platformQuickstartTools.find((tool) => tool.name === name);
-    const inputSchema = z.toJSONSchema(schema, { unrepresentable: 'any' });
-    if (name === 'build_agent_config' && inputSchema.properties)
-      inputSchema.properties.model = { type: 'string', enum: models };
-    return {
-      name,
-      description:
-        (name === 'build_agent_config'
-          ? configurationDescription
-          : ({
-              list_agents: 'List actual active workspace agents to find reusable knowledge and configurations.',
-              read_agent:
-                'Read an existing workspace agent as reference for a new confirmed proposal. This does not select or modify that agent.',
-              list_capabilities:
-                'Inspect configured workspace MCP discovery status and actual tool names. Unknown or error entries are not usable; authorization and runtime success are separate.',
-            }[name] ?? official?.description)) ??
-        (name === 'pick_environment'
-          ? 'Choose an existing environment or request a new one.'
-          : 'Choose vaults by credential coverage, or request a new vault.'),
-      input_schema: inputSchema,
-    };
-  });
+const toolCapabilityRequirements: Partial<Record<keyof typeof builderToolInputs, keyof BuilderRuntimeCapabilities>> = {
+  list_capabilities: 'mcp_servers',
+  list_vaults: 'credential_vaults',
+  pick_vault: 'credential_vaults',
+  select_vault: 'credential_vaults',
+  create_vault: 'credential_vaults',
+  create_vault_credential: 'credential_vaults',
+  flag_schedule_intent: 'deployments',
+  create_deployment: 'deployments',
+};
+export function builderTools(models: string[], runtimeCapabilities?: Partial<BuilderRuntimeCapabilities>) {
+  return Object.entries(builderToolInputs)
+    .filter(([name]) => {
+      const required = toolCapabilityRequirements[name as keyof typeof builderToolInputs];
+      return !required || runtimeCapabilities?.[required] !== false;
+    })
+    .map(([name, schema]) => {
+      const official = platformQuickstartTools.find((tool) => tool.name === name);
+      const inputSchema = z.toJSONSchema(schema, { unrepresentable: 'any' });
+      if (name === 'build_agent_config' && inputSchema.properties)
+        inputSchema.properties.model = { type: 'string', enum: models };
+      return {
+        name,
+        description:
+          (name === 'build_agent_config'
+            ? configurationDescription
+            : ({
+                list_agents: 'List actual active workspace agents to find reusable knowledge and configurations.',
+                read_agent:
+                  'Read an existing workspace agent as reference for a new confirmed proposal. This does not select or modify that agent.',
+                list_capabilities:
+                  'Inspect configured workspace MCP discovery status and actual tool names. Unknown or error entries are not usable; authorization and runtime success are separate.',
+              }[name] ?? official?.description)) ??
+          (name === 'pick_environment'
+            ? 'Choose an existing environment or request a new one.'
+            : 'Choose vaults by credential coverage, or request a new vault.'),
+        input_schema: inputSchema,
+      };
+    });
 }

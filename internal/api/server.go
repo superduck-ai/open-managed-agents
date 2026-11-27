@@ -15,6 +15,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/riverqueue/river"
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime/qoder"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
@@ -76,6 +78,9 @@ type Server struct {
 	platformAuth         *platformauth.EmailProvider
 	filestoreCredentials *filestoreapi.TokenCredentials
 	vaultSecrets         *secrets.Service
+	runtimeRegistry      *agentruntime.Registry
+	runtimeResolver      *agentruntime.Resolver
+	consoleScopeStore    platformapi.OrganizationStore
 	envOAuthProviders    *platformoauth.Resolver
 	admin                *adminapi.Handler
 	agents               *agents.Handler
@@ -209,9 +214,36 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, componentLogger("env_oauth_providers"))
+	var profileStore agentruntime.ProfileStore
+	var bindingStore agentruntime.BindingStore
+	var usageRecorder qoder.UsageRecorder
+	var consoleScopeStore platformapi.OrganizationStore
+	if deps.DB != nil {
+		profileStore = deps.DB
+		bindingStore = deps.DB
+		usageRecorder = deps.DB
+		consoleScopeStore = deps.DB
+	}
+	runtimeRegistry := agentruntime.NewRegistry()
+	runtimeBindings := agentruntime.NewBindingService(bindingStore)
+	if err := runtimeRegistry.Register(
+		agentruntime.ProviderQoderCloud,
+		qoder.NewFactory(
+			runtimeBindings,
+			usageRecorder,
+			componentLogger("agent_runtime_qoder"),
+			qoder.WithAllowDevFakeIP(deps.Config.Env == config.EnvironmentDev),
+		),
+	); err != nil {
+		panic("api: register qoder runtime: " + err.Error())
+	}
+	runtimeResolver := agentruntime.NewResolver(profileStore, runtimeRegistry, deps.VaultSecrets, componentLogger("agent_runtime"))
 	s := &Server{
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		envOAuthProviders:    envOAuthProviders,
+		runtimeRegistry:      runtimeRegistry,
+		runtimeResolver:      runtimeResolver,
+		consoleScopeStore:    consoleScopeStore,
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -225,23 +257,23 @@ func NewServer(deps ServerDeps) *Server {
 			telemetrydestinations.NewService(deps.DB, deps.VaultSecrets, telemetryexport.NewTester(deps.VaultSecrets, telemetryexport.Config{AllowInsecure: deps.Config.TelemetryExport.AllowInsecure, Timeout: deps.Config.TelemetryExport.Timeout}), deps.Config.TelemetryExport.AllowInsecure),
 			componentLogger("telemetry_destinations"),
 		)),
-		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
+		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels).WithRuntimeResolver(runtimeResolver),
 		workspaceChannels: workspaceChannels,
 		channelService:    channelService,
 		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
-		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
-		deploymentRuns:    deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
-		files:             files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
+		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")).WithRuntimeResolver(runtimeResolver),
+		deploymentRuns:    deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")).WithRuntimeResolver(runtimeResolver),
+		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds).WithRuntimeResolver(runtimeResolver),
+		files:             files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")).WithRuntimeResolver(runtimeResolver),
 		filestore:         filestoreHandler,
-		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
+		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer).WithRuntimeResolver(runtimeResolver),
 		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
-		models:            modelsapi.NewHandler(deps.DB),
-		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity),
+		models:            modelsapi.NewHandler(deps.DB).WithRuntimeResolver(runtimeResolver),
+		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity).WithRuntimeResolver(runtimeResolver),
 		identities:        identityHandler,
-		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
+		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")).WithRuntimeResolver(runtimeResolver),
+		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease).WithRuntimeResolver(runtimeResolver),
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,
 	}
@@ -409,10 +441,12 @@ func (s *Server) registerPlatformConsoleRoutes(
 			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
-				// 配置校验保证 enabled 时 backend 只会是受支持的值。
 				backend := observability.NewOpenObserve(s.cfg.Observability.OpenObserve, nil)
 				handler := observability.New(backend, s.db)
-				platformapi.RegisterOrganizationObservabilityRoutes(r, handler, obsLogger)
+				r.Group(func(obs chi.Router) {
+					obs.Use(s.requireCapability(agentruntime.CapabilityObservabilityDashboard))
+					platformapi.RegisterOrganizationObservabilityRoutes(obs, handler, obsLogger)
+				})
 			}
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {
@@ -421,6 +455,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 		r.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
 			r.Use(platformCSRFMiddleware)
 			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationRuntimeProfileRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db, s.logger.With("component", "console_api_keys"))
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets, s.cfg.LLMProviderPresetsFile)
@@ -428,9 +463,15 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
-			mcpServerHandler.RegisterRoutes(r)
+			r.Group(func(g chi.Router) {
+				g.Use(s.requireConsoleWorkspaceCapability(agentruntime.CapabilityMCPServers))
+				mcpServerHandler.RegisterRoutes(g)
+			})
 			s.files.RegisterConsoleRoutes(r)
-			evaluationHandler.RegisterRoutes(r)
+			r.Group(func(g chi.Router) {
+				g.Use(s.requireConsoleWorkspaceCapability(agentruntime.CapabilityEvaluations))
+				evaluationHandler.RegisterRoutes(g)
+			})
 			if s.identities != nil {
 				s.identities.RegisterConsole(r)
 			}
@@ -478,16 +519,16 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Post("/agents:search", s.agents.Search)
 	r.Mount("/agents", s.agents)
 	if s.workspaceChannels != nil {
-		r.Mount("/channels", s.workspaceChannels)
+		r.With(s.requireCapability(agentruntime.CapabilityChannels)).Mount("/channels", s.workspaceChannels)
 	}
 	if s.identities != nil {
 		s.identities.RegisterV1(r.With(platformSessionCSRF))
 	}
-	r.Mount("/deployment_runs", s.deploymentRuns)
-	r.Mount("/deployments", s.deployments)
+	r.With(s.requireCapability(agentruntime.CapabilityDeployments)).Mount("/deployment_runs", s.deploymentRuns)
+	r.With(s.requireCapability(agentruntime.CapabilityDeployments)).Mount("/deployments", s.deployments)
 	r.Mount("/environments", s.envs)
 	r.Mount("/files", s.files)
-	r.Mount("/memory_stores", s.memory)
+	r.With(s.requireCapability(agentruntime.CapabilityMemoryStores)).Mount("/memory_stores", s.memory)
 	if s.tunnelIngress != nil {
 		r.Mount("/mcp", s.tunnelIngress)
 	}
@@ -497,12 +538,12 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
 	r.Mount("/sessions", s.sessions.Router())
-	r.Mount("/skills", s.skills)
+	r.With(s.requireCapability(agentruntime.CapabilitySkills)).Mount("/skills", s.skills)
 	if s.tunnels != nil {
-		r.Mount("/tunnels", s.tunnels)
+		r.With(s.requireCapability(agentruntime.CapabilityMCPTunnels)).Mount("/tunnels", s.tunnels)
 	}
-	r.Mount("/vaults", s.vaults)
-	r.Mount("/webhooks", s.webhooks)
+	r.With(s.requireCapability(agentruntime.CapabilityCredentialVaults)).Mount("/vaults", s.vaults)
+	r.With(s.requireCapability(agentruntime.CapabilitySessionWebhooks)).Mount("/webhooks", s.webhooks)
 }
 
 func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {
@@ -680,6 +721,7 @@ func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Princi
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	principal.WorkspaceAccess = access
+	applyWorkspaceRuntime(&principal, workspace)
 	return principal, nil
 }
 

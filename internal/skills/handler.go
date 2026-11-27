@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -36,11 +37,12 @@ const (
 )
 
 type Handler struct {
-	db           *db.DB
-	logger       *slog.Logger
-	store        storage.ObjectStore
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	db              *db.DB
+	logger          *slog.Logger
+	store           storage.ObjectStore
+	runtimeResolver *agentruntime.Resolver
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
 }
 
 type skillResponse struct {
@@ -117,6 +119,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
 	}
+	if isExternalRuntime(principal) {
+		return h.createExternal(w, r, principal)
+	}
 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
@@ -186,6 +191,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.listExternal(w, r, principal)
+	}
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	if !hasSkillsBeta(r) && source == "anthropic_example" {
 		source = "anthropic"
@@ -328,6 +336,9 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.retrieveExternal(w, r, principal, skillID)
+	}
 	if skill, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not retrieve skill", fmt.Errorf("retrieve built-in skill %q: %w", skillID, err))
 	} else if ok {
@@ -354,6 +365,9 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.deleteExternal(w, r, principal, skillID)
 	}
 	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		if mapped := mapSkillDeleteError(err); mapped != err {
@@ -386,6 +400,9 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.createVersionExternal(w, r, principal, skillID)
 	}
 	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not create skill version", fmt.Errorf("retrieve built-in skill %q before version create: %w", skillID, err))
@@ -466,6 +483,9 @@ func (h *Handler) listVersionsRoute(w http.ResponseWriter, r *http.Request) erro
 
 func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.listVersionsExternal(w, r, principal, skillID)
+	}
 	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not list skill versions", fmt.Errorf("retrieve built-in skill %q before version list: %w", skillID, err))
 	} else if ok {
@@ -542,6 +562,9 @@ func (h *Handler) retrieveVersionRoute(w http.ResponseWriter, r *http.Request) e
 
 func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillID, version string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.retrieveVersionExternal(w, r, principal, skillID, version)
+	}
 	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q before version retrieve: %w", skillID, err))
 	} else if ok {
@@ -579,6 +602,9 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		return h.deleteVersionExternal(w, r, principal, skillID, version)
 	}
 	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		if mapped := mapSkillDeleteError(err); mapped != err {

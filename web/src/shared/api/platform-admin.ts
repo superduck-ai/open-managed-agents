@@ -1,4 +1,5 @@
 import { reportApiAuthFailure, type ApiError } from './client';
+import type { RuntimeCapabilities, RuntimeProviderKind } from '../workspaces/runtime';
 export class PlatformAdminClient {
   private controller = new AbortController();
   csrfToken = '';
@@ -127,6 +128,121 @@ export function deleteOAuthProvider(client: PlatformAdminClient, id: string, exp
     method: 'DELETE',
     body: { expected_version: expectedVersion },
   });
+}
+
+export type RuntimeProfileStatus = 'active' | 'disabled' | 'archived';
+
+export type RuntimeProfileRecord = {
+  uuid: string;
+  id: string;
+  scope: string;
+  name: string;
+  provider_kind: RuntimeProviderKind;
+  endpoint_url: string;
+  isolation_mode: string;
+  config: Record<string, unknown>;
+  capability_overrides: Record<string, unknown>;
+  effective_capabilities: RuntimeCapabilities;
+  has_credentials: boolean;
+  credential_hint: string;
+  credential_revision: number;
+  builtin: boolean;
+  status: RuntimeProfileStatus;
+  last_health_status: string;
+  last_health_checked_at: string | null;
+  last_health_error: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RuntimeProfileCreateInput = {
+  name: string;
+  provider_kind: string;
+  endpoint_url: string;
+  isolation_mode?: string;
+  config?: Record<string, unknown>;
+  capability_overrides?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  status?: RuntimeProfileStatus;
+};
+
+export type RuntimeProfileUpdateInput = {
+  expected_version: number;
+  name?: string;
+  endpoint_url?: string;
+  isolation_mode?: string;
+  config?: Record<string, unknown>;
+  capability_overrides?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  status?: RuntimeProfileStatus;
+};
+
+export type RuntimeProfileTestResult = {
+  status: string;
+  latency_ms: number;
+  message: string;
+  checked_at: string;
+};
+
+export type OrganizationRuntimePolicyRecord = {
+  organization_uuid: string;
+  default_runtime_profile_uuid: string;
+  allowed_runtime_profile_uuids: string[];
+  profiles: RuntimeProfileRecord[];
+};
+
+export type UpdateOrganizationRuntimePolicyInput = {
+  default_runtime_profile_uuid: string;
+  allowed_runtime_profile_uuids: string[];
+};
+
+export function listRuntimeProfiles(client: PlatformAdminClient) {
+  return client.request<RuntimeProfileRecord[]>('/runtime-profiles');
+}
+
+export function createRuntimeProfile(client: PlatformAdminClient, input: RuntimeProfileCreateInput) {
+  return client.request<RuntimeProfileRecord>('/runtime-profiles', { method: 'POST', body: input });
+}
+
+export function updateRuntimeProfile(client: PlatformAdminClient, id: string, input: RuntimeProfileUpdateInput) {
+  return client.request<RuntimeProfileRecord>(`/runtime-profiles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+export function deleteRuntimeProfile(client: PlatformAdminClient, id: string, expectedVersion: number) {
+  return client.request<void>(`/runtime-profiles/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: { expected_version: expectedVersion },
+  });
+}
+
+export function testRuntimeProfile(client: PlatformAdminClient, id: string) {
+  return client.request<RuntimeProfileTestResult>(`/runtime-profiles/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
+  });
+}
+
+export function getOrganizationRuntimePolicy(client: PlatformAdminClient, organizationUuid: string) {
+  return client.request<OrganizationRuntimePolicyRecord>(
+    `/organizations/${encodeURIComponent(organizationUuid)}/runtime-policy`,
+  );
+}
+
+export function updateOrganizationRuntimePolicy(
+  client: PlatformAdminClient,
+  organizationUuid: string,
+  input: UpdateOrganizationRuntimePolicyInput,
+) {
+  return client.request<OrganizationRuntimePolicyRecord>(
+    `/organizations/${encodeURIComponent(organizationUuid)}/runtime-policy`,
+    {
+      method: 'PUT',
+      body: input,
+    },
+  );
 }
 
 function platformError(status: number, body: { error?: { code?: string; message?: string } } | null): ApiError {

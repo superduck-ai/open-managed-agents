@@ -7,6 +7,7 @@ import type { ManagedEntitySection } from '../managed-agents/types';
 import type { I18nContextValue } from '../../shared/i18n/context';
 import { consoleNavigation } from '../../shared/navigation/navigation';
 import { navigationHref } from '../../shared/navigation/navigation-paths';
+import type { BooleanRuntimeCapabilityKey, RuntimeCapabilities } from '../../shared/workspaces/runtime';
 import type { SearchRecord } from './search-data';
 
 const managedSources: ManagedEntitySection[] = [
@@ -18,6 +19,23 @@ const managedSources: ManagedEntitySection[] = [
 ];
 type ResourceSource = 'agents' | ManagedEntitySection | 'mcp-servers' | 'files' | 'skills';
 const sources: ResourceSource[] = ['agents', ...managedSources, 'mcp-servers', 'files', 'skills'];
+const sourceCapabilityRequirements: Partial<Record<ResourceSource, BooleanRuntimeCapabilityKey>> = {
+  deployments: 'deployments',
+  skills: 'skills',
+  'memory-stores': 'memory_stores',
+  'credential-vaults': 'credential_vaults',
+  'mcp-servers': 'mcp_servers',
+};
+
+export function allowedResourceSources(capabilities?: RuntimeCapabilities): ResourceSource[] {
+  if (!capabilities) {
+    return sources;
+  }
+  return sources.filter((source) => {
+    const required = sourceCapabilityRequirements[source];
+    return !required || Boolean(capabilities[required]);
+  });
+}
 const resourceNavigation = consoleNavigation.flatMap((item) => (item.type === 'group' ? item.children : [item]));
 
 export function resourceContextLabel(source: string, msg: I18nContextValue['msg']) {
@@ -60,8 +78,9 @@ export async function searchResourcePage(
   workspaceId: string,
   query: string,
   cursor: ResourceCursor,
+  capabilities?: RuntimeCapabilities,
 ) {
-  const active = sources.filter((source) => cursor[source] !== null);
+  const active = allowedResourceSources(capabilities).filter((source) => cursor[source] !== null);
   const settled = await Promise.allSettled(
     active.map(async (source) => {
       const pageCursor = cursor[source] || undefined;

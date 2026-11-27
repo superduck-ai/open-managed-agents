@@ -40,6 +40,8 @@ type Principal struct {
 	OrganizationUUID          string
 	WorkspaceUUID             string
 	WorkspaceExternalID       string
+	RuntimeProvider           string
+	RuntimeProfileUUID        string
 	UserUUID                  string
 	UserExternalID            string
 	PlatformSessionExternalID string

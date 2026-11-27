@@ -224,12 +224,13 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	}
 	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
 	row, err := mapper.Insert(ctx, insertConsoleWorkspaceParams{
-		UUID:          uuid.NewV4().String(),
-		ExternalID:    externalID,
-		OrgUUID:       input.OrgUUID,
-		Name:          input.Name,
-		DisplayColor:  displayColor,
-		DataResidency: dataResidency,
+		UUID:               uuid.NewV4().String(),
+		ExternalID:         externalID,
+		OrgUUID:            input.OrgUUID,
+		Name:               input.Name,
+		DisplayColor:       displayColor,
+		DataResidency:      dataResidency,
+		RuntimeProfileUUID: input.RuntimeProfileUUID,
 	})
 	if isUniqueViolation(err) {
 		return platform.ConsoleWorkspace{}, ErrDuplicate
@@ -305,20 +306,24 @@ func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
 		return platform.ConsoleWorkspace{}, err
 	}
 	return platform.ConsoleWorkspace{
-		IsDefault:             r.IsDefault,
-		UUID:                  r.UUID,
-		ExternalID:            r.ExternalID,
-		OrgUUID:               r.OrgUUID,
-		Name:                  r.Name,
-		DisplayColor:          r.DisplayColor,
-		Color:                 r.Color,
-		DataResidency:         dataResidency,
-		DataResidencySettings: settings,
-		ExternalKeyID:         r.ExternalKeyID,
-		Tags:                  tags,
-		ArchivedAt:            r.ArchivedAt,
-		CreatedAt:             r.CreatedAt,
-		UpdatedAt:             r.UpdatedAt,
+		IsDefault:                r.IsDefault,
+		UUID:                     r.UUID,
+		ExternalID:               r.ExternalID,
+		OrgUUID:                  r.OrgUUID,
+		Name:                     r.Name,
+		DisplayColor:             r.DisplayColor,
+		Color:                    r.Color,
+		DataResidency:            dataResidency,
+		DataResidencySettings:    settings,
+		ExternalKeyID:            r.ExternalKeyID,
+		Tags:                     tags,
+		RuntimeProfileUUID:       r.RuntimeProfileUUID,
+		RuntimeProfileExternalID: r.RuntimeProfileExternalID,
+		RuntimeProfileName:       r.RuntimeProfileName,
+		RuntimeProviderKind:      r.RuntimeProviderKind,
+		ArchivedAt:               r.ArchivedAt,
+		CreatedAt:                r.CreatedAt,
+		UpdatedAt:                r.UpdatedAt,
 	}, nil
 }
 

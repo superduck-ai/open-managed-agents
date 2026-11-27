@@ -53,7 +53,8 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			display_color text NOT NULL,
 			data_residency jsonb NOT NULL,
 			external_key_id text,
-			tags jsonb NOT NULL
+			tags jsonb NOT NULL,
+			runtime_profile_uuid uuid NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'
 		) ON COMMIT DROP
 	`)
 	execMapperFixtureSQL(t, ctx, tx, `

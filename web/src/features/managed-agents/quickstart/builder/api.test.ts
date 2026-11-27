@@ -8,6 +8,8 @@ import {
   authenticationServers,
   prepareBuilderAgent,
   builderBackend,
+  resolveBuilderChatTarget,
+  selectOrganizationBuilderChatTarget,
   loadBuilderVaults,
   prepareBuilderDeployment,
   prepareBuilderSession,
@@ -15,6 +17,8 @@ import {
   type BuilderCatalog,
 } from './api';
 import { prepareBuilderTool } from './dispatch';
+import { builderSystem } from './prompt';
+import { builderTools } from './tools';
 import { setConsoleRequestContext } from '../../../../shared/api/client';
 
 const originalFetch = globalThis.fetch;
@@ -397,4 +401,124 @@ test('changing environment requires a fresh test before advance, deployment or i
       }),
     ).rejects.toThrow();
   }
+});
+
+test('external runtime catalog skips skills and MCP discovery and resolves organization BYOK chat model', async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes('/v1/skills') || url.includes('/mcp_tool_catalogs') || url.includes('/directory/servers')) {
+      return new Response(JSON.stringify({ error: { type: 'unsupported_capability_error' } }), { status: 400 });
+    }
+    if (url.endsWith('/organizations/org/llm_providers')) {
+      return json([
+        {
+          id: 'prov_org',
+          slug: 'anthropic',
+          api_backend: 'messages',
+          has_api_key: true,
+          models: [{ id: 'claude-sonnet-4-6' }],
+        },
+      ]);
+    }
+    if (url.includes('/v1/agents')) {
+      return json({
+        data: [
+          {
+            id: 'agent_1',
+            type: 'agent',
+            version: 1,
+            archived_at: null,
+            mcp_servers: [{ type: 'url', name: 'legacy', url: 'https://legacy.example/mcp' }],
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return json({ data: [], next_page: null });
+  }) as typeof fetch;
+
+  const loaded = await loadBuilderCatalog('org', 'workspace', {
+    byok_llm_providers: false,
+    skills: false,
+    mcp_servers: false,
+    credential_vaults: false,
+    deployments: false,
+  });
+
+  expect(loaded.skills).toEqual([]);
+  expect(loaded.capabilities).toEqual([]);
+  expect(loaded.directory).toEqual([]);
+  expect(urls.some((url) => url.includes('/v1/skills'))).toBe(false);
+  expect(urls.some((url) => url.includes('/mcp_tool_catalogs'))).toBe(false);
+  expect(urls.some((url) => url.includes('/directory/servers'))).toBe(false);
+  expect(selectOrganizationBuilderChatTarget(loaded)).toEqual({
+    model: 'anthropic/claude-sonnet-4-6',
+    backend: 'messages',
+  });
+  expect(resolveBuilderChatTarget('qmodel_latest', loaded, false)).toEqual({
+    model: 'anthropic/claude-sonnet-4-6',
+    backend: 'messages',
+  });
+  expect(() => resolveBuilderChatTarget('qmodel_latest', { ...loaded, providers: [] }, false)).toThrow(
+    'No organization chat model',
+  );
+});
+
+test('builder prompt, tools and tool dispatch enforce disabled runtime capabilities without calling blocked APIs', async () => {
+  const qoderCaps = {
+    byok_llm_providers: false,
+    skills: false,
+    mcp_servers: false,
+    credential_vaults: false,
+    deployments: false,
+  };
+  const toolNames = builderTools(['qmodel_latest'], qoderCaps).map((tool) => tool.name);
+  expect(toolNames).not.toContain('list_vaults');
+  expect(toolNames).not.toContain('pick_vault');
+  expect(toolNames).not.toContain('create_vault');
+  expect(toolNames).not.toContain('create_deployment');
+  expect(toolNames).not.toContain('flag_schedule_intent');
+  expect(toolNames).not.toContain('list_capabilities');
+  expect(toolNames).toContain('build_agent_config');
+
+  const value = state();
+  const systemText = builderSystem(value, 'en', ['qmodel_latest'], [], '', [], [], qoderCaps)
+    .map((block) => block.text)
+    .join('\n');
+  expect(systemText).toContain('MCP servers are not supported by this workspace runtime');
+  expect(systemText).toContain('Skills are not supported by this workspace runtime');
+  expect(systemText).toContain('Credential vaults are not supported by this workspace runtime');
+  expect(systemText).toContain('Scheduled deployments are not supported by this workspace runtime');
+
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    urls.push(String(input));
+    return json({ data: [], next_page: null });
+  }) as typeof fetch;
+
+  await expect(
+    prepareBuilderTool({
+      state: value,
+      tool: { id: 'v1', name: 'list_vaults', input: {} },
+      catalog,
+      models: ['qmodel_latest'],
+      workspaceId: 'workspace',
+      runtimeCapabilities: qoderCaps,
+    }),
+  ).rejects.toThrow('Credential vaults are not supported');
+
+  await expect(
+    prepareBuilderTool({
+      state: value,
+      tool: { id: 'd1', name: 'flag_schedule_intent', input: { wants_schedule: true } },
+      catalog,
+      models: ['qmodel_latest'],
+      workspaceId: 'workspace',
+      runtimeCapabilities: qoderCaps,
+    }),
+  ).rejects.toThrow('Scheduled deployments are not supported');
+
+  expect(urls).toEqual([]);
 });

@@ -1,4 +1,5 @@
 import { OAuthProvidersPage } from '../features/platform-admin/oauth/OAuthProvidersPage';
+import { RuntimeProfilesPage } from '../features/platform-admin/runtimes/RuntimeProfilesPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { FileDetailsPage } from '../features/dashboard/FileDetailsPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
@@ -76,6 +77,11 @@ const platformOAuthRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
   path: 'oauth',
   component: OAuthProvidersPage,
+});
+const platformRuntimesRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'runtimes',
+  component: RuntimeProfilesPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -729,6 +735,7 @@ const routeTree = rootRoute.addChildren([
     platformAdministratorsRoute,
     platformSkillsRoute,
     platformOAuthRoute,
+    platformRuntimesRoute,
   ]),
   loginRoute,
   invitationsRoute,

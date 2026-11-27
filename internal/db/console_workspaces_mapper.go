@@ -8,12 +8,13 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper ConsoleWorkspaceMapper -sql ./console_workspaces_mapper.xml -out ./console_workspaces_mapper.sqlmap.gen.go -dialect postgres
 
 type insertConsoleWorkspaceParams struct {
-	UUID          string
-	ExternalID    string
-	OrgUUID       string
-	Name          string
-	DisplayColor  string
-	DataResidency []byte
+	UUID               string
+	ExternalID         string
+	OrgUUID            string
+	Name               string
+	DisplayColor       string
+	DataResidency      []byte
+	RuntimeProfileUUID string
 }
 
 type updateConsoleWorkspaceParams struct {
@@ -24,19 +25,23 @@ type updateConsoleWorkspaceParams struct {
 }
 
 type consoleWorkspaceRow struct {
-	IsDefault     bool       `db:"is_default"`
-	UUID          string     `db:"uuid"`
-	ExternalID    string     `db:"external_id"`
-	OrgUUID       string     `db:"org_uuid"`
-	Name          string     `db:"name"`
-	DisplayColor  string     `db:"display_color"`
-	Color         string     `db:"color"`
-	DataResidency []byte     `db:"data_residency"`
-	ExternalKeyID *string    `db:"external_key_id"`
-	Tags          []byte     `db:"tags"`
-	ArchivedAt    *time.Time `db:"archived_at"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	IsDefault                bool       `db:"is_default"`
+	UUID                     string     `db:"uuid"`
+	ExternalID               string     `db:"external_id"`
+	OrgUUID                  string     `db:"org_uuid"`
+	Name                     string     `db:"name"`
+	DisplayColor             string     `db:"display_color"`
+	Color                    string     `db:"color"`
+	DataResidency            []byte     `db:"data_residency"`
+	ExternalKeyID            *string    `db:"external_key_id"`
+	Tags                     []byte     `db:"tags"`
+	RuntimeProfileUUID       string     `db:"runtime_profile_uuid"`
+	RuntimeProfileExternalID string     `db:"runtime_profile_external_id"`
+	RuntimeProfileName       string     `db:"runtime_profile_name"`
+	RuntimeProviderKind      string     `db:"runtime_provider_kind"`
+	ArchivedAt               *time.Time `db:"archived_at"`
+	CreatedAt                time.Time  `db:"created_at"`
+	UpdatedAt                time.Time  `db:"updated_at"`
 }
 
 type ConsoleWorkspaceMapper interface {

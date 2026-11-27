@@ -4,6 +4,7 @@ import { builderStorageKey, builderTestBinding, newBuilderState } from './model'
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import { installSessionRuntime } from '../sessionRuntime.test-utils';
 import { afterEach, expect, test } from 'bun:test';
+import { defaultNativeCapabilities, type WorkspaceRuntimeSummary } from '../../../../shared/workspaces/runtime';
 import {
   fireEvent,
   mockAgentsApi,
@@ -43,18 +44,16 @@ function setup(turns: string[]) {
   });
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) =>
-    String(input).endsWith('/llm_providers') && !String(input).includes('/workspaces/')
-      ? jsonResponse([])
-      : String(input).endsWith('/llm_providers')
-        ? jsonResponse([
-            {
-              id: 'provider',
-              slug: 'provider',
-              api_backend: 'messages',
-              models: [{ id: 'claude-sonnet-4-6' }, { id: 'claude-opus-4-8' }],
-            },
-          ])
-        : baseFetch(input, init)) as typeof fetch;
+    String(input).endsWith('/llm_providers')
+      ? jsonResponse([
+          {
+            id: 'provider',
+            slug: 'provider',
+            api_backend: 'messages',
+            models: [{ id: 'claude-sonnet-4-6' }, { id: 'claude-opus-4-8' }],
+          },
+        ])
+      : baseFetch(input, init)) as typeof fetch;
   return { ...api, calls };
 }
 function send(text = 'Extract company, product and quantity from orders. Missing fields should be null.') {
@@ -1716,3 +1715,111 @@ test.each(['idle', 'terminated'])(
     expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/sessions'))).toBe(false);
   },
 );
+
+const qoderRuntime: WorkspaceRuntimeSummary = {
+  profile_uuid: '00000000-0000-4000-8000-000000000099',
+  profile_id: 'rprof_qoder',
+  profile_name: 'Qoder Cloud',
+  provider_kind: 'qoder_cloud',
+  capabilities: {
+    ...defaultNativeCapabilities,
+    byok_llm_providers: false,
+    skills: false,
+    credential_vaults: false,
+    deployments: false,
+    mcp_servers: false,
+    memory_stores: true,
+  },
+};
+
+test('external runtime builder uses organization BYOK model for chat while configuring agent with runtime model', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/wrkspc_qoder/agent-quickstart');
+  const calls: Record<string, unknown>[] = [];
+  const requestedUrls: string[] = [];
+  const turns = [
+    toolStream('build_agent_config', {
+      name: 'Qoder helper',
+      system: 'Help with code tasks.',
+    }),
+    toolStream('offer_next_step', {}),
+  ];
+  const api = mockAgentsApi([], {
+    quickstartStream: (body) => {
+      calls.push(body);
+      return turns.shift() ?? toolStream('offer_next_step', {});
+    },
+  });
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url.includes('/v1/skills') || url.includes('/v1/vaults') || url.includes('/v1/deployments')) {
+      return jsonResponse({ error: { type: 'unsupported_capability_error' } }, 400);
+    }
+    if (url.includes('/v1/models')) {
+      return jsonResponse({ data: [{ id: 'qmodel_latest', display_name: 'QModel Latest' }], has_more: false });
+    }
+    if (url.endsWith('/llm_providers')) {
+      return jsonResponse([
+        {
+          id: 'prov_org',
+          slug: 'anthropic',
+          api_backend: 'messages',
+          has_api_key: true,
+          models: [{ id: 'claude-sonnet-4-6' }],
+        },
+      ]);
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  renderManagedAgentsPage('quickstart', 'en', {
+    workspaceId: 'wrkspc_qoder',
+    runtime: qoderRuntime,
+    models: [{ id: 'qmodel_latest', displayName: 'QModel Latest' }],
+  });
+
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  expect(requestedUrls.some((url) => url.includes('/v1/skills'))).toBe(false);
+  send('Build a coding helper.');
+  await screen.findByRole('button', { name: 'Create agent' });
+  expect(calls[0]?.model).toBe('anthropic/claude-sonnet-4-6');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  const saved = writes(api.requests)[0]?.body as { model?: string; name?: string } | undefined;
+  expect(saved?.name).toBe('Qoder helper');
+  expect(saved?.model).toBe('qmodel_latest');
+  expect(requestedUrls.some((url) => url.includes('/v1/vaults') || url.includes('/v1/deployments'))).toBe(false);
+});
+
+test('external runtime builder without organization BYOK providers offers switching to manual setup', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/wrkspc_qoder/agent-quickstart');
+  mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/models')) {
+      return jsonResponse({ data: [{ id: 'qmodel_latest', display_name: 'QModel Latest' }], has_more: false });
+    }
+    if (url.endsWith('/llm_providers')) {
+      return jsonResponse([]);
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+
+  renderManagedAgentsPage('quickstart', 'en', {
+    workspaceId: 'wrkspc_qoder',
+    runtime: qoderRuntime,
+    models: [{ id: 'qmodel_latest', displayName: 'QModel Latest' }],
+  });
+
+  expect(await screen.findByTestId('builder-chat-model-required')).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Builder message' })).toBeNull();
+  const setupLink = screen.getByRole('link', { name: 'Configure organization models' });
+  expect(setupLink.getAttribute('href')).toContain('/settings/llm');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to manual setup' }));
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+  expect(window.location.search).toContain('mode=api');
+});

@@ -22,8 +22,14 @@ func (h *Handler) WithSessionPorts(settings *sessionports.Settings) *Handler {
 }
 
 func (h *Handler) retrievePortRoute(w http.ResponseWriter, r *http.Request) error {
-	if _, err := requireSessionManager(r); err != nil {
+	principal, err := requireSessionManager(r)
+	if err != nil {
 		return err
+	}
+	if isExternalRuntime(principal) {
+		if !h.checkExternalPortPreview(w, r, principal) {
+			return nil
+		}
 	}
 	if !h.ports.Enabled() {
 		return sessionRouteNotFound()

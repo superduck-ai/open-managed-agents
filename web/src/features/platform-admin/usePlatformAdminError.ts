@@ -34,6 +34,26 @@ export function usePlatformAdminError() {
       'platformAdmin.errors.oauthProviderUnavailable',
       'OAuth client decryption is unavailable. Try again later.',
     ),
+    runtime_profile_version_conflict: msg(
+      'platformAdmin.errors.runtimeProfileVersionConflict',
+      'The runtime profile changed. Close and reopen this form to load the latest version.',
+    ),
+    runtime_profile_name_conflict: msg(
+      'platformAdmin.errors.runtimeProfileNameConflict',
+      'A runtime profile with this name already exists.',
+    ),
+    runtime_profile_in_use: msg(
+      'platformAdmin.errors.runtimeProfileInUse',
+      'This runtime profile is referenced by organizations or workspaces and cannot be deleted.',
+    ),
+    runtime_profile_protected: msg(
+      'platformAdmin.errors.runtimeProfileProtected',
+      'Built-in runtime profiles cannot be disabled or deleted.',
+    ),
+    runtime_profile_unavailable: msg(
+      'platformAdmin.errors.runtimeProfileUnavailable',
+      'Runtime profile service is temporarily unavailable.',
+    ),
     rate_limited: msg('platformAdmin.errors.rateLimited', 'Too many requests. Please try again later.'),
     invalid_request: msg('platformAdmin.errors.invalidRequest', 'Check the form values and try again.'),
     not_found: msg('platformAdmin.errors.notFound', 'The requested resource was not found.'),

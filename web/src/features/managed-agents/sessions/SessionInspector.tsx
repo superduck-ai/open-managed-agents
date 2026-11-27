@@ -88,6 +88,8 @@ import { useSessionFileMetadata, type SessionFileSummary } from './sessionFiles'
 import { useSessionFileDownload } from './useSessionFileDownload';
 import { sessionEventProcessedTimestamp, sessionEventTimestamp } from './sessionTraceModel';
 import { SessionTrajectory } from '../../observability/SessionTrajectory';
+import { useWorkspaceCapabilities } from '../../../shared/workspaces/context';
+import { extractProviderCreditsUsage, type ProviderCreditsUsage } from './sessionProviderUsage';
 
 const SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT = 360;
 const SESSION_INSPECTOR_DETAIL_MIN_HEIGHT = 120;
@@ -155,6 +157,13 @@ export function SessionInspector({
   workspaceId: string;
 }) {
   const { msg } = useI18n();
+  const capabilities = useWorkspaceCapabilities();
+  const visibleTabs = useMemo(
+    () => SESSION_INSPECTOR_TABS.filter((tab) => tab !== 'trajectory' || capabilities.otlp_traces),
+    [capabilities.otlp_traces],
+  );
+  const effectiveActiveTab: SessionInspectorTab =
+    activeTab === 'trajectory' && !capabilities.otlp_traces ? 'session' : activeTab;
   const related = useSessionInspectorEntities(session, workspaceId, refreshKey);
   const agentReference = objectRecord(session.agent);
   const sessionAgentId = typeof agentReference.id === 'string' ? agentReference.id : '';
@@ -208,7 +217,7 @@ export function SessionInspector({
       }}
     >
       <Tabs
-        value={activeTab}
+        value={effectiveActiveTab}
         className="min-h-0 min-w-0 flex-1 gap-0"
         onValueChange={(value) => onActiveTabChange(value as SessionInspectorTab)}
       >
@@ -219,7 +228,7 @@ export function SessionInspector({
             activateOnFocus={false}
             className="scrollbar-none h-8 min-w-0 flex-1 justify-start gap-0.5 overflow-x-auto overflow-y-hidden bg-transparent px-1 py-0"
           >
-            {SESSION_INSPECTOR_TABS.map((tab) => (
+            {visibleTabs.map((tab) => (
               <TabsTrigger
                 key={tab}
                 value={tab}
@@ -232,7 +241,7 @@ export function SessionInspector({
                     return;
                   }
                   event.preventDefault();
-                  if (tab === activeTab) onActiveTabChange(tab);
+                  if (tab === effectiveActiveTab) onActiveTabChange(tab);
                 }}
               >
                 {inspectorTabLabel(tab, msg)}
@@ -318,13 +327,15 @@ export function SessionInspector({
             onSelectLane={onSelectLane}
           />
         </TabsContent>
-        <TabsContent value="trajectory" className="mt-0 min-h-0 min-w-0 overflow-hidden">
-          <SessionTrajectory
-            sessionId={session.id}
-            threadId={activeLane || undefined}
-            laneLabel={showToolScope ? activeToolLane?.label : undefined}
-          />
-        </TabsContent>
+        {capabilities.otlp_traces ? (
+          <TabsContent value="trajectory" className="mt-0 min-h-0 min-w-0 overflow-hidden">
+            <SessionTrajectory
+              sessionId={session.id}
+              threadId={activeLane || undefined}
+              laneLabel={showToolScope ? activeToolLane?.label : undefined}
+            />
+          </TabsContent>
+        ) : null}
       </Tabs>
     </aside>
   );
@@ -357,8 +368,10 @@ function SessionOverviewPanel({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const capabilities = useWorkspaceCapabilities();
   const agentReference = objectRecord(session.agent);
   const agentId = typeof agentReference.id === 'string' ? agentReference.id : '';
+  const creditsUsage = useMemo(() => extractProviderCreditsUsage(session, events), [events, session]);
   const costPoints = useMemo(() => buildInspectorCostPoints(events), [events]);
   const latestCostPoint = costPoints.at(-1);
   const listCost = latestCostPoint
@@ -415,32 +428,79 @@ function SessionOverviewPanel({
         '—'
       ),
     ],
-    [
-      msg('managedAgents.sessions.fields.deployment', 'Deployment'),
-      session.deployment_id ? (
-        <span className="line-clamp-2 font-mono" title={session.deployment_id}>
-          {session.deployment_id}
-        </span>
-      ) : (
-        '—'
-      ),
-    ],
+    ...(capabilities.deployments
+      ? ([
+          [
+            msg('managedAgents.sessions.fields.deployment', 'Deployment'),
+            session.deployment_id ? (
+              <span className="line-clamp-2 font-mono" title={session.deployment_id}>
+                {session.deployment_id}
+              </span>
+            ) : (
+              '—'
+            ),
+          ],
+        ] as Array<[string, React.ReactNode]>)
+      : []),
   ];
   return (
     <div className="px-4 py-3 text-sm leading-5">
       <h2 className="mb-4 text-sm font-semibold">{msg('managedAgents.sessions.inspector.session', 'Session')}</h2>
       <InspectorFacts rows={rows} />
       <Separator className="mt-5 bg-border/60" />
-      <SessionCostSection
-        firstEventAt={events[0] ? sessionEventProcessedTimestamp(events[0]) || sessionEventTimestamp(events[0]) : 0}
-        hoveredEventId={hoveredEventId}
-        listCost={listCost}
-        points={costPoints}
-        selectedEventId={selectedCostEventId}
-        onHoverEvent={onHoverEvent}
-        onSelectEntry={onSelectEntry}
-      />
+      {capabilities.usage_metering === 'provider_credits' ? (
+        <SessionCreditsUsageSection credits={creditsUsage} />
+      ) : (
+        <SessionCostSection
+          firstEventAt={events[0] ? sessionEventProcessedTimestamp(events[0]) || sessionEventTimestamp(events[0]) : 0}
+          hoveredEventId={hoveredEventId}
+          listCost={listCost}
+          points={costPoints}
+          selectedEventId={selectedCostEventId}
+          onHoverEvent={onHoverEvent}
+          onSelectEntry={onSelectEntry}
+        />
+      )}
     </div>
+  );
+}
+
+function SessionCreditsUsageSection({ credits }: { credits: ProviderCreditsUsage | null }) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
+  const formatCredits = (value: number) => formatters.number(value, { maximumFractionDigits: 4 });
+  return (
+    <section
+      aria-label={msg('managedAgents.sessions.inspector.creditsUsage', 'Credits usage')}
+      className="flex flex-col gap-3 pt-4"
+    >
+      <div className="flex items-center justify-between gap-4 font-medium">
+        <span>{msg('managedAgents.sessions.inspector.creditsUsage', 'Credits usage')}</span>
+        <span className="font-mono tabular-nums">{credits ? formatCredits(credits.totalCredits) : '—'}</span>
+      </div>
+      {credits ? (
+        <InspectorFacts
+          rows={[
+            [
+              msg('managedAgents.sessions.inspector.modelCredits', 'Model credits'),
+              <span key="model" className="font-mono tabular-nums">
+                {formatCredits(credits.modelCredits)}
+              </span>,
+            ],
+            [
+              msg('managedAgents.sessions.inspector.sandboxCredits', 'Sandbox credits'),
+              <span key="sandbox" className="font-mono tabular-nums">
+                {formatCredits(credits.sandboxRuntimeCredits)}
+              </span>,
+            ],
+          ]}
+        />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {msg('managedAgents.sessions.inspector.noCreditsTracked', 'No provider credits tracked yet.')}
+        </p>
+      )}
+    </section>
   );
 }
 

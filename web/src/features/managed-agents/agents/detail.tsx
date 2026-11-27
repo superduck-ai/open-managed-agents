@@ -23,7 +23,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
-import { useWorkspace } from '../../../shared/workspaces/context';
+import { useWorkspace, useWorkspaceCapabilities } from '../../../shared/workspaces/context';
+import type { RuntimeCapabilities } from '../../../shared/workspaces/runtime';
 import clsx from 'clsx';
 import {
   AlertCircle,
@@ -113,15 +114,29 @@ import { AgentConfigRenderedEditor } from './create-dialog-rendered';
 import { useAgentEditDraft } from './use-agent-edit-draft';
 import { AgentStartSessionDialog } from './AgentStartSessionDialog';
 
+function allowedAgentDetailTab(tab: AgentDetailTab, capabilities: RuntimeCapabilities): AgentDetailTab {
+  if (tab === 'observability' && !capabilities.otlp_traces) {
+    return 'config';
+  }
+  if (tab === 'deployments' && !capabilities.deployments) {
+    return 'config';
+  }
+  return tab;
+}
+
 export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string; routeWorkspaceId?: string }) {
   const { msg, locale } = useI18n();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const capabilities = useWorkspaceCapabilities();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
   const [agent, setAgent] = useState<AgentApiResponse | null>(null);
   const [configAgent, setConfigAgent] = useState<AgentApiResponse | null>(null);
   const [versions, setVersions] = useState<AgentApiResponse[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(() => agentDetailVersionFromSearch());
-  const [detailTab, setDetailTab] = useState<AgentDetailTab>(() => agentDetailTabFromSearch());
+  const [detailTab, setDetailTab] = useState<AgentDetailTab>(() =>
+    allowedAgentDetailTab(agentDetailTabFromSearch(), capabilities),
+  );
+  const activeDetailTab = allowedAgentDetailTab(detailTab, capabilities);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [configLoadError, setConfigLoadError] = useState<string | null>(null);
@@ -345,10 +360,12 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
                 <Sparkles className="size-4" aria-hidden />
                 {msg('managedAgents.agents.guidedEdit', 'Guided edit')}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={Boolean(agent.archived_at)} onClick={handleCreateDeploymentAction}>
-                <CalendarClock className="size-4" aria-hidden />
-                {msg('managedAgents.deployments.createDeployment', 'Create deployment')}
-              </DropdownMenuItem>
+              {capabilities.deployments ? (
+                <DropdownMenuItem disabled={Boolean(agent.archived_at)} onClick={handleCreateDeploymentAction}>
+                  <CalendarClock className="size-4" aria-hidden />
+                  {msg('managedAgents.deployments.createDeployment', 'Create deployment')}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
@@ -365,88 +382,25 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         </div>
       </header>
 
-      <Tabs value={detailTab} onValueChange={(nextValue) => selectTab(nextValue as AgentDetailTab)} className="gap-0">
-        <TabsList
-          variant="line"
-          aria-label={msg('managedAgents.agents.detail.sections', 'Agent detail sections')}
-          className="mb-6 group-data-[orientation=horizontal]/tabs:h-11 w-full justify-start gap-6 rounded-none border-b-[0.5px] border-border p-0"
-        >
-          <TabsTrigger
-            value="config"
-            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
-          >
-            {msg('managedAgents.common.agent', 'Agent')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="sessions"
-            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
-          >
-            {msg('managedAgents.sessions.title', 'Sessions')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="deployments"
-            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
-          >
-            {msg('managedAgents.deployments.title', 'Deployments')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="observability"
-            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
-          >
-            {msg('managedAgents.observability.title', 'Observability')}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="config" className="mt-0">
-          {detailTab === 'config' ? (
-            configLoadError ? (
-              <AgentDetailErrorAlert
-                title={msg('managedAgents.agents.detail.versionNotFound', 'Agent version not found')}
-                className="max-w-xl"
-              >
-                {configLoadError ||
-                  msg('managedAgents.agents.detail.versionLoadFailed', 'Failed to load agent version')}
-              </AgentDetailErrorAlert>
-            ) : (
-              <AgentConfigTab
-                agent={configAgent ?? agent}
-                orgUuid={orgUuid ?? ''}
-                workspaceId={workspaceId}
-                versions={versions}
-                activeVersion={activeVersion}
-                latestVersion={latestVersion}
-                onSelectVersion={handleSelectVersion}
-              />
-            )
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="sessions" className="mt-0">
-          {detailTab === 'sessions' ? (
-            <AgentSessionsTab agentId={agent.id} workspaceId={workspaceId} versions={versions} />
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="deployments" className="mt-0">
-          {detailTab === 'deployments' ? (
-            <AgentDeploymentsTab
-              agent={agent}
-              workspaceId={workspaceId}
-              createRequest={deploymentCreateRequest}
-              onCreateRequestHandled={() => {
-                setDeploymentCreateRequest(0);
-                writeDetailUrl('deployments', selectedVersion);
-              }}
-            />
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="observability" className="mt-0">
-          {detailTab === 'observability' ? (
-            <ObservabilityPage key={workspaceId} scope={{ kind: 'agent', agentId: agent.id }} />
-          ) : null}
-        </TabsContent>
-      </Tabs>
+      <AgentDetailTabs
+        agent={agent}
+        configAgent={configAgent}
+        configLoadError={configLoadError}
+        orgUuid={orgUuid ?? ''}
+        workspaceId={workspaceId}
+        versions={versions}
+        activeVersion={activeVersion}
+        latestVersion={latestVersion}
+        activeDetailTab={activeDetailTab}
+        capabilities={capabilities}
+        deploymentCreateRequest={deploymentCreateRequest}
+        onSelectTab={(nextTab) => selectTab(allowedAgentDetailTab(nextTab, capabilities))}
+        onSelectVersion={handleSelectVersion}
+        onDeploymentCreateRequestHandled={() => {
+          setDeploymentCreateRequest(0);
+          writeDetailUrl('deployments', selectedVersion);
+        }}
+      />
 
       {editOpen ? (
         <AgentEditDialog
@@ -475,6 +429,123 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
 
 function agentEditSource(configAgent: AgentApiResponse | null, latestAgent: AgentApiResponse) {
   return configAgent ?? latestAgent;
+}
+
+function AgentDetailTabs({
+  agent,
+  configAgent,
+  configLoadError,
+  orgUuid,
+  workspaceId,
+  versions,
+  activeVersion,
+  latestVersion,
+  activeDetailTab,
+  capabilities,
+  deploymentCreateRequest,
+  onSelectTab,
+  onSelectVersion,
+  onDeploymentCreateRequestHandled,
+}: {
+  agent: AgentApiResponse;
+  configAgent: AgentApiResponse | null;
+  configLoadError: string | null;
+  orgUuid: string;
+  workspaceId: string;
+  versions: AgentApiResponse[];
+  activeVersion: number;
+  latestVersion: number;
+  activeDetailTab: AgentDetailTab;
+  capabilities: RuntimeCapabilities;
+  deploymentCreateRequest: number;
+  onSelectTab: (tab: AgentDetailTab) => void;
+  onSelectVersion: (version: number) => void;
+  onDeploymentCreateRequestHandled: () => void;
+}) {
+  const { msg } = useI18n();
+  const triggerClass =
+    'h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]';
+
+  return (
+    <Tabs
+      value={activeDetailTab}
+      onValueChange={(nextValue) => onSelectTab(nextValue as AgentDetailTab)}
+      className="gap-0"
+    >
+      <TabsList
+        variant="line"
+        aria-label={msg('managedAgents.agents.detail.sections', 'Agent detail sections')}
+        className="mb-6 group-data-[orientation=horizontal]/tabs:h-11 w-full justify-start gap-6 rounded-none border-b-[0.5px] border-border p-0"
+      >
+        <TabsTrigger value="config" className={triggerClass}>
+          {msg('managedAgents.common.agent', 'Agent')}
+        </TabsTrigger>
+        <TabsTrigger value="sessions" className={triggerClass}>
+          {msg('managedAgents.sessions.title', 'Sessions')}
+        </TabsTrigger>
+        {capabilities.deployments ? (
+          <TabsTrigger value="deployments" className={triggerClass}>
+            {msg('managedAgents.deployments.title', 'Deployments')}
+          </TabsTrigger>
+        ) : null}
+        {capabilities.otlp_traces ? (
+          <TabsTrigger value="observability" className={triggerClass}>
+            {msg('managedAgents.observability.title', 'Observability')}
+          </TabsTrigger>
+        ) : null}
+      </TabsList>
+
+      <TabsContent value="config" className="mt-0">
+        {activeDetailTab === 'config' ? (
+          configLoadError ? (
+            <AgentDetailErrorAlert
+              title={msg('managedAgents.agents.detail.versionNotFound', 'Agent version not found')}
+              className="max-w-xl"
+            >
+              {configLoadError || msg('managedAgents.agents.detail.versionLoadFailed', 'Failed to load agent version')}
+            </AgentDetailErrorAlert>
+          ) : (
+            <AgentConfigTab
+              agent={configAgent ?? agent}
+              orgUuid={orgUuid}
+              workspaceId={workspaceId}
+              versions={versions}
+              activeVersion={activeVersion}
+              latestVersion={latestVersion}
+              onSelectVersion={onSelectVersion}
+            />
+          )
+        ) : null}
+      </TabsContent>
+
+      <TabsContent value="sessions" className="mt-0">
+        {activeDetailTab === 'sessions' ? (
+          <AgentSessionsTab agentId={agent.id} workspaceId={workspaceId} versions={versions} />
+        ) : null}
+      </TabsContent>
+
+      {capabilities.deployments ? (
+        <TabsContent value="deployments" className="mt-0">
+          {activeDetailTab === 'deployments' ? (
+            <AgentDeploymentsTab
+              agent={agent}
+              workspaceId={workspaceId}
+              createRequest={deploymentCreateRequest}
+              onCreateRequestHandled={onDeploymentCreateRequestHandled}
+            />
+          ) : null}
+        </TabsContent>
+      ) : null}
+
+      {capabilities.otlp_traces ? (
+        <TabsContent value="observability" className="mt-0">
+          {activeDetailTab === 'observability' ? (
+            <ObservabilityPage key={workspaceId} scope={{ kind: 'agent', agentId: agent.id }} />
+          ) : null}
+        </TabsContent>
+      ) : null}
+    </Tabs>
+  );
 }
 
 export function AgentConfigTab({

@@ -137,7 +137,7 @@ test('uses credits budget and hides credential vaults when runtime disables cred
     </QueryClientProvider>,
   );
 
-  expect(screen.getByLabelText(/Budget \(Credits\)/)).toBeTruthy();
+  expect(screen.queryByLabelText(/Budget/)).toBeNull();
   expect(screen.queryByText('Credential vaults')).toBeNull();
 
   const creditEntity = { budget: { type: 'limit', max_credit_cost: '42.50' } };

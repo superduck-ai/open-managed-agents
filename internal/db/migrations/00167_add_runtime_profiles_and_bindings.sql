@@ -63,7 +63,7 @@ CREATE TABLE runtime_resource_bindings (
     runtime_profile_uuid   uuid NOT NULL REFERENCES runtime_profiles(uuid),
     provider_kind          text NOT NULL,
     resource_type          text NOT NULL CHECK (resource_type IN (
-        'agent', 'environment', 'session', 'file', 'skill', 'vault', 'memory_store'
+        'agent', 'environment', 'session', 'file', 'skill', 'vault', 'memory_store', 'deployment', 'deployment_run'
     )),
     oma_external_id        text NOT NULL,
     remote_id              text NOT NULL,

@@ -110,7 +110,7 @@ flowchart TB
 
 ## 3. 数据库 Schema 与状态所有权
 
-### 3.1 确定性内置档案与零回归迁移（Migration `00166`）
+### 3.1 确定性内置档案与零回归迁移（Migration `00167`）
 
 ```sql
 -- 固定常量 UUID，供 organizations/workspaces 列级 DEFAULT 使用，避免击穿存量 INSERT 与集成测试
@@ -183,7 +183,7 @@ CREATE TABLE runtime_resource_bindings (
     runtime_profile_uuid   uuid NOT NULL REFERENCES runtime_profiles(uuid),
     provider_kind          text NOT NULL,
     resource_type          text NOT NULL CHECK (resource_type IN (
-        'agent', 'environment', 'session', 'file', 'skill', 'vault', 'memory_store'
+        'agent', 'environment', 'session', 'file', 'skill', 'vault', 'memory_store', 'deployment', 'deployment_run'
     )),
     oma_external_id        text NOT NULL,
     remote_id              text NOT NULL,
@@ -297,9 +297,9 @@ CREATE INDEX provider_usage_scope_time_idx
 - **Session 资源挂载双向映射（`internal/sessions/runtime_dispatch.go`、`internal/agentruntime/qoder/sessions.go`）**：
   - 创建 Session 与 `AddResource` 时解析 `memory_store_id`，在进入 Qoder 前经 `runtime_resource_bindings` 重写为远端 Store ID；回显 Session Resource 时再反向映射为 OMA 外部 `memory_store_id`。
 - **Deployments 外部运行时适配（路线 A，`internal/deployments/runtime_dispatch.go`、`internal/agentruntime/qoder/deployments.go`）**：
-  - Migration `00167_add_deployment_binding_types.sql` 扩展 `runtime_resource_bindings.resource_type` 支持 `'deployment'` 与 `'deployment_run'`。
+  - Migration `00167_add_runtime_profiles_and_bindings.sql` 在 `runtime_resource_bindings.resource_type` 中直接包含 `'deployment'` 与 `'deployment_run'`。
   - `agentruntime.DeploymentRuntime` 覆盖 Deployment 全生命周期（Create/Get/List/Update/Archive/Pause/Unpause/Run）与 Deployment Runs（Get/List）；`Handler` 与 `RunsHandler` 均在 `oma_native` 保持原路径、在外部运行时按 `runtime_resource_bindings` 强制租户归属隔离并完成 Agent/Environment/File/MemoryStore/Vault ID 双向映射。
-  - `RunDeployment` 与 `ListDeploymentRuns` 幂等认领远端生成的 `drun_...` 与 `session_id` 到当前 Workspace，确保手动运行和 Qoder 定时调度产生的会话可直接被 `/v1/sessions/{id}` 与前端详情页访问；前端 `DeploymentFormFields` 与 `budget.ts` 同步支持 Credits 预算的创建、编辑与回显，并按 `credential_vaults` 能力控制 Vault 选择器展示。
+  - `RunDeployment` 与 `ListDeploymentRuns` 幂等认领远端生成的 `drun_...` 与 `session_id` 到当前 Workspace，确保手动运行和 Qoder 定时调度产生的会话可直接被 `/v1/sessions/{id}` 与前端详情页访问；线上实测确认 Qoder `/deployments` 不接受 `budget` 字段（返回 400 unknown field），因此在 Qoder 适配器中显式拒绝 Deployment `budget`，前端 `DeploymentFormFields` 在 `qoder_cloud` 空间隐藏预算输入，并按 `credential_vaults` 能力控制 Vault 选择器展示。
 - **Skills 外部运行时适配与 Agent Skill ID 双向映射（`internal/skills/runtime_dispatch.go`、`internal/agentruntime/qoder/skills.go`）**：
   - `agentruntime.SkillRuntime` 覆盖 `/v1/skills` 与 `/v1/skills/{id}/versions` 全套 CRUD 以及 Console Skills 目录查询与包校验；上传 Qoder 时将校验后的包解压为相对路径文件并按实测合同以 `files` multipart 字段提交。
   - 自定义 Skill 写入 `runtime_resource_bindings(resource_type = 'skill')` 强制多租户隔离，内置 Skill 只读放行、跨租户自定义 Skill 直接返回 404；`qoder/resources.go` 在 Agent Create/Update/Read 时自动双向翻译 `custom` Skill ID。

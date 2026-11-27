@@ -850,3 +850,441 @@ func TestQoderSharedPoolEndToEndPostgres(t *testing.T) {
 	}
 	outFileID = ""
 }
+
+func (h *qoderE2EHarness) uploadSkill(t *testing.T, workspaceID, path, displayTitle, skillName, skillBody string) (int, []byte) {
+	t.Helper()
+	var mp bytes.Buffer
+	mw := multipart.NewWriter(&mp)
+	if displayTitle != "" {
+		if err := mw.WriteField("display_title", displayTitle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part, err := mw.CreateFormFile("files[]", skillName+"/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(skillBody)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.httpSrv.URL+path, &mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("anthropic-beta", "skills-2025-10-02")
+	req.Header.Set("X-CSRF-Token", h.csrf)
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	req.AddCookie(&http.Cookie{Name: "sessionKey", Value: h.sessionKey})
+	req.AddCookie(&http.Cookie{Name: "lastActiveOrg", Value: h.orgUUID})
+	resp, err := h.httpSrv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, raw
+}
+
+func TestQoderBatchResourcesEndToEndPostgres(t *testing.T) {
+	liveToken := strings.TrimSpace(os.Getenv("QODER_LIVE_TOKEN"))
+	if liveToken == "" {
+		t.Skip("set QODER_LIVE_TOKEN to run batch 1-4 live Qoder E2E against PostgreSQL")
+	}
+	h := newQoderE2EHarness(t)
+
+	st, raw := h.doJSON(t, http.MethodPost, "/api/platform-admin/runtime-profiles", map[string]any{
+		"name":           "Qoder Batch Live E2E",
+		"provider_kind":  "qoder_cloud",
+		"endpoint_url":   "https://api.qoder.com.cn/api/v1/cloud",
+		"isolation_mode": "shared_upstream",
+		"credentials":    map[string]string{"token": liveToken},
+		"status":         "active",
+	}, "")
+	if st != http.StatusCreated {
+		t.Fatalf("create runtime profile status=%d body=%s", st, raw)
+	}
+	var profile struct {
+		UUID string `json:"uuid"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		t.Fatal(err)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPut, "/api/platform-admin/organizations/"+h.orgUUID+"/runtime-policy", map[string]any{
+		"default_runtime_profile_uuid":  db.DefaultOMANativeRuntimeProfileUUID,
+		"allowed_runtime_profile_uuids": []string{db.DefaultOMANativeRuntimeProfileUUID, profile.UUID},
+	}, "")
+	if st != http.StatusOK {
+		t.Fatalf("update org runtime policy status=%d body=%s", st, raw)
+	}
+
+	createWS := func(name string) string {
+		st, raw := h.doJSON(t, http.MethodPost, "/api/console/organizations/"+h.orgUUID+"/workspaces", map[string]any{
+			"name":               name,
+			"runtime_profile_id": profile.ID,
+		}, "")
+		if st != http.StatusCreated && st != http.StatusOK {
+			t.Fatalf("create workspace %s status=%d body=%s", name, st, raw)
+		}
+		var ws struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &ws); err != nil {
+			t.Fatal(err)
+		}
+		return ws.ID
+	}
+
+	wsQ1 := createWS("Qoder Batch 1-4 空间 A")
+	wsQ2 := createWS("Qoder Batch 1-4 空间 B")
+
+	st, raw = h.doJSON(t, http.MethodGet, "/v1/models", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("list models status=%d body=%s", st, raw)
+	}
+	var modelsResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &modelsResp); err != nil || len(modelsResp.Data) == 0 {
+		t.Fatalf("models decode=%v body=%s", err, raw)
+	}
+	modelID := modelsResp.Data[0].ID
+
+	var (
+		storeID      string
+		envID        string
+		agentID      string
+		skillAgentID string
+		depID        string
+		runSessionID string
+		vaultSessID  string
+		skillID      string
+		skillVer     string
+		vaultID      string
+		credID       string
+	)
+	t.Cleanup(func() {
+		cleanup := func(method, path string) {
+			req, _ := http.NewRequestWithContext(context.Background(), method, h.httpSrv.URL+path, nil)
+			req.AddCookie(&http.Cookie{Name: "sessionKey", Value: h.sessionKey})
+			req.AddCookie(&http.Cookie{Name: "lastActiveOrg", Value: h.orgUUID})
+			req.Header.Set("X-CSRF-Token", h.csrf)
+			req.Header.Set("X-Workspace-ID", wsQ1)
+			resp, err := h.httpSrv.Client().Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+		for _, sid := range []string{runSessionID, vaultSessID} {
+			if sid != "" {
+				cleanup(http.MethodPost, "/v1/sessions/"+sid+"/archive?beta=true")
+				cleanup(http.MethodDelete, "/v1/sessions/"+sid+"?beta=true")
+			}
+		}
+		if depID != "" {
+			cleanup(http.MethodPost, "/v1/deployments/"+depID+"/archive?beta=true")
+		}
+		for _, aid := range []string{skillAgentID, agentID} {
+			if aid != "" {
+				cleanup(http.MethodPost, "/v1/agents/"+aid+"/archive?beta=true")
+			}
+		}
+		if skillID != "" {
+			if skillVer != "" {
+				cleanup(http.MethodDelete, "/v1/skills/"+skillID+"/versions/"+skillVer)
+			}
+			cleanup(http.MethodDelete, "/v1/skills/"+skillID)
+		}
+		if vaultID != "" {
+			if credID != "" {
+				cleanup(http.MethodDelete, "/v1/vaults/"+vaultID+"/credentials/"+credID)
+			}
+			cleanup(http.MethodDelete, "/v1/vaults/"+vaultID)
+		}
+		if storeID != "" {
+			cleanup(http.MethodPost, "/v1/memory_stores/"+storeID+"/archive")
+			cleanup(http.MethodDelete, "/v1/memory_stores/"+storeID)
+		}
+		if envID != "" {
+			cleanup(http.MethodDelete, "/v1/environments/"+envID+"?beta=true")
+		}
+	})
+
+	var idObj struct {
+		ID string `json:"id"`
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/memory_stores", map[string]any{
+		"name":        "OMA E2E Memory Store",
+		"description": "Batch 1 live check",
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create memory store status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	storeID = idObj.ID
+
+	if stIDOR, rawIDOR := h.doJSON(t, http.MethodGet, "/v1/memory_stores/"+storeID, nil, wsQ2); stIDOR != http.StatusNotFound {
+		t.Fatalf("memory store IDOR breach status=%d body=%s", stIDOR, rawIDOR)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/memory_stores/"+storeID+"/memories", map[string]any{
+		"path":    "/notes/e2e.md",
+		"content": "OMA_MEMORY_LIVE_OK",
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create memory status=%d body=%s", st, raw)
+	}
+	var memResp struct {
+		ID   string `json:"id"`
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal(raw, &memResp)
+	if memResp.ID == "" || memResp.Path != "/notes/e2e.md" {
+		t.Fatalf("unexpected memory response: %s", raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodGet, "/v1/memory_stores/"+storeID+"/memories?view=full", nil, wsQ1)
+	if st != http.StatusOK || !strings.Contains(string(raw), "OMA_MEMORY_LIVE_OK") {
+		t.Fatalf("list memories view=full status=%d body=%s", st, raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodGet, "/v1/memory_stores/"+storeID+"/memory_versions", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("list memory versions status=%d body=%s", st, raw)
+	}
+	var versResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &versResp); err != nil || len(versResp.Data) == 0 {
+		t.Fatalf("memory versions decode=%v body=%s", err, raw)
+	}
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/memory_stores/"+storeID+"/memory_versions/"+versResp.Data[0].ID+"/redact", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("redact memory version status=%d body=%s", st, raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/environments?beta=true", map[string]any{
+		"name":   "OMA Batch Live Env",
+		"config": map[string]any{"type": "cloud"},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create env status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	envID = idObj.ID
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/agents?beta=true", map[string]any{
+		"name":   "OMA Batch Live Agent",
+		"model":  modelID,
+		"system": "Reply OK immediately.",
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create agent status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	agentID = idObj.ID
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/deployments?beta=true", map[string]any{
+		"agent":          agentID,
+		"environment_id": envID,
+		"name":           "OMA Batch Live Deployment",
+		"initial_events": []map[string]any{{
+			"type":    "user.message",
+			"content": []map[string]any{{"type": "text", "text": "Reply OK"}},
+		}},
+		"resources": []map[string]any{{
+			"type":            "memory_store",
+			"memory_store_id": storeID,
+			"access":          "read_write",
+		}},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create deployment status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	depID = idObj.ID
+
+	if stIDOR, rawIDOR := h.doJSON(t, http.MethodGet, "/v1/deployments/"+depID+"?beta=true", nil, wsQ2); stIDOR != http.StatusNotFound {
+		t.Fatalf("deployment IDOR breach status=%d body=%s", stIDOR, rawIDOR)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/deployments/"+depID+"?beta=true", map[string]any{
+		"name": "OMA Batch Live Deployment Updated",
+	}, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("update deployment status=%d body=%s", st, raw)
+	}
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/deployments/"+depID+"/pause?beta=true", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("pause deployment status=%d body=%s", st, raw)
+	}
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/deployments/"+depID+"/unpause?beta=true", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("unpause deployment status=%d body=%s", st, raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/deployments/"+depID+"/run?beta=true", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("run deployment status=%d body=%s", st, raw)
+	}
+	var runResp struct {
+		ID           string  `json:"id"`
+		DeploymentID string  `json:"deployment_id"`
+		SessionID    *string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &runResp); err != nil || runResp.ID == "" || runResp.DeploymentID != depID || runResp.SessionID == nil || *runResp.SessionID == "" {
+		t.Fatalf("unexpected deployment run response: %s", raw)
+	}
+	runSessionID = *runResp.SessionID
+
+	if stSess, rawSess := h.doJSON(t, http.MethodGet, "/v1/sessions/"+runSessionID+"?beta=true", nil, wsQ1); stSess != http.StatusOK {
+		t.Fatalf("claimed deployment run session inaccessible in owner workspace: status=%d body=%s", stSess, rawSess)
+	}
+	if stIDOR, rawIDOR := h.doJSON(t, http.MethodGet, "/v1/sessions/"+runSessionID+"?beta=true", nil, wsQ2); stIDOR != http.StatusNotFound {
+		t.Fatalf("claimed deployment run session IDOR breach: status=%d body=%s", stIDOR, rawIDOR)
+	}
+	if stRuns, rawRuns := h.doJSON(t, http.MethodGet, "/v1/deployment_runs?beta=true&deployment_id="+depID, nil, wsQ1); stRuns != http.StatusOK || !strings.Contains(string(rawRuns), runResp.ID) {
+		t.Fatalf("list deployment runs status=%d body=%s", stRuns, rawRuns)
+	}
+
+	skillSlug := "oma-live-" + strings.ToLower(strings.ReplaceAll(uuid.NewV4().String(), "-", "")[:8])
+	st, raw = h.uploadSkill(t, wsQ1, "/v1/skills", "OMA Live Skill "+skillSlug, skillSlug, "---\nname: "+skillSlug+"\ndescription: batch 3 live skill\n---\n# Live Skill\n")
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create skill status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	skillID = idObj.ID
+
+	if stIDOR, rawIDOR := h.doJSON(t, http.MethodGet, "/v1/skills/"+skillID, nil, wsQ2); stIDOR != http.StatusNotFound {
+		t.Fatalf("skill IDOR breach status=%d body=%s", stIDOR, rawIDOR)
+	}
+
+	st, raw = h.uploadSkill(t, wsQ1, "/v1/skills/"+skillID+"/versions", "", skillSlug, "---\nname: "+skillSlug+"\ndescription: batch 3 live skill v2\n---\n# Live Skill v2\n")
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create skill version status=%d body=%s", st, raw)
+	}
+	var skVerResp struct {
+		Version string `json:"version"`
+	}
+	_ = json.Unmarshal(raw, &skVerResp)
+	skillVer = skVerResp.Version
+
+	st, raw = h.doJSON(t, http.MethodGet, "/v1/skills/"+skillID+"/versions", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("list skill versions status=%d body=%s", st, raw)
+	}
+	var skVersList struct {
+		Data []struct {
+			ID      string `json:"id"`
+			SkillID string `json:"skill_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &skVersList); err != nil || len(skVersList.Data) < 2 || skVersList.Data[0].SkillID != skillID {
+		t.Fatalf("list skill versions unexpected body=%s", raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/agents?beta=true", map[string]any{
+		"name":  "OMA Skilled Agent",
+		"model": modelID,
+		"skills": []map[string]any{{
+			"type":     "custom",
+			"skill_id": skillID,
+			"version":  "latest",
+		}},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create agent with skill status=%d body=%s", st, raw)
+	}
+	if !strings.Contains(string(raw), skillID) {
+		t.Fatalf("expected agent skills mapped back to oma skill_id %q: %s", skillID, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	skillAgentID = idObj.ID
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/vaults", map[string]any{
+		"display_name": "OMA Batch Live Vault",
+		"metadata":     map[string]string{"env": "e2e"},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create vault status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	vaultID = idObj.ID
+
+	if stIDOR, rawIDOR := h.doJSON(t, http.MethodGet, "/v1/vaults/"+vaultID, nil, wsQ2); stIDOR != http.StatusNotFound {
+		t.Fatalf("vault IDOR breach status=%d body=%s", stIDOR, rawIDOR)
+	}
+	if stUpd, rawUpd := h.doJSON(t, http.MethodPost, "/v1/vaults/"+vaultID, map[string]any{"display_name": "Should 501"}, wsQ1); stUpd != http.StatusNotImplemented || !strings.Contains(string(rawUpd), "feature_not_available") {
+		t.Fatalf("update vault status=%d body=%s, want 501 feature_not_available", stUpd, rawUpd)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/vaults/"+vaultID+"/credentials", map[string]any{
+		"display_name": "E2E Bearer",
+		"metadata":     map[string]string{"owner": "e2e"},
+		"auth": map[string]any{
+			"type":           "static_bearer",
+			"mcp_server_url": "https://mcp.example.com",
+			"token":          "tok_e2e_dummy",
+		},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create credential status=%d body=%s", st, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	credID = idObj.ID
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/vaults/"+vaultID+"/credentials/"+credID, map[string]any{
+		"display_name": "Ignored On Qoder",
+		"metadata":     map[string]string{"owner": "e2e-v2"},
+	}, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("update credential status=%d body=%s", st, raw)
+	}
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/sessions?beta=true", map[string]any{
+		"agent":          agentID,
+		"environment_id": envID,
+		"title":          "OMA Vault Session",
+		"vault_ids":      []string{vaultID},
+	}, wsQ1)
+	if st != http.StatusOK && st != http.StatusCreated {
+		t.Fatalf("create session with vault status=%d body=%s", st, raw)
+	}
+	if !strings.Contains(string(raw), vaultID) {
+		t.Fatalf("expected session vault_ids mapped back to oma vault_id %q: %s", vaultID, raw)
+	}
+	_ = json.Unmarshal(raw, &idObj)
+	vaultSessID = idObj.ID
+
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/vaults/"+vaultID+"/credentials/"+credID+"/archive", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("archive credential status=%d body=%s", st, raw)
+	}
+	st, raw = h.doJSON(t, http.MethodDelete, "/v1/vaults/"+vaultID+"/credentials/"+credID, nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("delete credential status=%d body=%s", st, raw)
+	}
+	credID = ""
+	st, raw = h.doJSON(t, http.MethodPost, "/v1/vaults/"+vaultID+"/archive", nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("archive vault status=%d body=%s", st, raw)
+	}
+	st, raw = h.doJSON(t, http.MethodDelete, "/v1/vaults/"+vaultID, nil, wsQ1)
+	if st != http.StatusOK {
+		t.Fatalf("delete vault status=%d body=%s", st, raw)
+	}
+	vaultID = ""
+}

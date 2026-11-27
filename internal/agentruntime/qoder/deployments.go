@@ -47,7 +47,6 @@ type qoderCreateDeploymentRequest struct {
 	InitialEvents []json.RawMessage                `json:"initial_events,omitempty"`
 	Resources     []json.RawMessage                `json:"resources,omitempty"`
 	VaultIDs      []string                         `json:"vault_ids,omitempty"`
-	Budget        *qoderSessionBudget              `json:"budget,omitempty"`
 	Schedule      *agentruntime.DeploymentSchedule `json:"schedule,omitempty"`
 }
 
@@ -86,9 +85,8 @@ func (r *Runtime) CreateDeployment(ctx context.Context, scope agentruntime.Scope
 	if err != nil {
 		return agentruntime.Deployment{}, err
 	}
-	budget, err := translateSessionBudget(input.Budget)
-	if err != nil {
-		return agentruntime.Deployment{}, err
+	if input.Budget != nil {
+		return agentruntime.Deployment{}, agentruntime.InvalidArgumentError("deployment budget is not supported by qoder runtime", nil)
 	}
 	resources, err := r.translateCreateSessionResources(ctx, scope, input.Resources)
 	if err != nil {
@@ -107,7 +105,6 @@ func (r *Runtime) CreateDeployment(ctx context.Context, scope agentruntime.Scope
 		InitialEvents: input.InitialEvents,
 		Resources:     resources,
 		VaultIDs:      vaultIDs,
-		Budget:        budget,
 		Schedule:      input.Schedule,
 	}
 	var remote qoderDeployment
@@ -243,16 +240,8 @@ func (r *Runtime) UpdateDeployment(ctx context.Context, scope agentruntime.Scope
 		}
 		payload["vault_ids"] = vaultIDs
 	}
-	if input.BudgetSet {
-		if input.Budget == nil {
-			payload["budget"] = nil
-		} else {
-			budget, err := translateSessionBudget(input.Budget)
-			if err != nil {
-				return agentruntime.Deployment{}, err
-			}
-			payload["budget"] = budget
-		}
+	if input.BudgetSet && input.Budget != nil {
+		return agentruntime.Deployment{}, agentruntime.InvalidArgumentError("deployment budget is not supported by qoder runtime", nil)
 	}
 	if input.ScheduleSet {
 		payload["schedule"] = input.Schedule

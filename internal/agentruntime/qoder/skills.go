@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,6 +106,9 @@ func (r *Runtime) GetSkill(ctx context.Context, scope agentruntime.Scope, skillI
 	}
 	if !errors.Is(err, agentruntime.ErrResourceNotFound) {
 		return agentruntime.Skill{}, err
+	}
+	if strings.HasPrefix(skillID, "skill_") {
+		return agentruntime.Skill{}, agentruntime.NotFoundError("skill not found", nil)
 	}
 	var remote qoderSkill
 	if getErr := r.doJSON(ctx, http.MethodGet, "/skills/"+url.PathEscape(skillID), nil, nil, nil, &remote); getErr != nil {
@@ -296,6 +300,9 @@ func (r *Runtime) resolveReadableSkillID(ctx context.Context, scope agentruntime
 	}
 	if !errors.Is(err, agentruntime.ErrResourceNotFound) {
 		return "", "", err
+	}
+	if strings.HasPrefix(skillID, "skill_") {
+		return "", "", agentruntime.NotFoundError("skill not found", nil)
 	}
 	var remote qoderSkill
 	if getErr := r.doJSON(ctx, http.MethodGet, "/skills/"+url.PathEscape(skillID), nil, nil, nil, &remote); getErr != nil {

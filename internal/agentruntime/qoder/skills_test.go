@@ -70,9 +70,9 @@ func TestQoderSkillsLifecycleAgentTranslationAndIDOR(t *testing.T) {
 				"created_at":     now,
 				"updated_at":     now,
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/skills/skill_other_tenant":
+		case r.Method == http.MethodGet && r.URL.Path == "/skills/remote_other_custom":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":             "skill_other_tenant",
+				"id":             "remote_other_custom",
 				"display_title":  "Secret",
 				"latest_version": "v1",
 				"source":         "custom",
@@ -177,7 +177,7 @@ func TestQoderSkillsLifecycleAgentTranslationAndIDOR(t *testing.T) {
 		t.Fatalf("created.ID = %q", created.ID)
 	}
 
-	if _, err := rt.GetSkill(ctx, scopeB, "skill_other_tenant"); !errors.Is(err, agentruntime.ErrResourceNotFound) {
+	if _, err := rt.GetSkill(ctx, scopeB, "remote_other_custom"); !errors.Is(err, agentruntime.ErrResourceNotFound) {
 		t.Fatalf("other tenant custom skill err = %v, want ErrResourceNotFound", err)
 	}
 	hitsBeforeDeleteIDOR := upstreamHits.Load()

@@ -229,7 +229,6 @@ func TestQoderDeploymentLifecycleRunAndIDOR(t *testing.T) {
 				Payload:       json.RawMessage(`{"type":"memory_store","memory_store_id":"memstore_oma_1","access":"read_write"}`),
 			},
 		},
-		Budget: &agentruntime.SessionBudget{Mode: agentruntime.BudgetModeCredits, MaxCreditCost: "50.00"},
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)

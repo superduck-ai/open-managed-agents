@@ -1,7 +1,7 @@
 import { AgentSelectField } from '../agents/AgentSelectField';
 import { type ReactNode } from 'react';
 import { useI18n } from '../../../shared/i18n';
-import { useWorkspaceCapabilities } from '../../../shared/workspaces/context';
+import { useWorkspaceCapabilities, useWorkspaceRuntime } from '../../../shared/workspaces/context';
 import { FieldGroup } from '../../../shared/ui/field';
 import {
   DeploymentTextField,
@@ -47,6 +47,8 @@ export function DeploymentFormFields({
 }) {
   const { msg } = useI18n();
   const capabilities = useWorkspaceCapabilities();
+  const runtime = useWorkspaceRuntime();
+  const showDeploymentBudget = runtime.provider_kind !== 'qoder_cloud';
   return (
     <>
       <DeploymentSection title={msg('managedAgents.deployments.configuration', 'Configuration')}>
@@ -81,7 +83,9 @@ export function DeploymentFormFields({
           manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
           onChange={(environmentId) => onChange({ environmentId })}
         />
-        <BudgetField values={values} mode={capabilities.session_budget} onChange={onChange} />
+        {showDeploymentBudget ? (
+          <BudgetField values={values} mode={capabilities.session_budget} onChange={onChange} />
+        ) : null}
         <DeploymentTextArea
           label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
           value={values.initialMessage}

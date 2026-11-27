@@ -54,6 +54,15 @@ func unavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "渠道服务暂不可用，请稍后重试", cause)
 }
 
+func channelRecordWriteError(cause error) error {
+	if errors.Is(cause, db.ErrChannelAppAlreadyBound) {
+		err := apperr.New(apperr.Conflict, "该应用已绑定到其他渠道，请换一个应用。", cause)
+		err.Code = "channel_app_already_bound"
+		return err
+	}
+	return unavailable(cause)
+}
+
 func unauthenticated() error {
 	return apperr.New(apperr.Unauthenticated, "请先登录", nil)
 }
@@ -111,7 +120,7 @@ func invalidCredentialCheckBody(cause error) error {
 }
 
 func credentialCheckUnavailable(cause error) error {
-	return apperr.New(apperr.Unavailable, "无法连接飞书校验应用密钥", cause)
+	return apperr.New(apperr.Unavailable, "暂时无法验证应用凭据，请稍后重试。", cause)
 }
 
 func invalidMemoryMount(cause error) error {

@@ -272,7 +272,7 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		return nil, agentNotFound()
 	}
 	if err != nil {
-		return nil, unavailable(err)
+		return nil, channelRecordWriteError(err)
 	}
 	s.reconcile(ctx, created)
 	return s.view(ctx, created)
@@ -345,7 +345,7 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		return nil, channelNotFound()
 	}
 	if err != nil {
-		return nil, unavailable(err)
+		return nil, channelRecordWriteError(err)
 	}
 	s.reconcile(ctx, updated)
 	return s.view(ctx, updated)

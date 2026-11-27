@@ -93,7 +93,7 @@ export function ChannelSessionsPanel({
               <TableHead>{msg('managedAgents.channels.sessionStatus', '状态')}</TableHead>
               <TableHead>{msg('managedAgents.channels.agentVersion', '智能体版本')}</TableHead>
               <TableHead>{msg('managedAgents.channels.sessionSource', '会话来源')}</TableHead>
-              <TableHead>{msg('managedAgents.channels.sourceUser', '来源用户 / 飞书 Open ID')}</TableHead>
+              <TableHead>{msg('managedAgents.channels.sourceUser', '来源用户')}</TableHead>
               <TableHead>{msg('managedAgents.channels.createdAt', '创建时间')}</TableHead>
               <TableHead>{msg('managedAgents.channels.updatedAt', '更新时间')}</TableHead>
               <TableHead>{msg('managedAgents.channels.columnActions', '操作')}</TableHead>

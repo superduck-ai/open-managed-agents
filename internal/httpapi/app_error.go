@@ -45,7 +45,9 @@ func (a *ErrorAdapter) Write(w http.ResponseWriter, r *http.Request, err error) 
 	if mapping.status >= http.StatusInternalServerError {
 		a.log(r, mapping.kind, err)
 	}
-	WriteError(w, r, NewError(mapping.status, mapping.errorType, appErr.PublicMessage))
+	response := NewError(mapping.status, mapping.errorType, appErr.PublicMessage)
+	response.Code = appErr.Code
+	WriteError(w, r, response)
 }
 
 func (a *ErrorAdapter) log(r *http.Request, kind string, err error) {

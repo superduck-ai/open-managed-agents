@@ -16,6 +16,8 @@ var ErrChannelCredentialInactive = errors.New("channel workspace credential is i
 
 var ErrChannelCredentialUnreadable = errors.New("channel workspace credential cannot be decrypted")
 
+var ErrChannelAppAlreadyBound = errors.New("渠道应用已绑定")
+
 var ErrToolCallConflict = errors.New("tool call conflicts with persisted state")
 
 var ErrToolCallSandboxPreparing = errors.New("tool call sandbox is still being prepared")

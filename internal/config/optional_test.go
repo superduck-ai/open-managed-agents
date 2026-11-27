@@ -18,11 +18,11 @@ func TestReadOptionalConfigAtDefaultLocation(t *testing.T) {
 	if optional, err := cfg.ReadOptionalConfig(); err != nil || len(optional.Pricing.ResponseCosts) != 0 {
 		t.Fatalf("默认文件缺失时应使用空配置：%+v, %v", optional, err)
 	}
-	runtimeDir := filepath.Join(filepath.Dir(mainPath), "runtime")
-	if err := os.Mkdir(runtimeDir, 0700); err != nil {
+	optionalDir := filepath.Join(filepath.Dir(mainPath), "optional")
+	if err := os.Mkdir(optionalDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	writeConfigTestContents(t, filepath.Join(runtimeDir, "optional.yaml"), `pricing:
+	writeConfigTestContents(t, filepath.Join(optionalDir, "optional.yaml"), `pricing:
   response_costs:
     example:
       currency: CNY
@@ -40,7 +40,7 @@ func TestReadOptionalConfigAtDefaultLocation(t *testing.T) {
 	if cost := rule.ExtractFor("messages", false, []byte(`{"receipt":{"amount":"7.2"}}`)); cost == nil || cost.USDCents != 100 {
 		t.Fatalf("默认文件中的规则未加载：%+v", cost)
 	}
-	cfg.OptionalConfigFile = filepath.Join(runtimeDir, "override.yaml")
+	cfg.OptionalConfigFile = filepath.Join(optionalDir, "override.yaml")
 	if optional, err := cfg.ReadOptionalConfig(); !errors.Is(err, os.ErrNotExist) || len(optional.Pricing.ResponseCosts) != 0 {
 		t.Fatalf("显式路径应优先，缺失时返回读取错误：%+v, %v", optional, err)
 	}

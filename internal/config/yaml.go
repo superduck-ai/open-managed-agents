@@ -94,7 +94,7 @@ func loadYAMLConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	cfg := input.resolve()
-	cfg.defaultOptionalConfigFile = filepath.Join(configFileDirectory(path), "runtime", "optional.yaml")
+	cfg.defaultOptionalConfigFile = filepath.Join(configFileDirectory(path), "optional", "optional.yaml")
 	return cfg, nil
 }
 

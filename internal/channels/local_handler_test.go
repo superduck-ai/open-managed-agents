@@ -162,7 +162,7 @@ func TestChannelSaveReportsAppAlreadyBound(t *testing.T) {
 			if response.Code != http.StatusConflict ||
 				!strings.Contains(response.Body.String(), `"type":"conflict_error"`) ||
 				!strings.Contains(response.Body.String(), `"code":"channel_app_already_bound"`) ||
-				!strings.Contains(response.Body.String(), "飞书 App ID 已绑定到其他渠道，请使用未绑定的飞书应用。") {
+				!strings.Contains(response.Body.String(), "该应用已绑定到其他渠道，请换一个应用。") {
 				t.Fatalf("渠道保存应返回应用绑定冲突，status=%d body=%s", response.Code, response.Body.String())
 			}
 		})

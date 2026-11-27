@@ -236,7 +236,7 @@ export function ChannelWizardFormPage({
         toRecord(err)?.code === 'channel_app_already_bound'
           ? msg(
               'managedAgents.channels.appAlreadyBound',
-              'This Feishu App ID is already bound to another channel. Use an unused Feishu app.',
+              'This app is already bound to another channel. Use a different app.',
             )
           : errorMessage(err),
       );

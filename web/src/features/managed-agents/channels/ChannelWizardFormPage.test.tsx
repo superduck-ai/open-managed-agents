@@ -592,12 +592,12 @@ test.each([
   {
     locale: 'zh-CN',
     saveLabel: '保存配置',
-    expected: '飞书 App ID 已绑定到其他渠道，请使用未绑定的飞书应用。',
+    expected: '该应用已绑定到其他渠道，请换一个应用。',
   },
   {
     locale: 'en',
     saveLabel: 'Save configuration',
-    expected: 'This Feishu App ID is already bound to another channel. Use an unused Feishu app.',
+    expected: 'This app is already bound to another channel. Use a different app.',
   },
 ] as const)('渠道绑定冲突使用界面语言 $locale', async ({ locale, saveLabel, expected }) => {
   resetTestDom('/');

@@ -16,6 +16,10 @@ import (
 func TestCheckAppCredentials(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "unavailable-secret") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		if strings.Contains(string(body), "bad-secret") {
 			_, _ = w.Write([]byte(`{"code":10014,"msg":"app secret invalid"}`))
 			return
@@ -32,6 +36,10 @@ func TestCheckAppCredentials(t *testing.T) {
 	service.client = upstream.Client()
 	router.Mount("/channels", newLocalHandler(service, nil).workspaceRouter())
 
+	unavailable := credentialCheckRequest(t, router, `{"app_id":"cli_aa6c7433e1b8dbf1","app_secret":"unavailable-secret"}`, true)
+	if unavailable.Code != http.StatusServiceUnavailable || !strings.Contains(unavailable.Body.String(), "暂时无法验证应用凭据，请稍后重试。") {
+		t.Fatalf("凭据验证服务不可用：%d %s", unavailable.Code, unavailable.Body.String())
+	}
 	ok := credentialCheckRequest(t, router, `{"app_id":"cli_aa6c7433e1b8dbf1","app_secret":"good-secret"}`, true)
 	if ok.Code != http.StatusOK || strings.Contains(ok.Body.String(), "tenant_access_token") || strings.Contains(ok.Body.String(), "good-secret") {
 		t.Fatalf("body = %s", ok.Body.String())

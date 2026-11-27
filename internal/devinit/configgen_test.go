@@ -57,7 +57,7 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	if err := os.WriteFile(presetPath, []byte(`{"version":1,"providers":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	contents += "\nllm_provider_presets_file: ./providers.json\n"
+	contents += "\nllm_provider_presets_file: ./providers.json\noptional_config_file: ./optional.yaml\n"
 	if err := os.WriteFile(baseConfigPath, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +119,9 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("generated config must load: %v\n%s", err, generated)
+	}
+	if cfg.OptionalConfigFile != filepath.Join(configDir, "optional.yaml") {
+		t.Errorf("OptionalConfigFile = %q", cfg.OptionalConfigFile)
 	}
 	for name, path := range map[string]string{"brain-claim-token": cfg.CodeSession.BrainClaimTokenFile, "code-session-jwt-ed25519.pem": cfg.CodeSession.JWTSigningPrivateKeyFile, "upstream-proxy-ca-key.pem": cfg.CodeSession.UpstreamProxyCAKeyFile} {
 		if path != filepath.Join(layout.SecretsDir, name) {

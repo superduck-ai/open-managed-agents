@@ -38,6 +38,7 @@ type yamlConfig struct {
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
+	OptionalConfigFile     string                     `yaml:"optional_config_file"`
 	WebTools               WebToolsConfig             `yaml:"web_tools"`
 	EnvironmentPackages    EnvironmentPackageConfig   `yaml:"environment_packages"`
 	EnvironmentPrebuilds   EnvironmentPrebuildConfig  `yaml:"environment_prebuilds"`
@@ -217,6 +218,7 @@ func (input yamlConfig) resolve() Config {
 	cfg := Config{
 		ChannelBridge:          input.ChannelBridge,
 		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
+		OptionalConfigFile:     input.OptionalConfigFile,
 		Env:                    input.Env,
 		Server:                 input.Server,
 		Database:               DatabaseConfig{URL: input.Database.URL},

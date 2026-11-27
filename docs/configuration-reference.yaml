@@ -1,4 +1,6 @@
 llm_provider_presets_file: ""
+# 可选运行配置文件。相对路径以主配置所在目录为基准。文件缺失或无效时记录警告并继续启动。
+optional_config_file: ""
 
 # Open Managed Agents complete process-configuration reference.
 #
@@ -21,8 +23,6 @@ database:
   auto_migrate: true
 
 pricing:
-  # 按供应商 slug 配置 Messages、Chat Completions 和 Responses 的实际费用提取规则。
-  response_costs: {}
   # Relative paths resolve from the config file directory. The process user must be able
   # to create and atomically replace this file; otherwise prices are never published and
   # budgeted model requests fail with 503 model_price_unavailable.

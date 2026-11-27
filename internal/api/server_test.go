@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 
 	"testing"
 
@@ -51,6 +53,66 @@ func TestNewServerUsesDefaultLoggerForHTTPAccess(t *testing.T) {
 	}
 	if entries[1]["component"] != "http" || entries[1]["msg"] != "http response" {
 		t.Fatalf("unexpected response access log: %#v", entries[1])
+	}
+}
+
+func TestNewServerLoadsOptionalPricingConfig(t *testing.T) {
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		content string
+		missing bool
+		warn    bool
+		cost    bool
+	}{
+		{name: "未配置"},
+		{name: "文件缺失", missing: true, warn: true},
+		{name: "未知配置", content: "database: {}\n", warn: true},
+		{name: "规则无效", content: "pricing:\n  response_costs:\n    example: {}\n", warn: true},
+		{name: "规则生效", cost: true, content: `pricing:
+  response_costs:
+    example:
+      currency: CNY
+      exchange_rate: "7.2"
+      protocols:
+        messages:
+          non_streaming:
+            amount_pointer: /receipt/amount
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var path string
+			if tc.missing || tc.content != "" {
+				path = filepath.Join(t.TempDir(), "optional.yaml")
+			}
+			if tc.content != "" {
+				if err := os.WriteFile(path, []byte(tc.content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var logs bytes.Buffer
+			server := NewServer(ServerDeps{
+				Config:                 config.Config{OptionalConfigFile: path},
+				Logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
+				CodeSessionCredentials: credentials,
+				FilestoreCredentials:   filestoreCredentials,
+			})
+			rule := server.billing.ResponseCost("example/model")
+			cost := rule.ExtractFor("messages", false, []byte(`{"receipt":{"amount":"7.2"}}`))
+			if (cost != nil) != tc.cost || cost != nil && cost.USDCents != 100 {
+				t.Fatalf("费用提取结果不符：%+v", cost)
+			}
+			if bytes.Contains(logs.Bytes(), []byte("可选配置未加载")) != tc.warn {
+				t.Fatalf("可选配置警告不符：%s", logs.String())
+			}
+		})
 	}
 }
 

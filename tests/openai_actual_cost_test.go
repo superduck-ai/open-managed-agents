@@ -8,12 +8,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestOpenAIActualCostHTTPAndSessionLedger(t *testing.T) {
@@ -46,11 +49,20 @@ func TestOpenAIActualCostHTTPAndSessionLedger(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			defer upstream.Close()
+			rules := map[string]billing.ResponseCostRule{"default": {Protocols: map[string]billing.ResponseCostProtocol{
+				"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
+				"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
+			}, Currency: "CNY", ExchangeRate: "7.2"}}
+			data, err := yaml.Marshal(config.OptionalConfig{Pricing: config.OptionalPricingConfig{ResponseCosts: rules}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "optional.yaml")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
 			app := newPayloadIntegrationAppWithConfig(t, newFakeStore("openai-cost"), func(c *config.Config) {
-				c.Pricing.ResponseCosts = map[string]billing.ResponseCostRule{"default": {Protocols: map[string]billing.ResponseCostProtocol{
-					"chat_completions": {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}},
-					"responses":        {NonStreaming: &billing.ResponseCostLocation{AmountPointer: "/gateway/amount"}, Streaming: &billing.ResponseCostLocation{AmountPointer: "/response/gateway/amount", EventPointer: "/type", Events: []string{"response.completed", "response.incomplete", "response.failed", "error"}}},
-				}, Currency: "CNY", ExchangeRate: "7.2"}}
+				c.OptionalConfigFile = path
 			})
 			clearTestLLMProviders(t, app)
 			provider := seedTestLLMProvider(t, app, "OpenAI cost", upstream.URL, "server-key", "openai-model")

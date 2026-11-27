@@ -572,3 +572,53 @@ type ListDeploymentRunsQuery struct {
 	Limit        int
 	Offset       int
 }
+
+type SkillFile struct {
+	Path string
+	Data []byte
+}
+
+type Skill struct {
+	ID            string
+	DisplayTitle  string
+	Description   string
+	IconKey       string
+	LatestVersion string
+	Source        string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type SkillVersion struct {
+	ID          string
+	SkillID     string
+	Version     string
+	Name        string
+	Description string
+	Directory   string
+	CreatedAt   time.Time
+}
+
+type CreateSkillInput struct {
+	DisplayTitle string
+	IconKey      string
+	Description  string
+	Files        []SkillFile
+}
+
+type CreateSkillVersionInput struct {
+	IconKey     string
+	Description string
+	Files       []SkillFile
+}
+
+type ListSkillsQuery struct {
+	Source string
+	Limit  int
+	Offset int
+}
+
+type ListSkillVersionsQuery struct {
+	Limit  int
+	Offset int
+}

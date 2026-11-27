@@ -191,6 +191,10 @@ func (r *Runtime) CreateAgent(ctx context.Context, scope agentruntime.Scope, inp
 	if err != nil {
 		return agentruntime.Agent{}, err
 	}
+	translatedSkills, err := r.translateAgentSkillsToQoder(ctx, scope, input.Skills)
+	if err != nil {
+		return agentruntime.Agent{}, err
+	}
 	reqBody := qoderCreateAgentRequest{
 		Name:        input.Name,
 		Description: input.Description,
@@ -198,7 +202,7 @@ func (r *Runtime) CreateAgent(ctx context.Context, scope agentruntime.Scope, inp
 		System:      input.System,
 		Tools:       translatedTools,
 		MCPServers:  input.MCPServers,
-		Skills:      input.Skills,
+		Skills:      translatedSkills,
 		Metadata:    injectWatermark(input.Metadata, scope),
 	}
 	var remote qoderAgent
@@ -222,7 +226,7 @@ func (r *Runtime) CreateAgent(ctx context.Context, scope agentruntime.Scope, inp
 	}, summary); err != nil {
 		return agentruntime.Agent{}, err
 	}
-	return mapQoderAgent(omaID, remote)
+	return r.mapQoderAgent(ctx, scope, omaID, remote)
 }
 
 func (r *Runtime) GetAgent(ctx context.Context, scope agentruntime.Scope, agentID string) (agentruntime.Agent, error) {
@@ -234,7 +238,7 @@ func (r *Runtime) GetAgent(ctx context.Context, scope agentruntime.Scope, agentI
 	if err := r.doJSON(ctx, http.MethodGet, "/agents/"+url.PathEscape(binding.RemoteID), nil, nil, nil, &remote); err != nil {
 		return agentruntime.Agent{}, err
 	}
-	return mapQoderAgent(binding.OMAExternalID, remote)
+	return r.mapQoderAgent(ctx, scope, binding.OMAExternalID, remote)
 }
 
 func (r *Runtime) GetAgentVersion(ctx context.Context, scope agentruntime.Scope, agentID string, version int64) (agentruntime.Agent, error) {
@@ -248,7 +252,7 @@ func (r *Runtime) GetAgentVersion(ctx context.Context, scope agentruntime.Scope,
 	if err := r.doJSON(ctx, http.MethodGet, "/agents/"+url.PathEscape(binding.RemoteID), params, nil, nil, &remote); err != nil {
 		return agentruntime.Agent{}, err
 	}
-	return mapQoderAgent(binding.OMAExternalID, remote)
+	return r.mapQoderAgent(ctx, scope, binding.OMAExternalID, remote)
 }
 
 type qoderAgentVersionsPage struct {
@@ -275,7 +279,7 @@ func (r *Runtime) ListAgentVersions(ctx context.Context, scope agentruntime.Scop
 	}
 	items := make([]agentruntime.Agent, 0, len(remotePage.Data))
 	for _, entry := range remotePage.Data {
-		mapped, err := mapQoderAgent(binding.OMAExternalID, entry)
+		mapped, err := r.mapQoderAgent(ctx, scope, binding.OMAExternalID, entry)
 		if err != nil {
 			return agentruntime.Page[agentruntime.Agent]{}, err
 		}
@@ -299,7 +303,7 @@ func (r *Runtime) ListAgents(ctx context.Context, scope agentruntime.Scope, quer
 	if err != nil {
 		return agentruntime.Page[agentruntime.Agent]{}, err
 	}
-	return r.hydrateAgentPage(ctx, rows, limit), nil
+	return r.hydrateAgentPage(ctx, scope, rows, limit), nil
 }
 
 func (r *Runtime) SearchAgents(ctx context.Context, scope agentruntime.Scope, query agentruntime.SearchAgentsQuery) (agentruntime.Page[agentruntime.Agent], error) {
@@ -309,10 +313,10 @@ func (r *Runtime) SearchAgents(ctx context.Context, scope agentruntime.Scope, qu
 	if err != nil {
 		return agentruntime.Page[agentruntime.Agent]{}, err
 	}
-	return r.hydrateAgentPage(ctx, rows, limit), nil
+	return r.hydrateAgentPage(ctx, scope, rows, limit), nil
 }
 
-func (r *Runtime) hydrateAgentPage(ctx context.Context, rows []db.RuntimeResourceBinding, limit int) agentruntime.Page[agentruntime.Agent] {
+func (r *Runtime) hydrateAgentPage(ctx context.Context, scope agentruntime.Scope, rows []db.RuntimeResourceBinding, limit int) agentruntime.Page[agentruntime.Agent] {
 	hasMore := len(rows) > limit
 	if hasMore {
 		rows = rows[:limit]
@@ -325,7 +329,7 @@ func (r *Runtime) hydrateAgentPage(ctx context.Context, rows []db.RuntimeResourc
 			items = append(items, agentFromBindingSummary(row))
 			continue
 		}
-		mapped, err := mapQoderAgent(row.OMAExternalID, remote)
+		mapped, err := r.mapQoderAgent(ctx, scope, row.OMAExternalID, remote)
 		if err != nil {
 			items = append(items, agentFromBindingSummary(row))
 			continue
@@ -348,6 +352,10 @@ func (r *Runtime) UpdateAgent(ctx context.Context, scope agentruntime.Scope, age
 	if err != nil {
 		return agentruntime.Agent{}, err
 	}
+	translatedSkills, err := r.translateAgentSkillsToQoder(ctx, scope, input.Skills)
+	if err != nil {
+		return agentruntime.Agent{}, err
+	}
 	reqBody := qoderUpdateAgentRequest{
 		Version:     input.Version,
 		Name:        input.Name,
@@ -355,7 +363,7 @@ func (r *Runtime) UpdateAgent(ctx context.Context, scope agentruntime.Scope, age
 		Model:       input.Model,
 		System:      input.System,
 		MCPServers:  input.MCPServers,
-		Skills:      input.Skills,
+		Skills:      translatedSkills,
 	}
 	if len(bytes.TrimSpace(input.Tools)) > 0 {
 		translated, err := TranslateToolsToQoder(input.Tools)
@@ -380,7 +388,7 @@ func (r *Runtime) UpdateAgent(ctx context.Context, scope agentruntime.Scope, age
 	if _, err := r.bindings.UpdateSummary(ctx, scope, agentruntime.ResourceTypeAgent, binding.OMAExternalID, "", summary); err != nil {
 		r.logger.WarnContext(ctx, "failed to refresh agent binding summary", "oma_id", binding.OMAExternalID, "error", err)
 	}
-	return mapQoderAgent(binding.OMAExternalID, remote)
+	return r.mapQoderAgent(ctx, scope, binding.OMAExternalID, remote)
 }
 
 func (r *Runtime) ArchiveAgent(ctx context.Context, scope agentruntime.Scope, agentID string) (agentruntime.Agent, error) {
@@ -401,10 +409,10 @@ func (r *Runtime) ArchiveAgent(ctx context.Context, scope agentruntime.Scope, ag
 	if _, err := r.bindings.UpdateSummary(ctx, scope, agentruntime.ResourceTypeAgent, binding.OMAExternalID, "archived", summary); err != nil {
 		return agentruntime.Agent{}, err
 	}
-	return mapQoderAgent(binding.OMAExternalID, remote)
+	return r.mapQoderAgent(ctx, scope, binding.OMAExternalID, remote)
 }
 
-func mapQoderAgent(omaID string, remote qoderAgent) (agentruntime.Agent, error) {
+func (r *Runtime) mapQoderAgent(ctx context.Context, scope agentruntime.Scope, omaID string, remote qoderAgent) (agentruntime.Agent, error) {
 	tools, err := TranslateToolsFromQoder(remote.Tools)
 	if err != nil {
 		return agentruntime.Agent{}, err
@@ -418,7 +426,7 @@ func mapQoderAgent(omaID string, remote qoderAgent) (agentruntime.Agent, error) 
 		System:      remote.System,
 		Tools:       tools,
 		MCPServers:  remote.MCPServers,
-		Skills:      remote.Skills,
+		Skills:      r.translateAgentSkillsFromQoder(ctx, scope, remote.Skills),
 		Metadata:    stripWatermark(remote.Metadata),
 		ArchivedAt:  remote.ArchivedAt,
 		CreatedAt:   remote.CreatedAt,

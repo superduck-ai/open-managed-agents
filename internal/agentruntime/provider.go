@@ -116,3 +116,14 @@ type DeploymentRuntime interface {
 	GetDeploymentRun(ctx context.Context, scope Scope, runID string) (DeploymentRun, error)
 	ListDeploymentRuns(ctx context.Context, scope Scope, query ListDeploymentRunsQuery) (Page[DeploymentRun], error)
 }
+
+type SkillRuntime interface {
+	CreateSkill(ctx context.Context, scope Scope, input CreateSkillInput) (Skill, error)
+	GetSkill(ctx context.Context, scope Scope, skillID string) (Skill, error)
+	ListSkills(ctx context.Context, scope Scope, query ListSkillsQuery) (Page[Skill], error)
+	DeleteSkill(ctx context.Context, scope Scope, skillID string) error
+	CreateSkillVersion(ctx context.Context, scope Scope, skillID string, input CreateSkillVersionInput) (SkillVersion, error)
+	ListSkillVersions(ctx context.Context, scope Scope, skillID string, query ListSkillVersionsQuery) (Page[SkillVersion], error)
+	GetSkillVersion(ctx context.Context, scope Scope, skillID string, version string) (SkillVersion, error)
+	DeleteSkillVersion(ctx context.Context, scope Scope, skillID string, version string) error
+}

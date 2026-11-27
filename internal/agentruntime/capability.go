@@ -103,7 +103,7 @@ func DefaultCapabilities(kind ProviderKind) CapabilitySet {
 			SessionAgentOverrides:  false,
 			Channels:               false,
 			Evaluations:            false,
-			Skills:                 false,
+			Skills:                 true,
 			MemoryStores:           true,
 			CredentialVaults:       false,
 			MCPServers:             false,

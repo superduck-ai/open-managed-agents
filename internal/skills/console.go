@@ -128,6 +128,9 @@ func (h *Handler) consoleCatalog(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
+	if isExternalRuntime(principal) {
+		return h.consoleCatalogExternal(w, r, principal, limit, offset)
+	}
 	query := db.SkillCatalogQuery{WorkspaceUUID: principal.WorkspaceUUID, Query: strings.TrimSpace(r.URL.Query().Get("query")), Source: r.URL.Query().Get("source"), Sort: r.URL.Query().Get("sort"), Limit: limit, Offset: offset}
 	if len(query.Query) > 256 || (query.Source != "" && query.Source != "custom" && query.Source != "anthropic") || (query.Sort != "" && query.Sort != "name" && query.Sort != "updated") {
 		return errInvalidSkillFilter
@@ -178,6 +181,9 @@ func (h *Handler) inspectConsolePackage(w http.ResponseWriter, r *http.Request) 
 	target := r.FormValue("skill_id")
 	if target != "" {
 		principal, _ := auth.PrincipalFromContext(r.Context())
+		if isExternalRuntime(principal) {
+			return h.inspectConsolePackageExternal(w, r, principal, target, pkg, preview)
+		}
 		skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, target)
 		if err != nil {
 			return err

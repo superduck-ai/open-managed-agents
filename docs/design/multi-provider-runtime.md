@@ -61,7 +61,7 @@ flowchart TB
     end
 
     subgraph ControlPlane["2. 控制面与资源外观层"]
-        Resources["资源外观 (sessions / agents / environments / files / models / memory / deployments)"]
+        Resources["资源外观 (sessions / agents / environments / files / models / memory / deployments / skills)"]
         Admin["平台超管与组织白名单 (platformadmin / platformapi / admin)"]
         NativeFast["oma_native 原生路径 (各资源包既有本地实现，零搬迁)"]
     end
@@ -102,7 +102,7 @@ flowchart TB
 ### 包边界与依赖不变量
 
 - `internal/agentruntime` 仅依赖标准库及基础包（`apperr`、`auth`、`db`、`ids`、`logging`、`secrets`），不导入 `internal/api`、`internal/httpapi` 或任何资源 Handler 包。
-- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models`、`internal/memory`、`internal/deployments` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`（其中 `internal/memory` 委托 `MemoryRuntime`，`internal/deployments` 委托 `DeploymentRuntime`）。
+- `internal/sessions`、`internal/agents`、`internal/environments`、`internal/files`、`internal/models`、`internal/memory`、`internal/deployments`、`internal/skills` 依赖 `internal/agentruntime`；当 `principal.RuntimeProvider == ProviderOMANative` 时直接执行既有原生路径，否则通过 `Resolver` 委托外部 `Runtime`（其中 `internal/memory` 委托 `MemoryRuntime`，`internal/deployments` 委托 `DeploymentRuntime`，`internal/skills` 委托 `SkillRuntime`）。
 - `internal/agentruntime/qoder` 依赖 `internal/agentruntime`，仅在 `internal/api/server.go` 启动组装阶段注册进 `Registry`。
 - `internal/db` 不导入 `internal/agentruntime`、`internal/api` 或任何业务包，所有新增表严格遵循 Yourbatis 三文件拆分（`xxx.go` / `xxx_mapper.go` / `xxx_mapper.xml`），UUID 参数直接以 `string` 绑定。
 
@@ -247,7 +247,8 @@ CREATE INDEX provider_usage_scope_time_idx
 | `session_budget` / `session_agent_overrides` | `usd` / `true` | `credits` / `false` | `budget` 升级为 `BudgetMode`（OMA 用 USD，Qoder 原生支持 `max_credit_cost`）；`agent_with_overrides` 实测 400 拒绝，入口拦截 |
 | `channels` / `evaluations` | `true` | `false`（首期关闭，PR-5/PR-6 解耦后开启） | 避免首期在 Qoder 空间误操作未解耦的原生 Channel 与 Evaluation 表 |
 | `memory_stores` | `true` | `true` | 接入 Qoder Memory Stores API（Store / Memory / Version 全量接口与 Session `memory_store` 挂载），以 `runtime_resource_bindings` 做多租户防 IDOR 隔离 |
-| `skills` / `credential_vaults` / `mcp_servers` | `true` | `false`（首期关闭） | 首期 Qoder 空间聚焦核心 Models/Agents/Environments/Files/Memory Stores/Sessions，导航、路由守卫、全局搜索、Builder 与后端路由同步裁减 |
+| `skills` | `true` | `true` | 接入 Qoder `/skills` 与 `/skills/{id}/versions`（multipart 文件字段名 `files`），以 `runtime_resource_bindings(skill)` 隔离并双向映射 Agent `skills` 引用 |
+| `credential_vaults` / `mcp_servers` | `true` | `false`（首期关闭） | 导航、路由守卫、全局搜索、Builder 与后端路由同步裁减 |
 | `usage_metering` | `token_and_cost` | `provider_credits` | 正交双口径账本；Qoder 实测支持 `model_credits`、`sandbox_runtime_credits`、`total_credits` 与 `session.usage` 事件 |
 | `artifact_discovery` | `filesystem_outputs_dir` | `explicit_deliver_tool` | 原生路径为 `sandboxmount.SandboxOutputsMount`（`/mnt/user-data/outputs`）；Qoder 实测为 `/data/...` |
 | `file_constraints` | 不限 MIME | 默认 5MB、文本+图片（可由 Profile 配置覆写） | 文档写仅文本，但 2026-11-25 线上实测 `image/png` 返回 200；配置化避免误杀飞书发截图 |
@@ -298,6 +299,9 @@ CREATE INDEX provider_usage_scope_time_idx
   - Migration `00167_add_deployment_binding_types.sql` 扩展 `runtime_resource_bindings.resource_type` 支持 `'deployment'` 与 `'deployment_run'`。
   - `agentruntime.DeploymentRuntime` 覆盖 Deployment 全生命周期（Create/Get/List/Update/Archive/Pause/Unpause/Run）与 Deployment Runs（Get/List）；`Handler` 与 `RunsHandler` 均在 `oma_native` 保持原路径、在外部运行时按 `runtime_resource_bindings` 强制租户归属隔离并完成 Agent/Environment/File/MemoryStore/Vault ID 双向映射。
   - `RunDeployment` 与 `ListDeploymentRuns` 幂等认领远端生成的 `drun_...` 与 `session_id` 到当前 Workspace，确保手动运行和 Qoder 定时调度产生的会话可直接被 `/v1/sessions/{id}` 与前端详情页访问；前端 `DeploymentFormFields` 与 `budget.ts` 同步支持 Credits 预算的创建、编辑与回显，并按 `credential_vaults` 能力控制 Vault 选择器展示。
+- **Skills 外部运行时适配与 Agent Skill ID 双向映射（`internal/skills/runtime_dispatch.go`、`internal/agentruntime/qoder/skills.go`）**：
+  - `agentruntime.SkillRuntime` 覆盖 `/v1/skills` 与 `/v1/skills/{id}/versions` 全套 CRUD 以及 Console Skills 目录查询与包校验；上传 Qoder 时将校验后的包解压为相对路径文件并按实测合同以 `files` multipart 字段提交。
+  - 自定义 Skill 写入 `runtime_resource_bindings(resource_type = 'skill')` 强制多租户隔离，内置 Skill 只读放行、跨租户自定义 Skill 直接返回 404；`qoder/resources.go` 在 Agent Create/Update/Read 时自动双向翻译 `custom` Skill ID。
 
 ### 4.5 能力守卫、Overview、Quickstart/Builder、文件旁路与 Admin API 收口（修复 F9、F10）
 

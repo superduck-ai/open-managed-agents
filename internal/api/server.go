@@ -272,7 +272,7 @@ func NewServer(deps ServerDeps) *Server {
 		models:            modelsapi.NewHandler(deps.DB).WithRuntimeResolver(runtimeResolver),
 		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")).WithSessionAttachments(filestoreService).WithIdentityGate(identityService.AdmitExecution, identityService.ResolveConsoleSessionIdentity).WithRuntimeResolver(runtimeResolver),
 		identities:        identityHandler,
-		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
+		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")).WithRuntimeResolver(runtimeResolver),
 		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,

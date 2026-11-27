@@ -229,3 +229,7 @@ func invalidSkillIcon() error {
 func skillPreviewFileNotFound() error {
 	return errSkillPreviewNotFound
 }
+
+func skillRuntimeUnavailable(cause error) error {
+	return apperr.New(apperr.Internal, "Skill runtime is not configured", cause)
+}

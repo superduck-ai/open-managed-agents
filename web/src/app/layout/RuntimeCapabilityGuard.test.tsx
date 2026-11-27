@@ -380,3 +380,49 @@ test('deployments route and navigation stay accessible on external runtime when 
   );
   expect(screen.getByText('Deployments Enabled Body')).toBeTruthy();
 });
+
+test('skills route and navigation stay accessible on external runtime when skills is enabled', () => {
+  const skillsEnabledCaps: RuntimeCapabilities = {
+    ...externalCaps,
+    skills: true,
+    deployments: true,
+    memory_stores: true,
+  };
+  const mainHrefs = visibleConsoleNavigation(skillsEnabledCaps).flatMap((item) =>
+    item.type === 'link' ? [item.href] : item.children.map((child) => child.href),
+  );
+  expect(mainHrefs).toContain('/skills');
+
+  const skillsEnabledWorkspace: Workspace = {
+    ...externalWorkspace,
+    runtime: {
+      ...externalWorkspace.runtime!,
+      capabilities: skillsEnabledCaps,
+    },
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider
+          value={{
+            orgUuid: 'org-1',
+            workspaces: [defaultWorkspace, skillsEnabledWorkspace],
+            activeWorkspace: skillsEnabledWorkspace,
+            activeWorkspaceId: skillsEnabledWorkspace.id,
+            isLoading: false,
+            error: null,
+            selectWorkspace: () => undefined,
+            createWorkspace: async () => skillsEnabledWorkspace,
+            refreshWorkspaces: async () => undefined,
+          }}
+        >
+          <RuntimeCapabilityGuard currentPath="/workspaces/wrkspc_qoder/skills">
+            <div>Skills Enabled Body</div>
+          </RuntimeCapabilityGuard>
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText('Skills Enabled Body')).toBeTruthy();
+});

@@ -297,7 +297,8 @@
                   {
                     "group": "模型",
                     "pages": [
-                      "GET /v1/models"
+                      "GET /v1/models",
+                      "GET /v1/models/{model_id}"
                     ]
                   },
                   {
@@ -647,7 +648,8 @@
                   {
                     "group": "Models",
                     "pages": [
-                      "GET /v1/models"
+                      "GET /v1/models",
+                      "GET /v1/models/{model_id}"
                     ]
                   },
                   {

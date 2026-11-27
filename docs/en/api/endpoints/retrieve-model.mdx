@@ -1,0 +1,53 @@
+---
+title: "Retrieve a model"
+description: "Retrieve one model by ID from the current organization."
+api: "GET /v1/models/{model_id}"
+---
+
+## Path parameter
+
+<ParamField path="model_id" type="string" required>
+  Use `{provider_slug}/{upstream_model_id}`, for example `oma/kimi-k2.5`. The endpoint reads the entire path after `/v1/models/`, so slashes in the ID can be passed literally or encoded as `%2F`. A legacy ID without the prefix works when exactly one Provider in the organization configures the model.
+</ParamField>
+
+## Response
+
+<ResponseField name="type" type="string">
+  Always `model`.
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  The Provider-qualified ID, even when the request uses an unqualified ID.
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  The configured model name, or the qualified ID when no name is configured.
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  Currently the Unix epoch (`1970-01-01T00:00:00Z`).
+</ResponseField>
+
+`max_input_tokens`, `max_tokens`, and `capabilities` currently return `null`.
+
+```json
+{
+  "type": "model",
+  "id": "oma/kimi-k2.5",
+  "display_name": "oma/kimi-k2.5",
+  "created_at": "1970-01-01T00:00:00Z",
+  "max_input_tokens": null,
+  "max_tokens": null,
+  "capabilities": null
+}
+```
+
+## Errors
+
+- `400` The unqualified ID matches multiple Providers. Use a Provider-qualified ID.
+- `401` Valid API credentials are required.
+- `404` The specified model was not found in the current organization.
+- `500` The model configuration could not be loaded.
+- `503` The current organization has no configured LLM Provider.
+
+`404` responses have `error.type` set to `not_found_error` and include the requested ID in `error.message`.

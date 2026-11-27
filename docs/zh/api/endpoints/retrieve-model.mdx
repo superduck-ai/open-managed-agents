@@ -1,0 +1,53 @@
+---
+title: "查询模型"
+description: "按 ID 查询当前组织中的单个模型。"
+api: "GET /v1/models/{model_id}"
+---
+
+## 路径参数
+
+<ParamField path="model_id" type="string" required>
+  使用 `{provider_slug}/{upstream_model_id}` 格式，例如 `oma/kimi-k2.5`。接口读取 `/v1/models/` 后的完整路径，因此模型 ID 中的 `/` 可以保留，也可以编码为 `%2F`。旧版无前缀 ID 仅在组织内恰好有一个 Provider 配置该模型时可用。
+</ParamField>
+
+## 响应
+
+<ResponseField name="type" type="string">
+  固定为 `model`。
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  带 Provider 前缀的模型 ID，即使请求使用的是无前缀 ID。
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  已配置的模型名称。未配置名称时使用带前缀的 ID。
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  当前返回 Unix epoch（`1970-01-01T00:00:00Z`）。
+</ResponseField>
+
+`max_input_tokens`、`max_tokens` 和 `capabilities` 当前均为 `null`。
+
+```json
+{
+  "type": "model",
+  "id": "oma/kimi-k2.5",
+  "display_name": "oma/kimi-k2.5",
+  "created_at": "1970-01-01T00:00:00Z",
+  "max_input_tokens": null,
+  "max_tokens": null,
+  "capabilities": null
+}
+```
+
+## 错误
+
+- `400` 无前缀 ID 匹配多个 Provider。请使用带 Provider 前缀的 ID。
+- `401` 缺少有效的 API 凭证。
+- `404` 当前组织中找不到指定模型。
+- `500` 无法读取模型配置。
+- `503` 当前组织未配置 LLM Provider。
+
+`404` 响应的 `error.type` 为 `not_found_error`，`error.message` 包含请求的模型 ID。

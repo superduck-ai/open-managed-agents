@@ -1,5 +1,6 @@
 llm_provider_presets_file: ""
-# 可选运行配置文件。相对路径以主配置所在目录为基准。文件缺失或无效时记录警告并继续启动。
+# 可选运行配置文件，默认读取主配置目录下的 runtime/optional.yaml。
+# 默认文件缺失时静默使用默认行为。显式文件缺失或文件无效时记录警告并继续启动。
 optional_config_file: ""
 
 # Open Managed Agents complete process-configuration reference.

@@ -25,7 +25,7 @@ flowchart LR
 
 未设置 `CONFIG_FILE` 时，`config.Load` 从当前目录向上查找 `config/config.yaml`，最多查找到 `go.mod` 所在目录。设置 `CONFIG_FILE` 后以指定文件作为主配置；未找到主配置文件、路径不存在、不是普通文件或内容无效时都拒绝启动。
 
-`optional_config_file` 可指向独立的 YAML，存放缺省时有回退行为的功能配置。目前支持 `pricing.response_costs`。HTTP 服务组装时读取一次，未配置路径、文件读取失败或校验失败时使用默认行为。只有读取或校验失败时记录警告。这个文件使用单独的配置结构，不参与主配置合并，基础服务依赖仍在主配置定义。部署示例见[供应商实际费用](session-budget.md#供应商实际费用)。
+HTTP 服务组装时默认读取主配置目录下的 `runtime/optional.yaml`，目前支持 `pricing.response_costs`。`optional_config_file` 可覆盖默认路径，相对路径以主配置目录为基准。默认文件缺失时直接使用默认行为；显式文件缺失、文件不可读或校验失败时记录警告后使用默认行为。可选文件使用单独的配置结构，不参与主配置合并。部署示例见[供应商实际费用](session-budget.md#供应商实际费用)。
 
 `env`、`server.addr`、`database.url`、`redis.url`、`nats.url`、`storage.type` 以及 S3 endpoint、bucket、region 和静态凭证属于部署必填项，不提供代码默认值。Batch、Webhook、Environment Runner、NATS 连接/排空超时和容量限制等运行策略继续使用稳定代码默认值，因此正常启动无需在最小 YAML 中逐项配置。
 

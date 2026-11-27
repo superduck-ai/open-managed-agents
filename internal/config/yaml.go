@@ -93,7 +93,9 @@ func loadYAMLConfig(path string) (Config, error) {
 	if err := readYAMLConfig(path, &input); err != nil {
 		return Config{}, err
 	}
-	return input.resolve(), nil
+	cfg := input.resolve()
+	cfg.defaultOptionalConfigFile = filepath.Join(configFileDirectory(path), "runtime", "optional.yaml")
+	return cfg, nil
 }
 
 func readYAMLConfig[T any](path string, input *T) error {

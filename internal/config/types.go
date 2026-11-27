@@ -45,6 +45,8 @@ type Config struct {
 	Vault                  VaultConfig                `yaml:"vault"`
 	Bootstrap              BootstrapConfig            `yaml:"bootstrap"`
 	Pricing                PricingConfig              `yaml:"pricing"`
+
+	defaultOptionalConfigFile string `yaml:"-"`
 }
 
 type WebToolsConfig struct {

@@ -173,7 +173,7 @@ func NewServer(deps ServerDeps) *Server {
 	billingCalculator := llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
 		return llmproviders.LoadCatalog(ctx, deps.DB, org)
 	}, deps.Prices)
-	optionalConfig := loadOptionalConfig(deps.Config.OptionalConfigFile, rootLogger)
+	optionalConfig := loadOptionalConfig(deps.Config, rootLogger)
 	billingCalculator.ResponseCosts = optionalConfig.Pricing.ResponseCosts
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithSandboxProvisioner(deps.SandboxProvisioner).

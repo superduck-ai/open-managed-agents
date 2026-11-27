@@ -12,7 +12,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +23,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/listeners"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 )
 
 type environment struct {
@@ -34,6 +38,7 @@ type environment struct {
 	suite                                      bool
 	dependenciesOnly                           bool
 	publicSandbox, brain                       bool
+	brainBudget                                bool
 	observability                              bool
 	sandboxAPI                                 *httptest.Server
 	storageFault                               *storageFault
@@ -107,6 +112,9 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		}
 		config["code_session"].(map[string]string)["brain_claim_token_file"] = filepath.Join(e.directory, "brain-claim-token")
 	}
+	if err := e.configureBrainBudgetPricing(config); err != nil {
+		return err
+	}
 	if e.publicSandbox {
 		e.sandboxAPI = newLocalSandboxAPI(e.runID)
 		config["e2b"] = map[string]any{"api_key": "e2b_0000000000000000000000000000000000000000", "api_url": e.sandboxAPI.URL, "sandbox_url": e.sandboxAPI.URL}
@@ -152,6 +160,24 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (e *environment) configureBrainBudgetPricing(settings map[string]any) error {
+	if !e.brainBudget {
+		return nil
+	}
+	const model = "claude-sonnet-4-6"
+	const source = "narrows"
+	path := filepath.Join(e.directory, "budget-model-prices.json")
+	store := pricing.NewStore(config.PricingConfig{SnapshotFile: path}, nil)
+	price := billing.ModelPrice{Source: source, SourceModel: model, SourceCurrency: "CNY", ExchangeRate: pricing.NarrowsCNYPerUSD,
+		Version: "brain-budget-fixture", Rates: &billing.Rates{Input: new("7200"), Output: new("7200")}}
+	if err := store.Replace(source, []pricing.CatalogPrice{{Model: model, Price: price, Original: []byte(`{}`)}}); err != nil {
+		return fmt.Errorf("write Brain budget price fixture: %w", err)
+	}
+	settings["pricing"] = map[string]any{"snapshot_file": path, "read_only": true}
+	return nil
+}
+
 func (e *environment) writeBrainClaimToken() error {
 	token := make([]byte, 32)
 	if _, err := rand.Read(token); err != nil {

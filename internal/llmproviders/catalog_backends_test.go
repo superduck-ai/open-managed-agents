@@ -9,7 +9,7 @@ import (
 )
 
 func TestModelBackendsRejectUnsupportedBackend(t *testing.T) {
-	_, err := NewCatalog([]db.LLMProvider{{Slug: "oma", APIBackend: "responses", Models: db.LLMModels{{ID: "kimi-k2.5"}}}}).RuntimeModels()
+	_, err := NewCatalog([]db.LLMProvider{{Slug: "oma", APIBackend: "unsupported", Models: db.LLMModels{{ID: "kimi-k2.5"}}}}).RuntimeModels()
 	if !errors.Is(err, ErrBackendMismatch) {
 		t.Fatalf("err = %v, want ErrBackendMismatch", err)
 	}

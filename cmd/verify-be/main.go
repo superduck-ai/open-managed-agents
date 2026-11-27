@@ -153,6 +153,7 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 	env.suite = options.Scenario == "test"
 	env.dependenciesOnly = selected.DependenciesOnly
 	env.brain = usesBrain(options.Scenario)
+	env.brainBudget = options.Scenario == "chat.brain-budget"
 	env.observability = options.Scenario == "chat.brain-observability"
 	env.publicSandbox = env.brain || options.Scenario == "chat.public" || options.Scenario == "chat.subagents" || options.Scenario == "chat.upstream-errors"
 	defer func() {

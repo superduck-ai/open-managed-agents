@@ -7,7 +7,7 @@ import (
 )
 
 func TestUnsupportedAPIBackends(t *testing.T) {
-	for _, backend := range []string{"", "responses", "chat-completions", " messages"} {
+	for _, backend := range []string{"", "unsupported", "chat-completions", " messages"} {
 		if ValidBackend(backend) {
 			t.Fatalf("accepted %q", backend)
 		}
@@ -18,14 +18,14 @@ func TestUnsupportedAPIBackends(t *testing.T) {
 }
 
 func TestBackendHeadersAndEndpoints(t *testing.T) {
-	for _, backend := range []string{Messages, ChatCompletions} {
+	for _, backend := range []string{Messages, ChatCompletions, Responses} {
 		upstream := Upstream{APIBackend: backend, APIKey: "server-key"}
 		headers := http.Header{"Anthropic-Beta": []string{"private"}, "Anthropic-Version": []string{"old"}, "X-Api-Key": []string{"client-key"}}
 		upstream.ApplyHeaders(headers)
 		if headers.Get("Authorization") != "Bearer server-key" {
 			t.Fatal("missing server credential")
 		}
-		if backend == ChatCompletions && (headers.Get("X-Api-Key") != "" || headers.Get("Anthropic-Version") != "" || headers.Get("Anthropic-Beta") != "") {
+		if backend != Messages && (headers.Get("X-Api-Key") != "" || headers.Get("Anthropic-Version") != "" || headers.Get("Anthropic-Beta") != "") {
 			t.Fatalf("leaked headers=%v", headers)
 		}
 		if backend == Messages && (headers.Get("X-Api-Key") != "server-key" || headers.Get("Anthropic-Version") != anthropicVersion) {

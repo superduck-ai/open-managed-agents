@@ -2,34 +2,22 @@ package messages
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func TestChatRequestRejectsUnsupportedModes(t *testing.T) {
-	for _, body := range []string{`{}`, `{"stream":false}`, `{"stream":true,"n":2}`, `{"stream":true,"n":0}`, `{"stream":"true"}`, `{"stream":true,"n":"1"}`} {
-		if err := validateChatRequest([]byte(body)); !errors.Is(err, errChatStreamRequired) {
+	for _, body := range []string{`{"stream":true,"n":2}`, `{"stream":true,"n":0}`, `{"stream":"true"}`, `{"stream":true,"n":"1"}`} {
+		if err := validateChatRequest([]byte(body)); !errors.Is(err, errChatChoiceCount) {
 			t.Fatalf("body=%s err=%v", body, err)
 		}
 	}
-	handler := &Handler{}
-	for _, principal := range []auth.Principal{{}, {WorkspaceUUID: "workspace"}} {
-		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-		request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
-		response := httptest.NewRecorder()
-		handler.ChatCompletions(response, request)
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("status=%d", response.Code)
-		}
-	}
+
 }
 
 func TestChatObservationRejectsInvalidStreams(t *testing.T) {

@@ -1,3 +1,4 @@
+import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { IMAGE_OFFLOAD_REQUIRED_CODE, LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
@@ -9,7 +10,7 @@ import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 import { isBudgetRejection, waitForModelBudget } from "./model-budget.ts";
 import { traceHeaders } from "./observability/trace-context.ts";
 
-type ModelBackend = "messages" | "chat_completions";
+type ModelBackend = "messages" | "chat_completions" | "responses";
 
 const MODEL_IDLE_TIMEOUT_MS = 300_000;
 
@@ -34,6 +35,12 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
       imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
+  if (backend === "responses") {
+    const fetcher = proxyFetch(api, assignment, `${root}/responses`, extraHeaders, undefined, options);
+    return { model: createOpenAI({ baseURL: root, apiKey: assignment.model_token, fetch: fetcher }).responses(options.model),
+      imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, maxOutputTokens: output, maxOutputTokensLimit,
+      toolImagesAsUser: true, replayFormat: "oma-responses-v1", providerOptions: { openai: { store: false } } };
+  }
   const fetcher = proxyFetch(api, assignment, `${root}/chat/completions`, extraHeaders, normalizeChatReasoning, options);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
     fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, maxOutputTokens: output, maxOutputTokensLimit, toolImagesAsUser: true, replayFormat: "oma-chat-completions-v1" };
@@ -41,7 +48,7 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {
   const backend = assignment.launch.models ? assignment.launch.models[model]?.api_backend : "messages";
-  if (backend !== "messages" && backend !== "chat_completions")
+  if (backend !== "messages" && backend !== "chat_completions" && backend !== "responses")
     throw new LlmError("Model API backend is unavailable; reload the session configuration", "INVALID_ARGS");
   return backend;
 }

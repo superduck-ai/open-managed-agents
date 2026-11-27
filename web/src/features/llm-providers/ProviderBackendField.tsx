@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n';
-import { Field, FieldDescription, FieldLabel } from '../../shared/ui/field';
+import { Field, FieldLabel } from '../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import type { APIBackend } from './api';
 
@@ -27,7 +27,7 @@ export function ProviderBackendField({
         }}
       >
         <SelectTrigger id="llm-provider-backend" className="w-full">
-          <SelectValue />
+          <SelectValue>{value === 'responses' ? 'OpenAI Responses' : undefined}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {backends.map((backend) => (
@@ -37,11 +37,6 @@ export function ProviderBackendField({
           ))}
         </SelectContent>
       </Select>
-      {value === 'chat_completions' ? (
-        <FieldDescription>
-          {msg('llmModels.chatBrainOnly', 'Chat Completions is supported in brain mode only.')}
-        </FieldDescription>
-      ) : null}
     </Field>
   );
 }

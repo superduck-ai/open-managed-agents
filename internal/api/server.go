@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/channels"
 	channelcontracts "github.com/superduck-ai/open-managed-agents/internal/channels/contracts"
 	"github.com/superduck-ai/open-managed-agents/internal/channels/feishu"
@@ -33,6 +34,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/identities"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpservers"
@@ -47,6 +49,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
@@ -67,6 +70,7 @@ import (
 type Server struct {
 	platformAccess       *platformadmin.Service
 	invitationJobs       *river.Client[*sql.Tx]
+	billing              *billing.Calculator
 	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
 	db                   *db.DB
@@ -113,6 +117,7 @@ type ServerDeps struct {
 	ToolCallContext        context.Context
 	InvitationJobs         *river.Client[*sql.Tx]
 	EvaluationRunner       *evaluationsapi.TaskRunner
+	Prices                 *pricing.Store
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -165,7 +170,11 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
-	billingCalculator := deps.DB.BillingCalculator()
+	billingCalculator := llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
+		return llmproviders.LoadCatalog(ctx, deps.DB, org)
+	}, deps.Prices)
+	optionalConfig := loadOptionalConfig(deps.Config, rootLogger)
+	billingCalculator.ResponseCosts = optionalConfig.Pricing.ResponseCosts
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithSandboxProvisioner(deps.SandboxProvisioner).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
@@ -213,6 +222,7 @@ func NewServer(deps ServerDeps) *Server {
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		envOAuthProviders:    envOAuthProviders,
 		invitationJobs:       deps.InvitationJobs,
+		billing:              billingCalculator,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
 		db:                   deps.DB,
@@ -402,8 +412,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationUsageRoutes(r, s.db)
 			platformapi.RegisterWorkspaceOverviewRoute(r, s.db)
-			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
+			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.billing, s.logger.With("component", "console_metering"))
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.billing)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 			r.Get("/env-oauth/providers", s.handleEnvOAuthProviders)
 			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
@@ -493,6 +503,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	}
 	r.Post("/messages", s.messages.Create)
 	r.Post("/chat/completions", s.messages.ChatCompletions)
+	r.Post("/responses", s.messages.Responses)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)

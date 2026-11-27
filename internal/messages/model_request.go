@@ -23,6 +23,7 @@ import (
 
 type responseObservation struct {
 	chat            *chatObservation
+	responses       *responsesObservation
 	firstTokenAt    time.Time
 	publishThinking func(string, int) bool
 	thinkingStarted map[int]bool
@@ -81,12 +82,15 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
 	call.observation = observation
+	if r.URL.Path == "/v1/responses" {
+		observation.responses = &responsesObservation{}
+	}
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
 	if request != nil {
 		purpose := strings.TrimSpace(r.Header.Get("X-OMA-Model-Purpose"))
-		request.SuppressPublicOutput = purpose == "compaction" || purpose == "session-title"
+		request.SuppressPublicOutput = request.SuppressPublicOutput || purpose == "compaction" || purpose == "session-title"
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
 		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.
@@ -213,6 +217,11 @@ func (o *responseObservation) Write(data []byte) (int, error) {
 }
 
 func (o *responseObservation) observeFrame(data []byte) {
+	o.captureCost(data)
+	if o.responses != nil {
+		o.responses.observe(o, data)
+		return
+	}
 	if o.chat != nil {
 		o.chat.observe(o, data)
 		return
@@ -324,14 +333,21 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
+	if o.request != nil && o.result.ErrorType == "http_error" && !o.streaming {
+		o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), false, o.buffer)
+	}
+	o.finishOpenAI()
 	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
 		o.chat.complete(o)
 	}
-	if !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
+	if o.chat == nil && o.responses == nil && !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
 		var message responseMessage
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {
 			o.malformed = true
 		} else {
+			if o.request != nil {
+				o.result.ProviderCost = o.request.ResponseCost.ExtractFor(o.costProtocol(), false, o.buffer)
+			}
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
 			o.stopReason = message.StopReason
@@ -354,6 +370,18 @@ func (o *responseObservation) finish() {
 			o.result.ErrorType = "invalid_response"
 		case !o.complete:
 			o.result.ErrorType = "incomplete_response"
+		}
+	}
+}
+
+func (o *responseObservation) finishOpenAI() {
+	if !o.streaming && !o.complete && !o.malformed && o.result.ErrorType == "" {
+		if o.responses != nil {
+			o.captureCost(o.buffer)
+			o.responses.observe(o, o.buffer)
+		} else if o.chat != nil {
+			o.captureCost(o.buffer)
+			o.chat.nonStream(o, o.buffer)
 		}
 	}
 }
@@ -433,4 +461,22 @@ func (o *responseObservation) timeToFirstToken(startedAt time.Time) time.Duratio
 		return 0
 	}
 	return o.firstTokenAt.Sub(startedAt)
+}
+
+func (o *responseObservation) costProtocol() string {
+	if o.responses != nil {
+		return "responses"
+	}
+	if o.chat != nil {
+		return "chat_completions"
+	}
+	return "messages"
+}
+func (o *responseObservation) captureCost(data []byte) {
+	if o.request == nil || o.complete || o.malformed {
+		return
+	}
+	if cost := o.request.ResponseCost.ExtractFor(o.costProtocol(), o.streaming, data); cost != nil {
+		o.result.ProviderCost = cost
+	}
 }

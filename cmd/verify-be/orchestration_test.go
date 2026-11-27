@@ -15,7 +15,24 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 )
+
+func TestBrainBudgetPricingFixture(t *testing.T) {
+	env := environment{directory: t.TempDir(), brainBudget: true}
+	settings := make(map[string]any)
+	if err := env.configureBrainBudgetPricing(settings); err != nil {
+		t.Fatal(err)
+	}
+	priceSettings := settings["pricing"].(map[string]any)
+	store := pricing.NewStore(config.PricingConfig{SnapshotFile: priceSettings["snapshot_file"].(string), ReadOnly: priceSettings["read_only"].(bool)}, nil)
+	if err := store.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if price := store.Lookup("narrows", "claude-sonnet-4-6"); price == nil || price.Rates == nil {
+		t.Fatalf("预算验收缺少标价：%+v", price)
+	}
+}
 
 func fakeDocker(t *testing.T) string {
 	t.Helper()

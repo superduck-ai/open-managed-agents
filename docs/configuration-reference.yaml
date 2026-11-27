@@ -1,4 +1,7 @@
 llm_provider_presets_file: ""
+# 可选运行配置文件，默认读取主配置目录下的 optional/optional.yaml。
+# 默认文件缺失时静默使用默认行为。显式文件缺失或文件无效时记录警告并继续启动。
+optional_config_file: ""
 
 # Open Managed Agents complete process-configuration reference.
 #
@@ -19,6 +22,16 @@ database:
   url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
   # Derived default: true for dev and false for prod.
   auto_migrate: true
+
+pricing:
+  # Relative paths resolve from the config file directory. The process user must be able
+  # to create and atomically replace this file; otherwise prices are never published and
+  # budgeted model requests fail with 503 model_price_unavailable.
+  snapshot_file: ./data/model-prices.json
+  # Read-only instances reload snapshot_file instead of fetching the upstream catalogs.
+  read_only: false
+  refresh_interval: 6h
+  reload_interval: 30s
 
 redis:
   url: redis://localhost:6379

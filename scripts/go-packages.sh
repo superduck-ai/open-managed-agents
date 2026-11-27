@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
 directories="$(go list -tags=integration -f '{{.Dir}}' ./...)"
 while IFS= read -r directory; do
-  owner="$(git -C "$directory" rev-parse --show-toplevel)"
+  owner="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$directory" rev-parse --show-toplevel)"
   [[ "$owner" == "$repo_root" ]] || continue
   if [[ "$directory" == "$repo_root" ]]; then
     printf '.\n'

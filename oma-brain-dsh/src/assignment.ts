@@ -1,6 +1,7 @@
 import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
+import { sessionBilling, type SessionBilling } from "./billing.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 import { portToolDefinition } from "./port-tools/definitions.ts";
@@ -10,7 +11,7 @@ import type { ImageInput } from "./llm-ai-sdk/images.ts";
 export type ModelConfig = {
   image_input?: ImageInput;
   id: string;
-  api_backend: "messages" | "chat_completions";
+  api_backend: "messages" | "chat_completions" | "responses";
   context_window?: number;
   max_output_tokens?: number;
   input_modalities?: ("text" | "image")[];
@@ -28,6 +29,7 @@ export interface Assignment {
   mcp_config: unknown;
   external_mcp_config?: unknown;
   launch: {
+    billing?: SessionBilling;
     version: number;
     model: string;
     models?: Record<string, ModelConfig>;
@@ -67,6 +69,7 @@ export function validateAssignment(a: Assignment): void {
   if (!Array.isArray(a.launch.tools)
     || a.launch.tools.some((name) => !childTools.has(name)))
     throw new Error("Invalid launch tools");
+  sessionBilling(a.launch.billing);
   validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;
   if (config) {
@@ -106,7 +109,7 @@ export function validateModels(value: unknown): asserts value is Record<string, 
       Array.isArray(model) ||
       typeof model.id !== "string" ||
       !model.id ||
-      !["messages", "chat_completions"].includes(model.api_backend)
+      !["messages", "chat_completions", "responses"].includes(model.api_backend)
     )
       throw new Error("Invalid model catalog");
     for (const capacity of [model.context_window, model.max_output_tokens]) {

@@ -41,6 +41,13 @@ func TestHarnessThreadStateRollbackPostgres(t *testing.T) {
 
 func TestHarnessThreadStateRoundTripPostgres(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
+	var legacyColumns int
+	err := database.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = current_schema() AND (table_name, column_name) IN
+			(('harness_thread_state', 'active_subscriptions'), ('harness_thread_hierarchy', 'is_subscription_event'))`).Scan(&legacyColumns)
+	if err != nil || legacyColumns != 0 {
+		t.Fatalf("legacy subscription columns = %d, %v", legacyColumns, err)
+	}
 	ref := HarnessTurnRef{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, SessionUUID: uuid.NewString()}
 	lease := HarnessTurnLease{Ref: ref}
 	thread := harness.ThreadID(ref.SessionUUID)
@@ -50,18 +57,12 @@ func TestHarnessThreadStateRoundTripPostgres(t *testing.T) {
 	if err := stateStore.SetMetadata(ctx, thread, metadata); err != nil {
 		t.Fatal(err)
 	}
-	if err := stateStore.AddActiveSubscription(ctx, thread, "call"); err != nil {
-		t.Fatal(err)
-	}
 	if err := stateStore.AddPendingUserChoice(ctx, thread, choice); err != nil {
 		t.Fatal(err)
 	}
 	reader := store.HarnessState(lease)
 	if got, err := reader.GetMetadata(ctx, thread); err != nil || string(got) != string(metadata) {
 		t.Fatalf("metadata = %s, %v", got, err)
-	}
-	if got, err := reader.GetActiveSubscriptions(ctx, thread); err != nil || !slices.Equal(got, []harness.ToolCallID{"call"}) {
-		t.Fatalf("subscriptions = %v, %v", got, err)
 	}
 	if got, err := reader.GetPendingUserChoices(ctx, thread); err != nil || len(got) != 1 || got[0].ID != choice.ID || !slices.Equal(got[0].Choices, choice.Choices) {
 		t.Fatalf("pending choices = %v, %v", got, err)
@@ -73,7 +74,7 @@ func TestHarnessThreadStateRoundTripPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stateRows int
-	err := database.QueryRowContext(ctx, "SELECT count(*) FROM harness_thread_state WHERE session_uuid = $1", ref.SessionUUID).Scan(&stateRows)
+	err = database.QueryRowContext(ctx, "SELECT count(*) FROM harness_thread_state WHERE session_uuid = $1", ref.SessionUUID).Scan(&stateRows)
 	if err != nil || stateRows != 0 {
 		t.Fatalf("state rows after session removal = %d, %v", stateRows, err)
 	}

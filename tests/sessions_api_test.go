@@ -175,14 +175,11 @@ func TestSessionsAPI(t *testing.T) {
 			t.Fatalf("queued event must expose null processed_at without created_at: %s", sent.Data[0])
 		}
 		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
-		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
-			t.Fatalf("unexpected listed events: %+v", events)
-		}
-		if bytes.Contains(events.Data[0], []byte(`"created_at"`)) {
-			t.Fatalf("listed event exposed created_at: %s", events.Data[0])
+		if len(events.Data) != 0 {
+			t.Fatalf("pending message in session history: %+v", events)
 		}
 		threadEvents := listThreadEvents(t, app, created.ID, thread.ID, defaultTestKey)
-		if len(threadEvents.Data) != 3 {
+		if len(threadEvents.Data) != 2 || eventPageContainsCount(threadEvents, `"type":"user.message"`) != 0 {
 			t.Fatalf("unexpected thread events: %+v", threadEvents)
 		}
 		// Complete the accepted turn before testing idle-only resource mutations.

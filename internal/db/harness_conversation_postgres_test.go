@@ -54,7 +54,7 @@ func TestHarnessConversationStorePostgres(t *testing.T) {
 	if err := store.SaveCompactionSummary(ctx, root, "later summary", 2); err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.SpawnThread(ctx, root, "spawn", true, harness.SpawnContext{InheritUpTo: new(int64(1))})
+	child, err := store.SpawnThread(ctx, root, "spawn", harness.SpawnContext{InheritUpTo: new(int64(1))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestHarnessConversationStorePostgres(t *testing.T) {
 	if err != nil || info == nil || info.ThreadID != root || info.ToolCallID != "spawn" {
 		t.Fatalf("parent identity = %+v, %v", info, err)
 	}
-	fresh, err := store.SpawnThread(ctx, child, "fresh", false, harness.SpawnContext{})
+	fresh, err := store.SpawnThread(ctx, child, "fresh", harness.SpawnContext{})
 	if err != nil {
 		t.Fatal(err)
 	}

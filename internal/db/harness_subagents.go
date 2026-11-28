@@ -164,7 +164,7 @@ func resolveHarnessDelegationThread(ctx context.Context, executor yourbatis.Exec
 	if err != nil {
 		return SessionThread{}, err
 	}
-	if err := insertSpawnedHarnessThread(ctx, conversation, key, session.UUID, harness.ToolCallID(tool.CallID), false, spawn); err != nil {
+	if err := insertSpawnedHarnessThread(ctx, conversation, key, session.UUID, harness.ToolCallID(tool.CallID), spawn); err != nil {
 		return SessionThread{}, err
 	}
 	return child, nil

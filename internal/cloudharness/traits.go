@@ -41,16 +41,19 @@ type UserChoice struct {
 	ResponseURL string   `json:"response_url"`
 }
 
+type InputSender interface {
+	SendToInputQueue(ctx context.Context, message InputMessage, dedupID string) error
+}
+
 type ConversationStore interface {
 	EnsureRootThread(ctx context.Context, threadID ThreadID) error
 	ThreadExists(ctx context.Context, threadID ThreadID) (bool, error)
 	LoadHistoryUpTo(ctx context.Context, threadID ThreadID, startFrom, upTo *int64) ([]Message, error)
 	LoadHistoryWithAncestors(ctx context.Context, threadID ThreadID) (history []Message, compactedUpTo *int64, ancestorPrefixLen uint, err error)
 	AppendMessages(ctx context.Context, threadID ThreadID, messages []MessageWithID) error
-	SpawnThread(ctx context.Context, parentThreadID ThreadID, spawnToolCallID ToolCallID, isForSubscriptionEvent bool, spawnContext SpawnContext) (ThreadID, error)
+	SpawnThread(ctx context.Context, parentThreadID ThreadID, spawnToolCallID ToolCallID, spawnContext SpawnContext) (ThreadID, error)
 	IsThreadClosed(ctx context.Context, threadID ThreadID) (bool, error)
 	CloseThread(ctx context.Context, threadID ThreadID) error
-	IsSubscriptionEventThread(ctx context.Context, threadID ThreadID) (bool, error)
 	IsFreshContextThread(ctx context.Context, threadID ThreadID) (bool, error)
 	GetThreadParentInfo(ctx context.Context, threadID ThreadID) (*ThreadParentInfo, error)
 	GetAncestorChain(ctx context.Context, threadID ThreadID) ([]Ancestor, error)
@@ -64,9 +67,6 @@ type ConversationStore interface {
 type StateStore interface {
 	GetMetadata(ctx context.Context, rootThreadID ThreadID) (json.RawMessage, error)
 	SetMetadata(ctx context.Context, rootThreadID ThreadID, metadata json.RawMessage) error
-	GetActiveSubscriptions(ctx context.Context, threadID ThreadID) ([]ToolCallID, error)
-	AddActiveSubscription(ctx context.Context, threadID ThreadID, toolCallID ToolCallID) error
-	RemoveActiveSubscription(ctx context.Context, threadID ThreadID, toolCallID ToolCallID) error
 	AddPendingUserChoice(ctx context.Context, threadID ThreadID, choice UserChoice) error
 	RemovePendingUserChoice(ctx context.Context, threadID ThreadID, choiceID ChoiceID) error
 	GetPendingUserChoices(ctx context.Context, threadID ThreadID) ([]UserChoice, error)

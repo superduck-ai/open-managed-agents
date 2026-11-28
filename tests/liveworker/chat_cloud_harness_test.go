@@ -71,7 +71,7 @@ func TestCloudHarnessText(t *testing.T) {
 	if _, err := database.HarnessTurnState(ctx, initialRef); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("initial input created a turn before consumption: %v", err)
 	}
-	input, delivery := retryHarnessPublish(t, ctx, f, queue)
+	input, delivery := retryHarnessPublish(t, ctx, f, queue, plainStream)
 	ref := assertHarnessInputDelivery(t, f, delivery.Data, delivery.Header, "verification code I gave you")
 	if _, err := database.ClaimHarnessTurn(ctx, ref, db.HarnessTurnDelivery{}, "test hash", time.Now().Add(time.Minute)); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("later input could claim before the initial input: %v", err)
@@ -182,7 +182,7 @@ func receiveHarnessReply(t *testing.T, ctx context.Context, events <-chan chatEv
 	}
 }
 
-func retryHarnessPublish(t *testing.T, ctx context.Context, f *liveSession, queue jetstream.JetStream) (string, *jetstream.RawStreamMsg) {
+func retryHarnessPublish(t *testing.T, ctx context.Context, f *liveSession, queue jetstream.JetStream, receipts <-chan chatEvent) (string, *jetstream.RawStreamMsg) {
 	t.Helper()
 	stream, err := queue.Stream(ctx, "OMA_HARNESS_TASKS")
 	requireOK(t, err)
@@ -203,14 +203,15 @@ func retryHarnessPublish(t *testing.T, ctx context.Context, f *liveSession, queu
 	const text = "Reply with only the verification code I gave you in my previous message."
 	key := uuid.NewString()
 	submitHarnessChat(t, ctx, f, key, text, http.StatusServiceUnavailable)
-	var accepted string
-	for _, event := range chatHistory(t, f) {
-		if len(event.Content) == 1 && event.Content[0].Text == text {
-			accepted = event.ID
-		}
+	receipt := nextChatEvent(t, ctx, receipts, "user.message")
+	if receipt.ID == "" || receipt.Processed != nil || len(receipt.Content) != 1 || receipt.Content[0].Text != text {
+		t.Fatalf("missing pending receipt for input after 503: %s", receipt.ID)
 	}
-	if accepted == "" {
-		t.Fatal("503 did not preserve the accepted public input")
+	accepted := receipt.ID
+	for _, event := range chatHistory(t, f) {
+		if event.ID == accepted {
+			t.Fatalf("pending input %s appeared in history", accepted)
+		}
 	}
 	restore()
 	if id := submitHarnessChat(t, ctx, f, key, text, http.StatusOK); id != accepted {

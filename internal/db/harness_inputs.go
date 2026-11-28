@@ -46,7 +46,7 @@ func enqueueHarnessInputTx(ctx context.Context, mapper HarnessInputMapper, sessi
 		if err != nil {
 			return err
 		}
-		message.Text, message.Metadata = input.ModelText(), input.Metadata
+		message.Text, message.Metadata = input.Text, input.Metadata
 	}
 	raw, err := json.Marshal(message)
 	if err != nil {

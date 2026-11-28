@@ -62,6 +62,7 @@ type ModelRequestResult struct {
 	EventIDs          []string
 	UpstreamRequestID string
 	ErrorType         string
+	harnessNext       HarnessModelNext
 }
 
 type ModelRequestToolUse struct {
@@ -123,6 +124,19 @@ func (s *Service) beginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if codeSession.ExternalID != codeSessionID || codeSession.Status != "active" || s.sink == nil {
 		return nil, db.ErrInvalidState
 	}
+	request, err := s.modelRequest(ctx, codeSession, agentID, model, lease)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: request.StartID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return request, nil
+}
+
+func (s *Service) modelRequest(ctx context.Context, codeSession db.CodeSession, agentID, model string, lease *db.HarnessTurnLease) (*ModelRequest, error) {
 	if lease != nil && (codeSession.UUID != lease.CodeSessionUUID || codeSession.CurrentWorkerEpoch != lease.Epoch ||
 		codeSession.OrganizationUUID != lease.Ref.OrganizationUUID || codeSession.SessionUUID != lease.Ref.SessionUUID) {
 		return nil, db.ErrWorkerEpochMismatch
@@ -131,7 +145,7 @@ func (s *Service) beginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	startID, err := modelRequestStartID(codeSessionID, lease)
+	startID, err := modelRequestStartID(codeSession.ExternalID, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -139,16 +153,15 @@ func (s *Service) beginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession, harnessLease: lease}
+	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSession.ExternalID, ThreadID: threadID, Model: model, codeSession: codeSession, harnessLease: lease}
 	if agentID != "" || child {
 		request.toolThreadID = threadID
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: startID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil, nil)
-	if err != nil {
-		return nil, err
-	}
 	return request, nil
+}
+
+func (r *ModelRequest) IsHarness() bool {
+	return r.harnessLease != nil
 }
 
 func (s *Service) resolveModelRequestThread(ctx context.Context, code db.CodeSession, agentID string, lease *db.HarnessTurnLease) (string, bool, error) {
@@ -206,7 +219,7 @@ func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, pro
 }
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
-	var completion *harness.AssistantMessage
+	var completion *harness.Transition
 	if request.harnessLease != nil {
 		if result.ErrorType == "" && len(result.ToolUses) > 0 {
 			tools, err := s.db.HarnessExecutionToolCount(ctx, *request.harnessLease)
@@ -227,13 +240,17 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 			}
 		}
 		if request.toolThreadID != "" && slices.ContainsFunc(result.ToolUses, func(tool ModelRequestToolUse) bool {
-			return isHarnessDelegationTool(tool.Name) || isHarnessSubscriptionTool(tool.Name) || tool.Name == sessioncontract.HarnessAskUserQuestion
+			return isHarnessDelegationTool(tool.Name) || tool.Name == sessioncontract.HarnessAskUserQuestion
 		}) {
 			result.ErrorType = "invalid_response"
 		}
 		result = harnessTextResult(request, result)
 		if result.ErrorType == "" {
-			completion = harnessModelCompletion(result)
+			transition, err := harnessModelTransition(request, result)
+			if err != nil {
+				return err
+			}
+			completion = &transition
 		}
 	}
 	if request.SuppressPublicOutput {
@@ -242,21 +259,25 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		result.ToolUses = nil
 		result.ToolUseIDs = nil
 	}
+	processedAt := request.harnessPreview.processedAt(result.EndedAt)
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
-		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
+		CreatedAt: result.EndedAt, ProcessedAt: processedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
 	event.Billing = modelRequestBilling(request.calculator, request.Model, result.Usage)
 	event.PriceSnapshot = request.calculator.PriceSnapshot(request.Model)
-	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), result.EndedAt)
+	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), processedAt)
 	if err != nil {
 		return err
 	}
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+len(tools)+1)
 	if result.ErrorType == "" {
 		for _, message := range result.Messages {
-			payload, err := modelMessagePayload(request, message, result.EndedAt)
+			if request.harnessPreview.thinkingCompleted[message.ID] {
+				continue
+			}
+			payload, err := modelMessagePayload(request, message, processedAt)
 			if err != nil {
 				return err
 			}
@@ -283,7 +304,7 @@ func modelRequestPublicTools(result ModelRequestResult) []ModelRequestToolUse {
 	return rejected
 }
 
-func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage, completion *harness.AssistantMessage) error {
+func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRequest, event modelRequestEvent, preceding []json.RawMessage, completion *harness.Transition) error {
 	event.OwnerThreadID, event.Model = request.ThreadID, request.Model
 	event.RequestID = request.StartID
 	payload, err := jsonv2.Marshal(event)
@@ -308,7 +329,7 @@ func (s *Service) publishModelRequestEvent(ctx context.Context, request *ModelRe
 }
 
 type harnessModelEventSink interface {
-	PublishHarnessModelEvents(context.Context, db.CodeSession, db.HarnessTurnLease, db.HarnessModelPhase, []json.RawMessage, *harness.AssistantMessage) error
+	PublishHarnessModelEvents(context.Context, db.CodeSession, db.HarnessTurnLease, db.HarnessModelPhase, []json.RawMessage, *harness.Transition) error
 }
 
 func (s *Service) modelRequestThread(ctx context.Context, codeSession db.CodeSession, agentID string) (string, error) {
@@ -396,7 +417,7 @@ func modelRequestBilling(calculator *billing.Calculator, model string, usage Mod
 	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
 }
 
-func harnessModelCompletion(result ModelRequestResult) *harness.AssistantMessage {
+func harnessAssistantMessage(result ModelRequestResult) harness.AssistantMessage {
 	var completion harness.AssistantMessage
 	separator := "\n"
 	if len(result.ToolUses) == 1 {
@@ -413,5 +434,36 @@ func harnessModelCompletion(result ModelRequestResult) *harness.AssistantMessage
 		}
 	}
 	completion.Text = strings.Join(text, separator)
-	return &completion
+	return completion
+}
+
+func HarnessModelWork(subagent bool) harness.ModelWork {
+	work := harness.ModelWork{AutoExecuteTools: true}
+	if !subagent {
+		work.UserChoiceTool = sessioncontract.HarnessAskUserQuestion
+	}
+	return work
+}
+
+func harnessModelTransition(request *ModelRequest, result ModelRequestResult) (harness.Transition, error) {
+	message := harnessAssistantMessage(result)
+	transition := harness.Transition{Messages: []harness.Message{message}}
+	call := message.Call
+	switch result.harnessNext {
+	case HarnessModelDone:
+		if call == (harness.ToolCall{}) && message.Text != "" {
+			return transition, nil
+		}
+	case HarnessModelTool:
+		if call.ID != "" && call.Name != "" && call.Name != sessioncontract.HarnessAskUserQuestion {
+			transition.Pending = harness.ToolWork{Call: call}
+			return transition, nil
+		}
+	case HarnessModelUserChoice:
+		if call.ID != "" && request.toolThreadID == "" && call.Name == sessioncontract.HarnessAskUserQuestion {
+			transition.Pending = harness.UserChoiceWork{Call: call}
+			return transition, nil
+		}
+	}
+	return harness.Transition{}, fmt.Errorf("%w: model action does not match the completion", ErrProtocol)
 }

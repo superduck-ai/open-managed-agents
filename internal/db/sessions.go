@@ -195,7 +195,7 @@ type ListSessionsPageParams struct {
 }
 
 type ListSessionEventsPageParams struct {
-	UseInputReceivedAt bool
+	UseEventWriteOrder bool
 	WorkspaceUUID      string
 	SessionExternalID  string
 	ThreadExternalID   string
@@ -920,7 +920,11 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 			return nil, false, ErrInvalidCursor
 		}
 	}
-	rows, err := mapper.ListPage(ctx, sessionEventPageParameters(params))
+	listPage := mapper.ListPage
+	if params.UseEventWriteOrder {
+		listPage = mapper.ListPageByWriteOrder
+	}
+	rows, err := listPage(ctx, sessionEventPageParameters(params))
 	if err != nil {
 		return nil, false, err
 	}

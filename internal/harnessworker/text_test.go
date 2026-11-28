@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/cloudharness"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
 func TestHarnessModelSendsTimeReminderAfterToolResult(t *testing.T) {
@@ -17,8 +18,10 @@ func TestHarnessModelSendsTimeReminderAfterToolResult(t *testing.T) {
 		Text string `json:"text"`
 	}
 	type modelRequest struct {
-		System   []textBlock `json:"system"`
-		Messages []struct {
+		Model     string      `json:"model"`
+		MaxTokens int64       `json:"max_tokens"`
+		System    []textBlock `json:"system"`
+		Messages  []struct {
 			Role    string      `json:"role"`
 			Content []textBlock `json:"content"`
 		} `json:"messages"`
@@ -36,8 +39,16 @@ func TestHarnessModelSendsTimeReminderAfterToolResult(t *testing.T) {
 	}))
 	defer server.Close()
 	worker := Worker{apiURL: server.URL}
-	claim := db.HarnessTurnClaim{CodeSession: db.CodeSession{Model: "test", Metadata: json.RawMessage(`{"config":{"system_prompt":"Work carefully."}}`)}}
-	model, err := worker.model(t.Context(), claim, "test-token", nil)
+	claim := db.HarnessTurnClaim{CodeSession: db.CodeSession{Model: "selected/test", Metadata: json.RawMessage(`{"config":{"system_prompt":"Work carefully."}}`)}}
+	catalog := llmproviders.NewCatalog([]db.LLMProvider{
+		{Slug: "other", Models: db.LLMModels{{ID: "test", MaxOutputTokens: new(2048)}}},
+		{Slug: "selected", Models: db.LLMModels{{ID: "test", MaxOutputTokens: new(8192)}}},
+	})
+	config, err := resolveModelConfig(claim, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := worker.model(t.Context(), "turn", "test-token", config, nil, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +65,9 @@ func TestHarnessModelSendsTimeReminderAfterToolResult(t *testing.T) {
 	case request = <-requests:
 	default:
 		t.Fatal("the model request did not reach the gateway")
+	}
+	if request.Model != "selected/test" || request.MaxTokens != 8192 {
+		t.Fatalf("request model = %q, max_tokens = %d, want selected/test and 8192", request.Model, request.MaxTokens)
 	}
 	if len(request.System) != 1 || !strings.Contains(request.System[0].Text, "# Agent instructions\n\nWork carefully.") ||
 		strings.Contains(request.System[0].Text, "<system-reminder>") {

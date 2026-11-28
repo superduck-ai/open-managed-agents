@@ -9,6 +9,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/cloudharness"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -19,6 +20,8 @@ const (
 	settleTimeout   = 5 * time.Second
 	retryDelay      = 5 * time.Second
 )
+
+var errNeedsRedelivery = errors.New("harness turn needs redelivery")
 
 type Worker struct {
 	database *db.DB
@@ -36,12 +39,16 @@ func (w *Worker) RunOnce(ctx context.Context, wait, timeout time.Duration) (bool
 	if err != nil || message == nil {
 		return false, err
 	}
-	execute, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return true, w.runDelivery(execute, message)
+	return true, w.executeDelivery(ctx, message, timeout, nil)
 }
 
-func (w *Worker) runDelivery(ctx context.Context, message jetstream.Msg) error {
+func (w *Worker) executeDelivery(ctx context.Context, message jetstream.Msg, timeout time.Duration, loop *deliveryLoop) error {
+	execute, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return w.runDelivery(execute, message, loop)
+}
+
+func (w *Worker) runDelivery(ctx context.Context, message jetstream.Msg, loop *deliveryLoop) error {
 	delivery, err := decodeDelivery(message.Data())
 	if err != nil {
 		return errors.Join(err, message.Term())
@@ -59,7 +66,7 @@ func (w *Worker) runDelivery(ctx context.Context, message jetstream.Msg) error {
 		work = nextWork(work, task)
 	}
 	for ctx.Err() == nil {
-		next, err := w.runWork(ctx, message, ref, work, delivery)
+		next, err := w.runWork(ctx, message, ref, work, delivery, loop)
 		if err != nil || next == nil {
 			return err
 		}
@@ -74,7 +81,7 @@ func nextWork(delivery db.HarnessTurnDelivery, task db.HarnessTask) db.HarnessTu
 	return delivery
 }
 
-func (w *Worker) runWork(ctx context.Context, message jetstream.Msg, ref db.HarnessTurnRef, work db.HarnessTurnDelivery, input deliveryEnvelope) (*db.HarnessTask, error) {
+func (w *Worker) runWork(ctx context.Context, message jetstream.Msg, ref db.HarnessTurnRef, work db.HarnessTurnDelivery, input deliveryEnvelope, loop *deliveryLoop) (*db.HarnessTask, error) {
 	token, err := codesessions.NewModelAccessToken()
 	if err != nil {
 		return nil, redeliver(message, err)
@@ -96,8 +103,10 @@ func (w *Worker) runWork(ctx context.Context, message jetstream.Msg, ref db.Harn
 		w.logger.InfoContext(ctx, "harness settled delivery acknowledged", "turn_id", ref.UUID, "state", claim.State)
 		return nil, nil
 	}
-	w.logger.InfoContext(ctx, "harness turn claimed", "task_id", cmp.Or(claim.Task.UUID, claim.Lease.Ref.UUID),
-		"task_kind", cmp.Or(claim.Task.Kind, db.HarnessModelTask), "turn_id", claim.Lease.Ref.UUID, "session_id", claim.CodeSession.SessionExternalID)
+	loop.logClaim(ctx, w.logger,
+		slog.String("task_id", cmp.Or(claim.Task.UUID, claim.Lease.Ref.UUID)),
+		slog.String("task_kind", cmp.Or(claim.Task.Kind, db.HarnessModelTask)),
+		slog.String("turn_id", claim.Lease.Ref.UUID), slog.String("session_id", claim.CodeSession.SessionExternalID))
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go w.heartbeat(runCtx, cancel, claim.Lease, message, done)
@@ -156,9 +165,32 @@ func terminal(state string) bool {
 
 func (w *Worker) executeWork(ctx context.Context, claim db.HarnessTurnClaim, token string, delivery deliveryEnvelope) error {
 	if claim.Task.Kind == db.HarnessToolTask {
-		return w.executeTool(ctx, claim, token)
+		tool, err := w.database.ActiveHarnessTool(ctx, claim.Lease.Ref, claim.Task.UUID, claim.Lease.Epoch)
+		if err != nil {
+			return err
+		}
+		threadID := claim.Lease.Ref.SessionUUID
+		if claim.Subagent != nil {
+			threadID = claim.Subagent.UUID
+		}
+		return stepClaimedTask(ctx, cloudharness.ClaimedTask{
+			Work: cloudharness.ToolWork{Call: cloudharness.ToolCall{
+				ID: cloudharness.ToolCallID(tool.CallID), Name: tool.Name, Arguments: string(tool.Arguments),
+			}},
+			DispatchTool: func(ctx context.Context, _ cloudharness.ToolWork) error {
+				return w.executeTool(ctx, claim, token)
+			},
+		}, cloudharness.StepInput{Message: cloudharness.InputMessage{
+			GroupID: cloudharness.ThreadID(threadID), Content: cloudharness.ResumeThread{},
+		}})
 	}
 	return w.executeTextTurn(ctx, claim, token, delivery)
+}
+
+func stepClaimedTask(ctx context.Context, task cloudharness.ClaimedTask, input cloudharness.StepInput) error {
+	system := cloudharness.NewClaimedAgentSystem(task)
+	_, err := system.Step(ctx, []cloudharness.StepInput{input}, nil, nil)
+	return err
 }
 
 func (w *Worker) acknowledge(ctx context.Context, message jetstream.Msg, ref db.HarnessTurnRef, state string) error {
@@ -173,5 +205,5 @@ func (w *Worker) acknowledge(ctx context.Context, message jetstream.Msg, ref db.
 }
 
 func redeliver(message jetstream.Msg, errs ...error) error {
-	return errors.Join(errors.New("harness turn needs redelivery"), errors.Join(errs...), message.NakWithDelay(retryDelay))
+	return errors.Join(errNeedsRedelivery, errors.Join(errs...), message.NakWithDelay(retryDelay))
 }

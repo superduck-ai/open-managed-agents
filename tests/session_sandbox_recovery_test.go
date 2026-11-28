@@ -65,20 +65,35 @@ func TestSessionEventsReportIdleSandboxResumeFailure(t *testing.T) {
 	if failed.WorkerLeaseExpiresAt == nil || !failed.WorkerLeaseExpiresAt.Before(time.Now().UTC()) {
 		t.Fatalf("failed provider resume renewed worker lease to %v", failed.WorkerLeaseExpiresAt)
 	}
-	history := listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
-	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != "" {
-		t.Fatalf("failed delivery did not leave its committed input visible: %s", history.Data)
+	record := mustSessionRecord(t, app, session.ID)
+	assertPending := func(want int) {
+		t.Helper()
+		count := 0
+		for _, input := range sessionActivationEvents(t, app, record) {
+			if input.EventType != "user.message" {
+				continue
+			}
+			count++
+			if !input.ProcessedAt.IsZero() {
+				t.Fatalf("failed delivery confirmed input %s", input.ExternalID)
+			}
+		}
+		if count != want {
+			t.Fatalf("stored inputs = %d, want %d", count, want)
+		}
+		history := listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
+		if len(history.Data) != 0 {
+			t.Fatalf("pending input in history: %s", history.Data)
+		}
 	}
+	assertPending(1)
 
 	retry := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"second resume attempt"}]}]}`), defaultTestKey, true)
 	retry.Body.Close()
 	if retry.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("retry status = %d, want 500 while provider remains unavailable", retry.StatusCode)
 	}
-	history = listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
-	if len(history.Data) != 2 {
-		t.Fatalf("retry input was not queued: %s", history.Data)
-	}
+	assertPending(2)
 
 	calls := app.sandboxTimeouts.snapshotCalls()
 	if len(calls) != 2 {

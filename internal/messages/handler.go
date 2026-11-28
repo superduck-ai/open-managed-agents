@@ -22,25 +22,26 @@ import (
 )
 
 var requestHeadersToRemove = map[string]struct{}{
-	sessioncontract.HarnessTurnHeader: {},
-	"X-Oma-Model-Purpose":             {},
-	"Authorization":                   {},
-	"Connection":                      {},
-	"Cookie":                          {},
-	"Host":                            {},
-	"Keep-Alive":                      {},
-	"Proxy-Authenticate":              {},
-	"Proxy-Authorization":             {},
-	"Proxy-Connection":                {},
-	"Te":                              {},
-	"Traceparent":                     {},
-	"Tracestate":                      {},
-	"Trailer":                         {},
-	"Transfer-Encoding":               {},
-	"Upgrade":                         {},
-	"X-Api-Key":                       {},
-	"X-Organization-Uuid":             {},
-	"X-Workspace-Id":                  {},
+	sessioncontract.HarnessTurnHeader:        {},
+	sessioncontract.HarnessModelStreamHeader: {},
+	"X-Oma-Model-Purpose":                    {},
+	"Authorization":                          {},
+	"Connection":                             {},
+	"Cookie":                                 {},
+	"Host":                                   {},
+	"Keep-Alive":                             {},
+	"Proxy-Authenticate":                     {},
+	"Proxy-Authorization":                    {},
+	"Proxy-Connection":                       {},
+	"Te":                                     {},
+	"Traceparent":                            {},
+	"Tracestate":                             {},
+	"Trailer":                                {},
+	"Transfer-Encoding":                      {},
+	"Upgrade":                                {},
+	"X-Api-Key":                              {},
+	"X-Organization-Uuid":                    {},
+	"X-Workspace-Id":                         {},
 }
 
 // responseHeadersToRemove 防止把仅对上游连接有效的 hop-by-hop header 返回给客户端。
@@ -95,6 +96,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	if !ok {
 		httpapi.WriteError(w, r, authenticationRequiredError())
 		return
+	}
+	if principal.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		streamKey := r.Header.Get(sessioncontract.HarnessModelStreamHeader)
+		if !strings.HasPrefix(streamKey, "1:") || len(streamKey) != 66 {
+			httpapi.WriteError(w, r, harnessModelStreamRequiredError())
+			return
+		}
 	}
 	if r.ContentLength > llmproviders.MaxMessagesRequestBodyBytes {
 		writeRequestTooLarge(w, r)

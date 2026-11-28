@@ -62,6 +62,15 @@ func (m CatalogModel) QualifiedModelID() string {
 	return QualifiedModelID(m.Provider.Slug, m.UpstreamModelID)
 }
 
+func (m CatalogModel) Definition() db.LLMModel {
+	for _, model := range m.Provider.Models {
+		if model.ID == m.UpstreamModelID {
+			return model
+		}
+	}
+	return db.LLMModel{}
+}
+
 func NewCatalog(providers []db.LLMProvider) Catalog {
 	return Catalog{providers: providers}
 }

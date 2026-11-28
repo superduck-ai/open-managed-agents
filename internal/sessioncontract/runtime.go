@@ -5,20 +5,16 @@ import (
 	"errors"
 	"slices"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const CloudHarnessRuntime = "cloud_harness"
 const HarnessTurnHeader = "X-Oma-Harness-Turn"
+const HarnessModelStreamHeader = "X-Oma-Harness-Model-Stream"
+const HarnessModelFactsComment = ": oma-harness-model-facts "
 const HarnessInputMaxBytes = 16 << 10
 const HarnessToolResultMaxBytes = 64 << 10
 
-const (
-	HarnessAskUserQuestion    = "AskUserQuestion"
-	HarnessSubscribe          = "SubscribeToEvents"
-	HarnessCancelSubscription = "CancelSubscription"
-)
+const HarnessAskUserQuestion = "AskUserQuestion"
 
 type HarnessToolResult struct {
 	Text   string `json:"text"`
@@ -26,14 +22,8 @@ type HarnessToolResult struct {
 }
 
 type HarnessUserInput struct {
-	Text         string
-	Metadata     json.RawMessage
-	Subscription *HarnessSubscriptionEvent
-}
-
-type HarnessSubscriptionEvent struct {
-	ID    string `json:"subscription_id"`
-	Final bool   `json:"final"`
+	Text     string
+	Metadata json.RawMessage
 }
 
 type HarnessChoiceOption struct {
@@ -101,39 +91,12 @@ func ParseHarnessChoiceResponse(payload json.RawMessage) (HarnessChoiceResponse,
 	return response, nil
 }
 
-func ParseHarnessSubscriptionID(payload json.RawMessage) (string, error) {
-	var args HarnessSubscriptionEvent
-	if err := json.Unmarshal(payload, &args); err != nil {
-		return "", err
-	}
-	if !validHarnessSubscriptionID(args.ID) {
-		return "", errors.New("cloud harness requires a subscription UUID")
-	}
-	return args.ID, nil
-}
-
-func validHarnessSubscriptionID(id string) bool {
-	value, err := uuid.Parse(id)
-	return err == nil && value.String() == id
-}
-
-func (i HarnessUserInput) ModelText() string {
-	if i.Subscription == nil {
-		return i.Text
-	}
-	return "Subscription event (" + i.Subscription.ID + "):\n" + i.Text
-}
-
 func ParseHarnessUserInput(payload json.RawMessage) (HarnessUserInput, error) {
 	var input struct {
-		Metadata     json.RawMessage           `json:"metadata"`
-		Subscription *HarnessSubscriptionEvent `json:"subscription_event"`
+		Metadata json.RawMessage `json:"metadata"`
 	}
 	if err := json.Unmarshal(payload, &input); err != nil {
 		return HarnessUserInput{}, err
-	}
-	if input.Subscription != nil && !validHarnessSubscriptionID(input.Subscription.ID) {
-		return HarnessUserInput{}, errors.New("cloud harness requires a subscription UUID")
 	}
 	if string(input.Metadata) == "null" {
 		input.Metadata = nil
@@ -142,7 +105,7 @@ func ParseHarnessUserInput(payload json.RawMessage) (HarnessUserInput, error) {
 	if err != nil {
 		return HarnessUserInput{}, err
 	}
-	return HarnessUserInput{Text: text, Metadata: input.Metadata, Subscription: input.Subscription}, nil
+	return HarnessUserInput{Text: text, Metadata: input.Metadata}, nil
 }
 
 func harnessInputText(payload json.RawMessage, allowEmpty bool) (string, error) {

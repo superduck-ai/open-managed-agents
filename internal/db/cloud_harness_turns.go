@@ -55,10 +55,12 @@ const (
 	HarnessModelStart HarnessModelPhase = iota + 1
 	HarnessModelEnd
 	HarnessModelError
+	HarnessModelThinking
 )
 
 type HarnessModelCompletion struct {
 	Message  harness.AssistantMessage
+	Pending  harness.Work
 	UserText string
 }
 
@@ -292,22 +294,22 @@ func recordHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, lea
 	if err != nil {
 		return nil, err
 	}
-	if phase == HarnessModelStart {
+	if phase == HarnessModelStart || phase == HarnessModelThinking {
 		return append(confirmed, batch.Events...), nil
 	}
 	if phase == HarnessModelEnd {
 		if completion == nil {
 			return nil, ErrInvalidState
 		}
-		tool, err := completeHarnessConversation(ctx, executor, session.ExternalID, row, *completion)
+		tool, err := recordHarnessModelHistory(ctx, executor, session.ExternalID, row, *completion)
 		if err != nil {
 			return nil, err
 		}
-		if tool.UUID != "" {
-			if tool.Name == sessioncontract.HarnessAskUserQuestion && row.SubagentThreadUUID == nil {
-				waiting, err := parkHarnessChoiceTx(ctx, executor, session, lease, row, tool, batch.Events)
-				return append(batch.Events, waiting...), err
-			}
+		switch completion.Pending.(type) {
+		case harness.UserChoiceWork:
+			waiting, err := parkHarnessChoiceTx(ctx, executor, session, lease, row, tool, batch.Events)
+			return append(batch.Events, waiting...), err
+		case harness.ToolWork:
 			return batch.Events, checkpointHarnessTool(ctx, mapper, lease, row, tool, "pending")
 		}
 	}

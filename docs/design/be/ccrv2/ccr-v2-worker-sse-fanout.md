@@ -201,7 +201,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 
 待确认工具统一调用 `managedagentsevents.PendingToolEventIDs`：SQL 只锁定并读取 metadata，不再单独实现 JSON 判断。接受旧的精确键或 `managed_agent_tool_permission_request:<public_event_id>`；请求必须具有 public_event_id、request_id、provider_tool_use_id，带后缀的键必须匹配 ID。同一 ID 的新键优先于旧键，null/空请求无效，缺省、空或 null 的 session_thread_id 都归主线程。公开 Session 等待列表包含全部线程，Thread 列表和接纳判断只看对应线程。Worker payload 中过期的 requires_action.event_ids 不覆盖已清理的 metadata。metadata 更新请求中的 null 仍表示删除该键。Worker 上报不带具体工具 ID 的通用 requires_action 时，Session/主线程仍转为 idle；没有待确认工具则不制造工具 event_ids。线程状态显式指定 owner_session_thread_id 时保留其历史/SSE 归属；未指定 owner 的协调事件仍归主线程。
 
-CCR v2 历史按 processed_at 排序，同时间保留数据库写入顺序。默认 asc。`created_at[gt|gte|lt|lte]` 按 Claude 合同比较处理时间。cursor 只携带公开事件 ID，服务端按该事件的 processed_at 与 id 定位；cursor 引用的事件必须存在于当前 workspace/session（允许软删除），否则返回 400。迁移 `00064`、`00067` 曾允许未处理输入的空时间；`00069` 要求 `processed_at` 非空，仍有空时间的事件会使迁移失败。部署前必须通过旧投递链处理或显式处置遗留输入，不能回填时间假装投递成功。`00065` 的并发索引仍用于历史排序。
+Session 和 Thread 的公开历史只返回 processed_at 非空的事件，按 processed_at 排序，同时间保留数据库写入顺序。默认 asc。`created_at[gt|gte|lt|lte]` 按 Claude 合同比较处理时间。cursor 只携带公开事件 ID，服务端按该事件的 processed_at 与 id 定位；cursor 引用的事件必须存在于当前 workspace/session（允许软删除），否则返回 400。迁移 `00080` 允许排队输入以空处理时间入库。旧页游标仍可按待处理锚点的接收时间续页。`00065` 的并发索引支持历史排序。
 
 公开事件 JSON 与持久事件 SSE 不回显内部 `created_at`；新写入的公开事件 payload 也不存放该字段。实时投递与激活重放共用事件转换：Worker 消息的 `created_at`、`timestamp` 取内部事件记录的接收时间 `SessionEvent.CreatedAt`；缺失接收时间应报错，不能退回投递时刻。列表仍保留 Claude 的 `created_at[...]` 查询名及上述 `processed_at` 比较规则。用户消息内容只接受有效的 text、image、document 块，用户不能提交平台专用的 redacted 块。空更新或同值更新不产生 `session.updated`；发生更新时事件只包含实际变化的字段。闲置 Session 归档写入 thread/session terminated 状态事件并终止关联 Worker；线程归档也通过同一事件入口写入和广播状态。`session.deleted` 广播后结束活动 SSE 连接。
 
@@ -278,7 +278,7 @@ Worker 输入的 processing/processed 回执先在同一个 Yourbatis 事务中�
 
 `normalizeInputEvent` 将 `user.message` 的初始 `processed_at` 设为 null。事务提交后，`publishSessionEvents` 必须广播该未处理版本，不能因 `ProcessedAt` 为零值而跳过。该发布发生在 `QueuePublicSessionEvents` 投递之前。后续处理确认仍通过既有路径广播同一 ID 的时间戳版本；实时 SSE 保留两次投递，客户端按 ID 升级确认状态，不能按 ID 丢弃第二版或重复计为两条消息。原始内容和线程归属保持不变，最终history仍是一条消息的最新状态。
 
-排队版本与处理版本共用现有session fanout、workspace/session路由及连接线程过滤，不新增数据库行、消息ID、跨租户广播或模型调用。此修正针对已连接的实时SSE，不合成历史null帧，也不改变cursor重放和历史分页策略。
+排队版本与处理版本共用现有session fanout、workspace/session路由及连接线程过滤，不新增数据库行、消息ID、跨租户广播或模型调用。此修正针对已连接的实时SSE，不合成历史 null 帧。待处理事件可作为 SSE 重连锚点，公开历史在确认后才返回该事件。
 
 普通回归 `TestQueuedUserMessagePublishesNullThenProcessedSSE` 覆盖fanout、Hub、连接接受和SSE序列化的两版同ID事件。外部 `CHAT-ACK-005` 在Bash运行时发送第二条消息，校验同ID原始null先于时间戳、最终history归并一致、任务完成及清理；send响应null不替代原始SSE证据。
 

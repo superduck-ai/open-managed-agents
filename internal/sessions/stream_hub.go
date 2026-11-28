@@ -45,7 +45,7 @@ func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
 	threadID           string
-	useInputReceivedAt bool
+	cloudHarness       bool
 	primaryThread      bool
 	streamDeltaTypes   map[string]struct{}
 	activePreviewIDs   map[string]struct{}
@@ -309,7 +309,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		if err != nil {
 			return
 		}
-		writeSSE(w, event, subscription.threadID, subscription.connection.useInputReceivedAt)
+		writeSSE(w, event, subscription.threadID, subscription.connection.cloudHarness)
 		flusher.Flush()
 		if event.EventType == "session.deleted" {
 			return

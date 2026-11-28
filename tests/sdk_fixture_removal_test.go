@@ -120,15 +120,23 @@ func TestFormerSDKIdentitySessionEventsPersistAndMatchPublicStream(t *testing.T)
 		t.Fatal("missing persisted event ID")
 	}
 	history := listSessionEvents(t, app, session.ID, "types[]=user.message", formerSDKKey)
-	if len(history.Data) != 1 || !reflect.DeepEqual(decode(history.Data[0]), expected) {
-		t.Fatalf("history differs from send response: %+v", history)
+	if len(history.Data) != 0 {
+		t.Fatalf("pending input in history: %+v", history)
 	}
 	consumePublicInput(t, app, code, epoch, expected["id"].(string))
 	history = listSessionEvents(t, app, session.ID, "types[]=user.message", formerSDKKey)
 	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
 		t.Fatalf("input was not processed: %+v", history)
 	}
-	expected = decode(history.Data[0])
+	confirmed := decode(history.Data[0])
+	// SSE supplies the primary thread owner in addition to the session-level payload.
+	var threadID string
+	if err := app.pool.QueryRow(t.Context(), `SELECT external_id FROM session_threads WHERE session_external_id = $1 AND parent_thread_uuid IS NULL`, session.ID).Scan(&threadID); err != nil {
+		t.Fatal(err)
+	}
+	expected["session_thread_id"] = threadID
+	confirmed["session_thread_id"] = threadID
+	seenQueued := false
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -139,13 +147,14 @@ func TestFormerSDKIdentitySessionEventsPersistAndMatchPublicStream(t *testing.T)
 		if value["id"] != expected["id"] {
 			continue
 		}
-		// SSE supplies the primary thread owner in addition to the session-level payload.
-		var threadID string
-		if err := app.pool.QueryRow(t.Context(), `SELECT external_id FROM session_threads WHERE session_external_id = $1 AND parent_thread_uuid IS NULL`, session.ID).Scan(&threadID); err != nil {
-			t.Fatal(err)
+		if !seenQueued {
+			if value["processed_at"] != nil || !reflect.DeepEqual(value, expected) {
+				t.Fatalf("queued SSE differs from send response: %+v", value)
+			}
+			seenQueued = true
+			continue
 		}
-		expected["session_thread_id"] = threadID
-		if !reflect.DeepEqual(value, expected) {
+		if !reflect.DeepEqual(value, confirmed) {
 			t.Fatalf("stream differs from persisted event: %+v", value)
 		}
 		return

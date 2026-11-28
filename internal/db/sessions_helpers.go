@@ -232,8 +232,8 @@ func sessionPageParameters(params ListSessionsPageParams) sessionPageMapperParam
 
 func sessionEventPageParameters(params ListSessionEventsPageParams) sessionEventPageMapperParams {
 	return sessionEventPageMapperParams{
-		UseInputReceivedAt: params.UseInputReceivedAt,
-		WorkspaceUUID:      params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
+
+		WorkspaceUUID: params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
 		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly,
 		FetchLimit: params.Limit + 1, Cursor: params.Cursor, Descending: params.Order == "desc",
 		Types: params.Types, CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelRequest, tools []ModelRequestToolUse, at time.Time) ([]json.RawMessage, error) {
@@ -22,7 +21,7 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 		if request.toolThreadID != "" && isDelegationTool(tool.Name) {
 			continue
 		}
-		permission, identity, err := s.modelToolPermission(ctx, request, tool.Name)
+		permission, identity, err := s.resolveToolPermission(ctx, request.CodeSessionID, tool.Name, request.toolThreadID)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +46,7 @@ func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identi
 			return nil, nil
 		}
 		permission = resolvedToolPermissionDeny
-	} else if !question && (permission != resolvedToolPermissionAllow || (external && identity.Kind == "agent_toolset" && !(request.harnessLease != nil && isHarnessSubscriptionTool(tool.Name)))) {
+	} else if !question && (permission != resolvedToolPermissionAllow || (external && identity.Kind == "agent_toolset")) {
 		return nil, nil
 	}
 	var input map[string]any
@@ -73,15 +72,4 @@ func (s *Service) modelToolTurnPending(ctx context.Context, record db.CodeSessio
 		return false, err
 	}
 	return end.Error == nil && len(end.ToolUseIDs) > 0, nil
-}
-
-func (s *Service) modelToolPermission(ctx context.Context, request *ModelRequest, name string) (resolvedToolPermission, toolIdentity, error) {
-	if request.harnessLease != nil && isHarnessSubscriptionTool(name) {
-		return resolvedToolPermissionAllow, toolIdentity{Kind: "agent_toolset", ToolName: name}, nil
-	}
-	return s.resolveToolPermission(ctx, request.CodeSessionID, name, request.toolThreadID)
-}
-
-func isHarnessSubscriptionTool(name string) bool {
-	return name == sessioncontract.HarnessSubscribe || name == sessioncontract.HarnessCancelSubscription
 }

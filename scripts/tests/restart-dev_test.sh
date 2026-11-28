@@ -53,9 +53,10 @@ if (args[0] === "pane" && args[1] === "list") {
   if (mode === "monitor") {
     const workerPath = root + "/tmp/dev-harness/exe/oma-harness-worker";
     processes = [{ pid: 999, cwd: root + "/.worktrees/other", argv: [workerPath] }];
-    const worker = [301, 301, 301, 304][count - 1];
-    if (count <= 5) processes.push({ pid: 200, cwd: root, argv: ["bash", "./scripts/restart-harness.sh"] });
-    if (worker) processes.push({ pid: worker, cwd: root, argv: [workerPath] });
+    if (count <= 9) {
+      processes.push({ pid: 200, cwd: root, argv: ["bash", "./scripts/restart-harness.sh"] });
+      processes.push({ pid: 301, cwd: root, argv: [workerPath] });
+    }
   }
   if (id.startsWith("new-") && count === 1) processes = [];
   if ((id.startsWith("new-") && count === 2) || mode === "busy") processes = [{ pid: 101, name: "git", cwd: root, cmdline: "git status" }];
@@ -81,20 +82,23 @@ if (args[0] === "pane" && args[1] === "list") {
   reply({});
 } else if (args[1] === "read" && mode === "monitor") {
   const count = Number(await Bun.file(`${dir}/monitor-worker`).text());
+  if (count === 7) process.exit(1);
   const logs = [
-    ["11:00:00.100 INFO harness worker ready"],
-    ["11:00:01.100 INFO [harness_worker] harness turn claimed task_id=test task_kind=model"],
-    ["11:00:03.100 INFO [harness_worker] harness turn claimed task_id=tool task_kind=tool"],
-    ["11:00:04.100 INFO [harness_worker] harness turn acknowledged state=waiting_tool",
-      "harness worker process exited pid=301 status=0 elapsed=4s",
-      "11:00:05.100 INFO harness worker ready"],
-    ["11:00:06.100 INFO [harness_worker] harness turn claimed task_id=resume task_kind=model",
-      "11:00:07.100 INFO [harness_worker] harness turn acknowledged state=completed",
-      "harness worker process exited pid=304 status=0 elapsed=2s",
-      "11:00:07.200 INFO harness worker ready"],
-    ["11:00:37.200 INFO [harness_worker] harness turn claimed task_id=retry task_kind=tool",
-      "11:00:38.100 ERROR harness worker stopped error=\"harness turn needs redelivery\\nprivate-sandbox-detail\"",
-      "harness worker process exited pid=305 status=1 elapsed=1s"],
+    ["harness worker process started pid=301", "11:00:00.100 INFO harness worker ready"],
+    ["11:00:01.100 INFO [harness_worker] harness turn claimed pid=301 loop_id=1 task_id=test task_kind=model active_loops=1"],
+    ["11:00:02.100 INFO [harness_worker] harness turn claimed pid=301 loop_id=2 task_id=resume task_kind=subagent active_loops=2"],
+    ["11:00:03.100 INFO [harness_worker] harness turn claimed pid=301 loop_id=1 task_id=tool task_kind=tool active_loops=2"],
+    ["11:00:04.100 INFO [harness_worker] harness turn acknowledged pid=301 loop_id=1 state=waiting_tool",
+      "11:00:04.102 INFO [harness_worker] harness loop finished pid=301 loop_id=1 active_loops=1 elapsed_ms=3002 result=finished"],
+    ["11:00:06.100 INFO [harness_worker] harness turn acknowledged pid=301 loop_id=2 state=completed",
+      "11:00:06.102 INFO [harness_worker] harness loop finished pid=301 loop_id=2 active_loops=0 elapsed_ms=4002 result=finished"],
+    [],
+    ["11:00:37.200 INFO [harness_worker] harness turn claimed pid=301 loop_id=3 task_id=retry task_kind=tool active_loops=1",
+      "11:00:38.100 WARN [harness_worker] harness loop finished pid=301 loop_id=3 active_loops=0 elapsed_ms=900 result=redelivery error=\"harness turn needs redelivery\\nprivate-sandbox-detail\""],
+    ["harness worker process exited pid=301 status=1 elapsed=38s",
+      "harness worker process started pid=304",
+      "11:00:39.100 INFO [harness_worker] harness turn claimed pid=304 loop_id=1 task_id=test task_kind=model active_loops=1"],
+    ["harness worker process exited pid=304 status=0 elapsed=1s"],
   ];
   console.log(logs.slice(0, count).flat().join("\n"));
 } else if (args[1] === "read") {
@@ -169,13 +173,17 @@ PATH="$fixture_dir/bin:$PATH" MOCK_MODE=monitor MOCK_STATE="$fixture_dir/monitor
 bun -e '
   const output = await Bun.file(process.argv[1]).text();
   for (const text of [
-    "Now        Waiting for NATS · PID 301",
-    "Now        Running model step · PID 301",
-    "Now        Running tool · PID 301",
-    "Last input Model → Tool → Waiting for sandbox result · 4s",
-    "Last exit  Completed · 2s · PID 304\nLast input Model → Completed · 2s",
-    "Last exit  Returned for redelivery · 1s · PID 305",
-    "Now        Launcher stopped",
+    "Now        Waiting for NATS · PID 301\nAgent loops 0",
+    "Now        Running model step · PID 301\nAgent loops 1",
+    "Now        Processing inputs · PID 301\nAgent loops 2",
+    "Now        Running subagent model · PID 301\nAgent loops 1",
+    "Last input Model → Tool → Waiting for sandbox result · 3002ms",
+    "Last input Model → Completed · 4002ms",
+    "Now        Worker logs unavailable · PID 301\nAgent loops —",
+    "Last input Tool → Returned for redelivery · 900ms",
+    "Now        Starting Worker · PID 301\nAgent loops —",
+    "Last exit  Exit code 1 · 38s · PID 301",
+    "Now        Launcher stopped\nAgent loops 0",
     "Launcher   PID 200",
   ]) {
     if (!output.includes(text)) throw new Error("missing panel output: " + text + "\n" + output);
@@ -240,6 +248,8 @@ launcher_pid=
   IFS='|' read -r next_pid next_config next_args
 } < "$fixture_dir/workers"
 [[ "$first_pid" != "$next_pid" && "$first_config" == "$fixture_dir/repo/.run/generated/config.yaml" && "$first_config" == "$next_config" ]]
-[[ "$first_args" == "-api-url http://oma-fixture-api.localhost:1337" && "$first_args" == "$next_args" ]]
+[[ "$first_args" == "-api-url http://oma-fixture-api.localhost:1337 -serve" && "$first_args" == "$next_args" ]]
+grep -Fxq "harness worker process started pid=$first_pid" "$fixture_dir/launcher-output"
+grep -Fxq "harness worker process started pid=$next_pid" "$fixture_dir/launcher-output"
 grep -Eq "^harness worker process exited pid=$first_pid status=0 elapsed=[0-9]+s$" "$fixture_dir/launcher-output"
 echo "Harness supervisor: passed"

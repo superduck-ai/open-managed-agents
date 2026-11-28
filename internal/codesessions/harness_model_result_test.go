@@ -1,6 +1,23 @@
 package codesessions
 
-import "testing"
+import (
+	"errors"
+	"testing"
+	"time"
+
+	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
+)
+
+func TestHarnessModelFinishRejectsMissingAction(t *testing.T) {
+	frame := HarnessModelFrame{Type: HarnessModelFinish, Result: &HarnessModelFinal{
+		Facts:  HarnessModelFacts{EndedAt: time.Now()},
+		Blocks: []HarnessModelBlock{{Text: "hello"}},
+	}}
+	if err := (&Service{}).applyHarnessModelFrame(t.Context(), &ModelRequest{}, frame); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("missing action = %v, want protocol error", err)
+	}
+}
 
 func TestHarnessModelResultKeepsOnlyRestorableText(t *testing.T) {
 	request := &ModelRequest{StartID: "start", CodeSessionID: "cse_test"}
@@ -34,10 +51,40 @@ func TestHarnessModelResultRejectsAmbiguousToolCall(t *testing.T) {
 func TestHarnessModelResultKeepsToolOnlyCompletion(t *testing.T) {
 	request := &ModelRequest{StartID: "start", CodeSessionID: "cse_test"}
 	result := harnessTextResult(request, ModelRequestResult{
-		ToolUseIDs: []string{"one"},
-		ToolUses:   []ModelRequestToolUse{{ID: "one", Name: "Read", Input: []byte(`{"file_path":"/tmp/example"}`)}},
+		ToolUseIDs:  []string{"one"},
+		ToolUses:    []ModelRequestToolUse{{ID: "one", Name: "Read", Input: []byte(`{"file_path":"/tmp/example"}`)}},
+		harnessNext: HarnessModelTool,
 	})
 	if result.ErrorType != "" || len(result.ToolUses) != 1 || len(result.Messages) != 0 {
 		t.Fatalf("unexpected tool-only result: %+v", result)
+	}
+	want := harness.ToolWork{Call: harness.ToolCall{ID: "one", Name: "Read", Arguments: `{"file_path":"/tmp/example"}`}}
+	transition, err := harnessModelTransition(request, result)
+	if err != nil || transition.Pending != want {
+		t.Fatalf("tool-only transition = %+v, %v", transition, err)
+	}
+}
+
+func TestHarnessModelTransitionWaitsForRootChoice(t *testing.T) {
+	call := ModelRequestToolUse{ID: "pick", Name: sessioncontract.HarnessAskUserQuestion,
+		Input: []byte(`{"questions":[{"id":"color","question":"Which color?","options":[{"label":"Blue"},{"label":"Green"}]}]}`)}
+	request := &ModelRequest{}
+	result := harnessTextResult(request, ModelRequestResult{
+		ToolUseIDs: []string{call.ID}, ToolUses: []ModelRequestToolUse{call}, harnessNext: HarnessModelUserChoice,
+	})
+	transition, err := harnessModelTransition(request, result)
+	want := harness.UserChoiceWork{Call: harness.ToolCall{ID: harness.ToolCallID(call.ID), Name: call.Name, Arguments: string(call.Input)}}
+	if result.ErrorType != "" || err != nil || transition.Pending != want {
+		t.Fatalf("choice transition = %+v, %v, result error type = %q", transition, err, result.ErrorType)
+	}
+}
+
+func TestHarnessModelTransitionRejectsDispatchOfUserChoice(t *testing.T) {
+	result := ModelRequestResult{
+		harnessNext: HarnessModelTool,
+		ToolUses:    []ModelRequestToolUse{{ID: "pick", Name: sessioncontract.HarnessAskUserQuestion}},
+	}
+	if _, err := harnessModelTransition(&ModelRequest{}, result); !errors.Is(err, ErrProtocol) {
+		t.Fatalf("choice dispatched as a tool: %v", err)
 	}
 }

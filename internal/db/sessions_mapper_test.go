@@ -219,7 +219,8 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(session_events.processed_at, session_events.created_at) ASC, id ASC`)
+	assertMapperSQLContains(t, eventBound, "AND (session_events.processed_at, id) > ( SELECT COALESCE(session_events.processed_at, session_events.created_at)")
+	assertMapperSQLContains(t, eventBound, "ORDER BY session_events.processed_at ASC, id ASC")
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -260,6 +261,27 @@ func TestSessionEventMapperFindAssistantEchoKeys(t *testing.T) {
 		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "requestID", "source"},
 		wantSQLFragments:  []string{"FROM session_events", "payload->>'model_request_start_id' = $3", "payload->>'_echo_source' = $4", "payload->>'_echo_key' IS NOT NULL"},
 	})
+}
+
+func TestProcessedSessionEventPage(t *testing.T) {
+	params := sessionEventPageMapperParams{
+		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 2,
+		Cursor: &SessionEventPageCursor{ExternalID: "event"},
+	}
+	for _, descending := range []bool{false, true} {
+		params.Descending = descending
+		bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, params)
+		order, comparison := "ASC", ">"
+		if descending {
+			order, comparison = "DESC", "<"
+		}
+		assertMapperBuilderContract(t, mapperBuilderContract{
+			statement: sessionEventMapperListPageStatement, bound: bound,
+			wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.WorkspaceUUID", "params.SessionExternalID", "params.Cursor.ExternalID", "params.FetchLimit"},
+			wantSQLFragments:  []string{"AND processed_at IS NOT NULL", "AND (session_events.processed_at, id) " + comparison, "ORDER BY session_events.processed_at " + order + ", id " + order},
+		})
+	}
 }
 
 func TestSessionEventMapperCreatedAtParametersFilterProcessingTime(t *testing.T) {
@@ -352,12 +374,21 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 	}
 }
 
-func TestHarnessEventPageUsesInputReceivedAtForCursorAndOrdering(t *testing.T) {
-	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+func TestHarnessEventPageUsesInsertionOrderForCursorAndOrdering(t *testing.T) {
+	params := sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 2,
-		Cursor: &SessionEventPageCursor{ExternalID: "input"}, UseInputReceivedAt: true,
+		Cursor: &SessionEventPageCursor{ExternalID: "input"},
+	}
+	bound := buildSessionEventMapperListPageByWriteOrder(yourbatis.DialectPostgres, params)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListPageByWriteOrderStatement, bound: bound,
+		wantID: "SessionEventMapper.ListPageByWriteOrder", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.WorkspaceUUID", "params.SessionExternalID", "params.Cursor.ExternalID", "params.FetchLimit"},
+		wantSQLFragments:  []string{"AND processed_at IS NOT NULL", "AND id > ( SELECT id FROM session_events", "workspace_uuid = $3 AND session_external_id = $4 AND external_id = $5", "ORDER BY id ASC LIMIT $6"},
+		wantSQLAbsent:     []string{"COALESCE("},
 	})
-	assertMapperSQLContains(t, bound, "AND ( CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
-	assertMapperSQLContains(t, bound, "SELECT CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
-	assertMapperSQLContains(t, bound, "ORDER BY CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at")
+	params.Descending = true
+	bound = buildSessionEventMapperListPageByWriteOrder(yourbatis.DialectPostgres, params)
+	assertMapperSQLContains(t, bound, "AND id < ( SELECT id FROM session_events")
+	assertMapperSQLContains(t, bound, "ORDER BY id DESC LIMIT $6")
 }

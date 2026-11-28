@@ -39,7 +39,7 @@ func TestSessionQueuesActiveInputs(t *testing.T) {
 		t.Fatalf("queued inputs lost running status: %s", status)
 	}
 	history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
-	if len(history.Data) != 3 || sessionInputProcessedAt(t, history.Data[0]) == "" || sessionInputProcessedAt(t, history.Data[1]) != "" || sessionInputProcessedAt(t, history.Data[2]) != "" {
+	if len(history.Data) != 1 || sessionEventStringField(t, history.Data[0], "id") != first || sessionInputProcessedAt(t, history.Data[0]) == "" {
 		t.Fatalf("processing states: %s", history.Data)
 	}
 	consumePublicInput(t, app, worker, epoch, second)
@@ -49,6 +49,9 @@ func TestSessionQueuesActiveInputs(t *testing.T) {
 		t.Fatalf("drained session status: %s", status)
 	}
 	history = listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	if len(history.Data) != 3 {
+		t.Fatalf("processed history: %s", history.Data)
+	}
 	for i, id := range []string{first, second, third} {
 		if sessionEventStringField(t, history.Data[i], "id") != id || sessionInputProcessedAt(t, history.Data[i]) == "" {
 			t.Fatalf("processed history order: %s", history.Data)

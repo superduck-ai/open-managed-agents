@@ -63,3 +63,33 @@ func TestThinkingStatusPublishesBeforeAnswerWithoutBody(t *testing.T) {
 		})
 	}
 }
+
+func TestThinkingBlockStopPublishesCompletion(t *testing.T) {
+	var order []string
+	o := &responseObservation{
+		streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"},
+		publishThinking: func(string, int) bool {
+			order = append(order, "thinking start")
+			return true
+		},
+		finishThinking: func(id string, index int) {
+			if id != "msg_test" || index != 0 {
+				t.Fatalf("closed the wrong block: %s, %d", id, index)
+			}
+			order = append(order, "thinking stop")
+		},
+	}
+	for _, frame := range []string{
+		`{"type":"message_start","message":{"id":"msg_test"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"private"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"answer"}}`,
+		`{"type":"content_block_stop","index":1}`,
+	} {
+		o.observeFrame([]byte(frame))
+	}
+	if !slices.Equal(order, []string{"thinking start", "thinking stop"}) || o.complete {
+		t.Fatalf("preview callbacks = %v, complete = %t", order, o.complete)
+	}
+}

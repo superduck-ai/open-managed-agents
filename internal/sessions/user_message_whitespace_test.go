@@ -6,7 +6,20 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
+
+func TestHarnessRejectsRemovedSubscriptionInput(t *testing.T) {
+	session := db.Session{ExecutionRuntime: sessioncontract.CloudHarnessRuntime}
+	raw := json.RawMessage(`{"type":"user.message","content":[{"type":"text","text":"build completed"}],"subscription_event":{"subscription_id":"32974c91-fec5-43d6-a32a-9669d06d1437"}}`)
+	now := time.Now()
+	if event, _, _, err := normalizeInputEvent(session, raw, now); err == nil || event.ExternalID != "" {
+		t.Fatal("subscription callback was accepted as a user message")
+	}
+	if events, err := normalizeSessionInitialEvents(&session, json.RawMessage("["+string(raw)+"]"), now); err == nil || events != nil {
+		t.Fatal("subscription callback was accepted as an initial event")
+	}
+}
 
 func TestUserMessageRejectsWhitespaceText(t *testing.T) {
 	for _, text := range []string{"", " ", "\t\r\n", "\u00a0\u3000", "\u2003"} {

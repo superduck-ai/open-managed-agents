@@ -59,7 +59,7 @@ func TestHarnessConversationThreadAndSummaryBindings(t *testing.T) {
 		{
 			statement: harnessConversationMapperInsertThreadStatement, bound: buildHarnessConversationMapperInsertThread(dialect, key, thread),
 			wantID: "HarnessConversationMapper.InsertThread", wantKind: yourbatis.StatementInsert,
-			wantArgumentNames: append(slices.Clone(keyArguments), "thread.RootThreadUUID", "thread.ParentThreadUUID", "thread.SpawnMessageSeq", "thread.SpawnToolCallID", "thread.Subscription", "thread.Fresh"),
+			wantArgumentNames: append(slices.Clone(keyArguments), "thread.RootThreadUUID", "thread.ParentThreadUUID", "thread.SpawnMessageSeq", "thread.SpawnToolCallID", "thread.Fresh"),
 			wantSQLFragments:  []string{"thread_uuid, root_thread_uuid, parent_thread_uuid", "spawn_message_seq, spawn_tool_call_id"},
 		},
 		{

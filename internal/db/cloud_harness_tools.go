@@ -131,7 +131,7 @@ func (d *DB) FinishHarnessTool(ctx context.Context, sessionID string, lease Harn
 			return err
 		}
 		mapper := NewCloudHarnessMapper(executor)
-		if err := finishHarnessToolTx(ctx, executor, mapper, lease, taskUUID, result); err != nil {
+		if err := finishHarnessToolTx(ctx, mapper, lease, taskUUID, result); err != nil {
 			return err
 		}
 		batch, err := insertSessionHistoryTx(ctx, executor, session, events)
@@ -141,7 +141,7 @@ func (d *DB) FinishHarnessTool(ctx context.Context, sessionID string, lease Harn
 	return stored, err
 }
 
-func finishHarnessToolTx(ctx context.Context, executor yourbatis.Executor, mapper CloudHarnessMapper, lease HarnessTurnLease, taskUUID string, result sessioncontract.HarnessToolResult) error {
+func finishHarnessToolTx(ctx context.Context, mapper CloudHarnessMapper, lease HarnessTurnLease, taskUUID string, result sessioncontract.HarnessToolResult) error {
 	row, found, err := mapper.Lock(ctx, lease.Ref)
 	if err != nil {
 		return err
@@ -149,18 +149,6 @@ func finishHarnessToolTx(ctx context.Context, executor yourbatis.Executor, mappe
 	task := row.task()
 	if !found || task.UUID != taskUUID || task.Kind != HarnessToolTask || row.WorkerEpoch != lease.Epoch {
 		return ErrWorkerEpochMismatch
-	}
-	if !result.Failed {
-		tool, found, err := mapper.FindTool(ctx, lease.Ref, task.ToolUUID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrNotFound
-		}
-		if err := applyHarnessSubscriptionTool(ctx, executor, lease.Ref, tool.tool()); err != nil {
-			return err
-		}
 	}
 	if err := requireHarnessLease(mapper.FinishTool(ctx, harnessToolResultParams{
 		Ref: lease.Ref, ToolUUID: task.ToolUUID, Text: result.Text, Failed: result.Failed,

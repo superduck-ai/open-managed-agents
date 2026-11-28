@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -29,7 +31,7 @@ type responseObservation struct {
 	chat            *chatObservation
 	firstTokenAt    time.Time
 	publishThinking func(string, int) bool
-	publishText     func(string, int, string)
+	finishThinking  func(string, int)
 	thinkingStarted map[int]bool
 	onComplete      func()
 	request         *codesessions.ModelRequest
@@ -98,6 +100,8 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
 	call.observation = observation
+	workerStream := r.Header.Get(sessioncontract.HarnessModelStreamHeader)
+	workerOwnsStream := request != nil && request.IsHarness()
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
@@ -108,18 +112,16 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		w.Header().Set("Request-Id", request.StartID)
 		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.
 		upstream.Header.Del("Accept-Encoding")
-		observation.publishThinking = func(messageID string, index int) bool {
-			if err := h.codeSessions.StartModelThinking(r.Context(), request, messageID, index); err != nil {
-				h.logger.ErrorContext(r.Context(), "publish thinking preview", "model_request_start_id", request.StartID, "error", err)
-				return false
-			}
-			return true
+		if workerOwnsStream {
+			defer func() {
+				if r.Context().Err() != nil && !observation.complete {
+					h.finishModelRequest(r.Context(), observation)
+				}
+			}()
+		} else {
+			h.publishModelStreamEvents(r.Context(), observation)
+			defer observation.onComplete()
 		}
-		observation.publishText = func(messageID string, index int, text string) {
-			h.codeSessions.PublishHarnessModelText(r.Context(), request, messageID, index, text)
-		}
-		observation.onComplete = sync.OnceFunc(func() { h.finishModelRequest(r.Context(), observation) })
-		defer observation.onComplete()
 	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
@@ -144,6 +146,9 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		w.Header().Del("Request-Id")
 		response.Header.Set("Request-Id", request.StartID)
 		observation.streaming = strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
+		if workerOwnsStream && observation.streaming {
+			response.Header.Del("Content-Length")
+		}
 		if response.StatusCode >= 400 {
 			observation.result.ErrorType = "http_error"
 		}
@@ -157,6 +162,38 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		observation.result.ErrorType = "stream_error"
 		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
 	}
+	if workerOwnsStream && observation.streaming && r.Context().Err() == nil {
+		writeHarnessModelFacts(w, observation, workerStream)
+	}
+}
+
+func writeHarnessModelFacts(w http.ResponseWriter, observation *responseObservation, streamKey string) {
+	observation.finish()
+	facts := codesessions.HarnessModelFacts{
+		EndedAt: observation.result.EndedAt, Usage: observation.result.Usage,
+		UpstreamRequestID: observation.result.UpstreamRequestID, ErrorType: observation.result.ErrorType,
+	}
+	raw, err := json.Marshal(facts)
+	if err == nil {
+		_, _ = fmt.Fprintf(w, "\n%s%s %s\n\n", sessioncontract.HarnessModelFactsComment, streamKey, base64.RawURLEncoding.EncodeToString(raw))
+	}
+}
+
+func (h *Handler) publishModelStreamEvents(ctx context.Context, observation *responseObservation) {
+	request := observation.request
+	observation.publishThinking = func(messageID string, index int) bool {
+		if err := h.codeSessions.StartModelThinking(ctx, request, messageID, index); err != nil {
+			h.logger.ErrorContext(ctx, "publish thinking preview", "model_request_start_id", request.StartID, "error", err)
+			return false
+		}
+		return true
+	}
+	observation.finishThinking = func(messageID string, index int) {
+		if err := h.codeSessions.EndModelThinking(ctx, request, messageID, index); err != nil && !errors.Is(err, db.ErrWorkerEpochMismatch) {
+			h.logger.WarnContext(ctx, "publish completed thinking block", "model_request_start_id", request.StartID, "error", err)
+		}
+	}
+	observation.onComplete = sync.OnceFunc(func() { h.finishModelRequest(ctx, observation) })
 }
 
 type observedResponseBody struct {
@@ -268,9 +305,6 @@ func (o *responseObservation) observeFrame(data []byte) {
 		block.Thinking = ""
 		o.blocks[event.Index] = &block
 		o.addEventID(event.Index, block.Type)
-		if block.Type == "text" {
-			o.previewText(event.Index, block.Text)
-		}
 		if (block.Type == "thinking" || block.Type == "redacted_thinking") && o.publishThinking != nil {
 			o.thinkingStarted[event.Index] = o.publishThinking(o.messageID, event.Index)
 		}
@@ -279,6 +313,8 @@ func (o *responseObservation) observeFrame(data []byte) {
 		}
 	case "content_block_delta":
 		o.observeContentDelta(event)
+	case "content_block_stop":
+		o.observeContentBlockStop(event.Index)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
 		if event.Delta.StopReason != "" {
@@ -306,6 +342,16 @@ func (o *responseObservation) observeFrame(data []byte) {
 	}
 }
 
+func (o *responseObservation) observeContentBlockStop(index int) {
+	block := o.blocks[index]
+	if o.finishThinking == nil || o.malformed || o.complete || o.result.ErrorType != "" || block == nil {
+		return
+	}
+	if block.Type == "thinking" || block.Type == "redacted_thinking" {
+		o.finishThinking(o.messageID, index)
+	}
+}
+
 func (o *responseObservation) markFirstToken() {
 	if o.firstTokenAt.IsZero() {
 		o.firstTokenAt = time.Now()
@@ -330,17 +376,8 @@ func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	}
 	if event.Delta.Type == "text_delta" {
 		block.textBuffer.WriteString(event.Delta.Text)
-		if block.Type == "text" {
-			o.previewText(event.Index, event.Delta.Text)
-		}
 	} else if event.Delta.Type == "input_json_delta" {
 		block.inputBuffer.WriteString(event.Delta.PartialJSON)
-	}
-}
-
-func (o *responseObservation) previewText(index int, text string) {
-	if o.publishText != nil && text != "" && o.result.ErrorType == "" && !o.malformed && !o.complete {
-		o.publishText(o.messageID, index, text)
 	}
 }
 

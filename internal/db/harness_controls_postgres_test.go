@@ -47,7 +47,12 @@ func completeHarnessControlModel(t *testing.T, store *DB, claim HarnessTurnClaim
 	if _, err := store.RecordHarnessModelEvents(ctx, claim.Lease, claim.CodeSession, HarnessModelStart, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	completion := &HarnessModelCompletion{Message: harness.AssistantMessage{Call: tool.conversationCall()}}
+	call := tool.conversationCall()
+	var pending harness.Work = harness.ToolWork{Call: call}
+	if tool.Name == sessioncontract.HarnessAskUserQuestion {
+		pending = harness.UserChoiceWork{Call: call}
+	}
+	completion := &HarnessModelCompletion{Message: harness.AssistantMessage{Call: call}, Pending: pending}
 	if claim.Task.Kind == "" {
 		completion.UserText = "Start"
 	}
@@ -199,63 +204,5 @@ func TestHarnessSandboxResultWakesParkedTurnPostgres(t *testing.T) {
 	continuation, found, err := store.HarnessResumeWork(ctx, inputRef, HarnessToolResult)
 	if err != nil || !found || continuation.Kind != HarnessModelTask || continuation.ToolUUID != task.ToolUUID {
 		t.Fatalf("tool result redelivery lost the model: %+v, %t, %v", continuation, found, err)
-	}
-}
-
-func TestHarnessSubscriptionRegistersAndClosesPostgres(t *testing.T) {
-	ctx, _, store, claim := newHarnessControlTurn(t)
-	ref := claim.Lease.Ref
-	thread := harness.ThreadID(ref.SessionUUID)
-	state := store.HarnessState(HarnessTurnLease{Ref: ref})
-	completeHarnessControlModel(t, store, claim, HarnessTool{CallID: "toolu_subscribe", Name: sessioncontract.HarnessSubscribe, Arguments: json.RawMessage(`{}`)})
-	task, _, err := store.HarnessTurnTask(ctx, ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	toolClaim, err := store.ClaimHarnessTurn(ctx, ref, HarnessTurnDelivery{TaskUUID: task.UUID, ToolUUID: task.ToolUUID, Kind: task.Kind}, "tool-hash", time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	event := func(id string, final bool) SessionEvent {
-		t.Helper()
-		var payload struct {
-			Content      []map[string]string                      `json:"content"`
-			Subscription sessioncontract.HarnessSubscriptionEvent `json:"subscription_event"`
-		}
-		payload.Content = []map[string]string{{"type": "text", "text": "Event received"}}
-		payload.Subscription = sessioncontract.HarnessSubscriptionEvent{ID: id, Final: final}
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return SessionEvent{UUID: uuid.NewString(), ExternalID: "sevt_" + uuid.NewString(), EventType: "user.message", CreatedAt: time.Now().UTC(), Payload: raw}
-	}
-	send := func(event SessionEvent) error {
-		_, err := store.AppendSessionUserEvents(ctx, ref.WorkspaceUUID, harnessControlSessionID, []SessionEvent{event}, nil, nil, nil)
-		return err
-	}
-	if err := send(event(task.UUID, false)); !errors.Is(err, ErrSessionInputConflict) {
-		t.Fatalf("accepted a callback before its subscription committed: %v", err)
-	}
-	if _, err := store.FinishHarnessTool(ctx, harnessControlSessionID, toolClaim.Lease, task.UUID, sessioncontract.HarnessToolResult{Text: task.UUID}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := send(event(uuid.NewString(), false)); !errors.Is(err, ErrSessionInputConflict) {
-		t.Fatalf("accepted a callback for an unknown subscription: %v", err)
-	}
-	if err := send(event(task.UUID, false)); err != nil {
-		t.Fatal(err)
-	}
-	if active, err := state.GetActiveSubscriptions(ctx, thread); err != nil || !slices.Equal(active, []harness.ToolCallID{harness.ToolCallID(task.UUID)}) {
-		t.Fatalf("non-final callback changed active subscriptions: %v, %v", active, err)
-	}
-	if err := send(event(task.UUID, true)); err != nil {
-		t.Fatal(err)
-	}
-	if err := send(event(task.UUID, false)); !errors.Is(err, ErrSessionInputConflict) {
-		t.Fatalf("accepted a callback for a closed subscription: %v", err)
-	}
-	if active, err := state.GetActiveSubscriptions(ctx, thread); err != nil || len(active) != 0 {
-		t.Fatalf("active subscriptions after final callback: %v, %v", active, err)
 	}
 }

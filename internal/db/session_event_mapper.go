@@ -43,19 +43,18 @@ type sessionEventWriteParams struct {
 }
 
 type sessionEventPageMapperParams struct {
-	UseInputReceivedAt bool
-	WorkspaceUUID      string
-	SessionExternalID  string
-	ThreadExternalID   string
-	PrimaryOnly        bool
-	FetchLimit         int
-	Cursor             *SessionEventPageCursor
-	Descending         bool
-	Types              []string
-	CreatedAtGT        *time.Time
-	CreatedAtGTE       *time.Time
-	CreatedAtLT        *time.Time
-	CreatedAtLTE       *time.Time
+	WorkspaceUUID     string
+	SessionExternalID string
+	ThreadExternalID  string
+	PrimaryOnly       bool
+	FetchLimit        int
+	Cursor            *SessionEventPageCursor
+	Descending        bool
+	Types             []string
+	CreatedAtGT       *time.Time
+	CreatedAtGTE      *time.Time
+	CreatedAtLT       *time.Time
+	CreatedAtLTE      *time.Time
 }
 
 // SessionEventMapper contains queries whose primary table is session_events.
@@ -76,6 +75,7 @@ type SessionEventMapper interface {
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
 	FindAssistantEchoKeys(ctx context.Context, workspaceUUID, sessionExternalID, requestID, source string) ([]string, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
+	ListPageByWriteOrder(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
 	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	ListSessionEventsForActivation(

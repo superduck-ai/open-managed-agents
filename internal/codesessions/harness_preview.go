@@ -4,18 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type harnessModelPreview struct {
-	textBlocks map[string]int
-	thinking   map[string]struct{}
-	eventIDs   []string
-	sequence   uint64
-	stopped    bool
-	finished   bool
+	lastThinkingAt    time.Time
+	textBlocks        map[string]int
+	thinkingCompleted map[string]bool
+	eventIDs          []string
+	sequence          uint64
+	stopped           bool
+	finished          bool
 }
 
 type modelPreviewTarget struct {
@@ -96,18 +99,52 @@ func (s *Service) publishHarnessThinking(ctx context.Context, request *ModelRequ
 	if preview.finished {
 		return
 	}
-	blockID := maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking")
-	if _, exists := preview.thinking[blockID]; exists {
+	eventID := request.harnessThinkingID(maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"))
+	if _, exists := preview.thinkingCompleted[eventID]; exists {
 		return
 	}
-	if preview.thinking == nil {
-		preview.thinking = make(map[string]struct{})
+	if preview.thinkingCompleted == nil {
+		preview.thinkingCompleted = make(map[string]bool)
 	}
-	eventID := request.harnessThinkingID(blockID)
-	preview.thinking[blockID] = struct{}{}
+	preview.thinkingCompleted[eventID] = false
 	preview.eventIDs = append(preview.eventIDs, eventID)
 	start := modelPreviewStart{Type: "event_start", Event: modelPreviewTarget{Type: "agent.thinking", ID: eventID}, ThreadID: request.toolThreadID}
 	s.publishHarnessPreview(ctx, request, 0, start)
+}
+
+func (s *Service) EndModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
+	if request.harnessLease == nil || request.SuppressPublicOutput || request.harnessPreview.finished {
+		return nil
+	}
+	eventID := request.harnessThinkingID(maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"))
+	completed, started := request.harnessPreview.thinkingCompleted[eventID]
+	if !started || completed {
+		return nil
+	}
+	sink, ok := s.sink.(harnessModelEventSink)
+	if !ok {
+		return db.ErrInvalidState
+	}
+	preview := &request.harnessPreview
+	processedAt := preview.processedAt(time.Now().UTC().Truncate(time.Microsecond))
+	message := ModelRequestMessage{ID: eventID, Type: "agent.thinking"}
+	payload, err := modelMessagePayload(request, message, processedAt)
+	if err != nil {
+		return err
+	}
+	if err := sink.PublishHarnessModelEvents(ctx, request.codeSession, *request.harnessLease, db.HarnessModelThinking, []json.RawMessage{payload}, nil); err != nil {
+		return err
+	}
+	preview.thinkingCompleted[eventID] = true
+	preview.lastThinkingAt = processedAt
+	return nil
+}
+
+func (p *harnessModelPreview) processedAt(at time.Time) time.Time {
+	if at.Before(p.lastThinkingAt) {
+		return p.lastThinkingAt
+	}
+	return at
 }
 
 func (s *Service) publishHarnessPreview(ctx context.Context, request *ModelRequest, sequence uint64, payload any) bool {
@@ -188,11 +225,6 @@ func validHarnessTool(result ModelRequestResult) bool {
 	switch tool.Name {
 	case sessioncontract.HarnessAskUserQuestion:
 		_, err := sessioncontract.ParseHarnessChoiceQuestion(tool.Input)
-		return err == nil
-	case sessioncontract.HarnessSubscribe:
-		return true
-	case sessioncontract.HarnessCancelSubscription:
-		_, err := sessioncontract.ParseHarnessSubscriptionID(tool.Input)
 		return err == nil
 	default:
 		return isHarnessDelegationTool(tool.Name) || isSandboxToolName(managedAgentToolName(tool.Name))

@@ -97,6 +97,12 @@ func summaryMessage(summary string) AssistantMessage {
 	return AssistantMessage{Text: "[Compacted conversation summary]\n" + summary}
 }
 
+func (s *MemoryStore) hasMessageID(threadID ThreadID, id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.ContainsFunc(s.threads[threadID].messages, func(message MessageWithID) bool { return message.ID == id })
+}
+
 func (s *MemoryStore) AppendMessages(_ context.Context, threadID ThreadID, messages []MessageWithID) error {
 	if len(messages) == 0 {
 		return nil
@@ -105,18 +111,15 @@ func (s *MemoryStore) AppendMessages(_ context.Context, threadID ThreadID, messa
 	defer s.mu.Unlock()
 	thread := s.threads[threadID]
 	thread.messages = append(thread.messages, messages...)
-	thread.state.Version++
-	thread.state.MessageCount = int64(len(thread.messages))
 	s.threads[threadID] = thread
 	return nil
 }
 
-func (s *MemoryStore) SpawnThread(_ context.Context, parentThreadID ThreadID, spawnToolCallID ToolCallID, isForSubscriptionEvent bool, spawnContext SpawnContext) (ThreadID, error) {
+func (s *MemoryStore) SpawnThread(_ context.Context, parentThreadID ThreadID, spawnToolCallID ToolCallID, spawnContext SpawnContext) (ThreadID, error) {
 	thread := memoryThread{
-		exists:       true,
-		parent:       &ThreadParentInfo{ThreadID: parentThreadID, ToolCallID: spawnToolCallID},
-		subscription: isForSubscriptionEvent,
-		fresh:        spawnContext.InheritUpTo == nil,
+		exists: true,
+		parent: &ThreadParentInfo{ThreadID: parentThreadID, ToolCallID: spawnToolCallID},
+		fresh:  spawnContext.InheritUpTo == nil,
 	}
 	if !thread.fresh {
 		thread.spawnOrder = *spawnContext.InheritUpTo
@@ -143,10 +146,6 @@ func (s *MemoryStore) CloseThread(_ context.Context, threadID ThreadID) error {
 		s.threads[threadID] = thread
 	}
 	return nil
-}
-
-func (s *MemoryStore) IsSubscriptionEventThread(_ context.Context, threadID ThreadID) (bool, error) {
-	return s.readThread(threadID).subscription, nil
 }
 
 func (s *MemoryStore) IsFreshContextThread(_ context.Context, threadID ThreadID) (bool, error) {

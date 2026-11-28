@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -78,15 +79,7 @@ func HarnessModelTools(session db.Session) ([]sandboxtools.Definition, error) {
    }`),
 		})
 	}
-	return append(tools, sandboxtools.Definition{
-		Name:        sessioncontract.HarnessSubscribe,
-		Description: "Create a subscription for events that an external integration sends to this session. Returns the subscription ID to share with the integration.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-	}, sandboxtools.Definition{
-		Name:        sessioncontract.HarnessCancelSubscription,
-		Description: "Stop accepting events on an active subscription in this session.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["subscription_id"],"properties":{"subscription_id":{"type":"string","format":"uuid"}}}`),
-	}), nil
+	return tools, nil
 }
 
 func (s *Service) harnessSandboxToolAllowed(ctx context.Context, code db.CodeSession, thread, name string) (bool, error) {
@@ -158,7 +151,7 @@ func (h *Handler) handleHarnessToolSubmit(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if isHarnessSubscriptionTool(tool.Name) || isHarnessDelegationTool(tool.Name) {
+	if isHarnessDelegationTool(tool.Name) {
 		writeToolCallJSON(w, http.StatusOK, struct {
 			State string `json:"state"`
 		}{State: "succeeded"})
@@ -256,16 +249,6 @@ func (h *Handler) completeHarnessTool(ctx context.Context, scope db.SandboxToolC
 }
 
 func (h *Handler) harnessToolOutcome(ctx context.Context, code db.CodeSession, scope db.SandboxToolCallScope, tool db.HarnessTool) (sessioncontract.HarnessToolResult, error) {
-	switch tool.Name {
-	case sessioncontract.HarnessSubscribe:
-		return sessioncontract.HarnessToolResult{Text: "Subscription ID: " + tool.UUID}, nil
-	case sessioncontract.HarnessCancelSubscription:
-		id, err := sessioncontract.ParseHarnessSubscriptionID(tool.Arguments)
-		if err != nil {
-			return sessioncontract.HarnessToolResult{}, err
-		}
-		return sessioncontract.HarnessToolResult{Text: "Subscription closed: " + id}, nil
-	}
 	call, err := h.db.GetSandboxToolCall(ctx, scope)
 	if errors.Is(err, db.ErrNotFound) {
 		allowed, err := h.service.harnessSandboxToolAllowed(ctx, code, scope.ThreadID, managedAgentToolName(tool.Name))
@@ -299,31 +282,32 @@ func harnessSandboxResult(call db.SandboxToolCall) sessioncontract.HarnessToolRe
 	case "lost":
 		result.Text = "Remote tool outcome is unknown. Verify external state before repeating operations with side effects."
 	default:
-		text, invalidContent := harnessSandboxResultText(call.Result)
-		result.Text, result.Failed = text, invalidContent || call.State != "succeeded"
-		if result.Text == "" {
-			result.Text = "(no output)"
-			if result.Failed {
-				result.Text = "The sandbox tool failed."
-			}
-		}
+		return harnessSandboxContent(call)
 	}
 	return result
 }
 
-func harnessSandboxResultText(payload json.RawMessage) (string, bool) {
-	var result struct {
-		Content []ModelRequestContent `json:"content"`
+func harnessSandboxContent(call db.SandboxToolCall) sessioncontract.HarnessToolResult {
+	var output struct {
+		Content           []ModelRequestContent `json:"content"`
+		StructuredContent json.RawMessage       `json:"structuredContent"`
+		IsError           bool                  `json:"isError"`
 	}
-	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &result); err != nil {
-			return "The sandbox result could not be read. Verify external state before repeating operations with side effects.", true
+	if len(call.Result) > 0 && json.Unmarshal(call.Result, &output) != nil {
+		return sessioncontract.HarnessToolResult{
+			Text: "The sandbox result could not be read. Verify external state before repeating operations with side effects.", Failed: true,
+		}
+	}
+	failed := call.State != "succeeded" || output.IsError
+	if call.ToolName == "bash" && !failed {
+		if stdout, ok := successfulSandboxBashStdout(output.Content, output.StructuredContent); ok {
+			return sessioncontract.HarnessToolResult{Text: stdout}
 		}
 	}
 	var text strings.Builder
-	for i, block := range result.Content {
+	for i, block := range output.Content {
 		if block.Type != "text" || block.Text == nil {
-			return "The tool returned content that this text session cannot read.", true
+			return sessioncontract.HarnessToolResult{Text: "The tool returned content that this text session cannot read.", Failed: true}
 		}
 		if i > 0 {
 			text.WriteByte('\n')
@@ -331,6 +315,12 @@ func harnessSandboxResultText(payload json.RawMessage) (string, bool) {
 		text.WriteString(*block.Text)
 	}
 	value := text.String()
+	if value == "" {
+		value = "(no output)"
+		if failed {
+			value = "The sandbox tool failed."
+		}
+	}
 	if suffix := "\n[Tool result truncated]"; len(value) > sessioncontract.HarnessToolResultMaxBytes {
 		end := sessioncontract.HarnessToolResultMaxBytes - len(suffix)
 		for !utf8.RuneStart(value[end]) {
@@ -338,5 +328,54 @@ func harnessSandboxResultText(payload json.RawMessage) (string, bool) {
 		}
 		value = value[:end] + suffix
 	}
-	return value, false
+	return sessioncontract.HarnessToolResult{Text: value, Failed: failed}
+}
+
+func successfulSandboxBashStdout(content []ModelRequestContent, structured json.RawMessage) (string, bool) {
+	if len(content) < 1 || len(content) > 2 || content[0].Type != "text" || content[0].Text == nil {
+		return "", false
+	}
+	var summary struct {
+		Stdout          *string `json:"stdout"`
+		Stderr          *string `json:"stderr"`
+		ExitCode        *int    `json:"exit_code"`
+		Status          string  `json:"status"`
+		TimedOut        *bool   `json:"timed_out"`
+		Cancelled       *bool   `json:"cancelled"`
+		StdoutTruncated *bool   `json:"stdout_truncated"`
+		StderrTruncated *bool   `json:"stderr_truncated"`
+		StdoutError     string  `json:"stdout_error"`
+		StderrError     string  `json:"stderr_error"`
+		Error           string  `json:"error"`
+		RawOutput       *string `json:"rawOutput"`
+	}
+	if json.Unmarshal(structured, &summary) != nil || summary.Stdout == nil || summary.Stderr == nil || summary.ExitCode == nil {
+		return "", false
+	}
+	if summary.Status != "completed" || *summary.ExitCode != 0 || *summary.Stderr != "" || summary.StdoutError != "" ||
+		summary.StderrError != "" || summary.Error != "" || summary.RawOutput != nil {
+		return "", false
+	}
+	for _, flag := range []*bool{summary.TimedOut, summary.Cancelled, summary.StdoutTruncated, summary.StderrTruncated} {
+		if flag == nil || *flag {
+			return "", false
+		}
+	}
+	stdout, preview := *summary.Stdout, *content[0].Text
+	if len(stdout) > sessioncontract.HarnessToolResultMaxBytes || preview != stdout && !(stdout == "" && preview == "(no output)") {
+		return "", false
+	}
+	if len(content) == 2 && !matchesSandboxExecutionSummary(content[1], structured) {
+		return "", false
+	}
+	return stdout, true
+}
+
+func matchesSandboxExecutionSummary(block ModelRequestContent, structured json.RawMessage) bool {
+	if block.Type != "text" || block.Text == nil {
+		return false
+	}
+	var preview, summary any
+	return json.Unmarshal([]byte(*block.Text), &preview) == nil &&
+		json.Unmarshal(structured, &summary) == nil && reflect.DeepEqual(preview, summary)
 }

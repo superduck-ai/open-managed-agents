@@ -9,10 +9,31 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type proxyErrorReader struct {
 	err error
+}
+
+func TestHarnessModelRequestRequiresWorkerStream(t *testing.T) {
+	handler := NewHandler(nil, nil, nil, nil)
+	for _, key := range []string{"", "1:invalid"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test","messages":[]}`))
+		if key != "" {
+			request.Header.Set(sessioncontract.HarnessModelStreamHeader, key)
+		}
+		request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
+			CodeSessionExternalID: "cse_test", ExecutionRuntime: sessioncontract.CloudHarnessRuntime,
+		}))
+		response := httptest.NewRecorder()
+		handler.Create(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "Cloud Harness model requests require a worker stream") {
+			t.Fatalf("stream key %q: got status %d with %s", key, response.Code, response.Body.String())
+		}
+	}
 }
 
 func TestHandlerUsesInjectedLogger(t *testing.T) {

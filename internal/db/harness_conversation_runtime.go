@@ -40,15 +40,24 @@ func (t HarnessTool) conversationCall() harness.ToolCall {
 	return harness.ToolCall{ID: harness.ToolCallID(t.CallID), Name: t.Name, Arguments: string(t.Arguments)}
 }
 
-func completeHarnessConversation(ctx context.Context, executor yourbatis.Executor, sessionID string, turn harnessTurnRow, completion HarnessModelCompletion) (HarnessTool, error) {
+func recordHarnessModelHistory(ctx context.Context, executor yourbatis.Executor, sessionID string, turn harnessTurnRow, completion HarnessModelCompletion) (HarnessTool, error) {
+	var call harness.ToolCall
+	switch pending := completion.Pending.(type) {
+	case nil:
+	case harness.ToolWork:
+		call = pending.Call
+	case harness.UserChoiceWork:
+		call = pending.Call
+	default:
+		return HarnessTool{}, ErrInvalidState
+	}
+	if call != completion.Message.Call || (completion.Pending != nil && (call.ID == "" || call.Name == "")) {
+		return HarnessTool{}, ErrInvalidState
+	}
 	historyTurnUUID := turn.historyTurnUUID()
 	key := turn.historyKey()
 	state, err := lockHarnessThreadState(ctx, executor, key)
 	if err != nil {
-		return HarnessTool{}, err
-	}
-	message := completion.Message
-	if _, err := harness.Step(harness.State{Pending: harness.ModelWork{}}, harness.ModelCompleted{Message: message}); err != nil {
 		return HarnessTool{}, err
 	}
 	input, err := harnessCompletionInput(ctx, executor, sessionID, turn, completion.UserText)
@@ -56,15 +65,15 @@ func completeHarnessConversation(ctx context.Context, executor yourbatis.Executo
 		return HarnessTool{}, err
 	}
 	messageID := fmt.Sprintf("transition:%s:%d:0", key.UUID, state.Version+1)
-	messages := []harness.MessageWithID{input, {ID: messageID, Message: message}}
+	messages := []harness.MessageWithID{input, {ID: messageID, Message: completion.Message}}
 	if err := appendHarnessTransition(ctx, executor, key, &historyTurnUUID, state, messages); err != nil {
 		return HarnessTool{}, err
 	}
-	if message.Call.ID == "" {
+	if completion.Pending == nil {
 		return HarnessTool{}, nil
 	}
-	tool := HarnessTool{UUID: uuid.NewString(), CallID: string(message.Call.ID), Name: message.Call.Name,
-		Arguments: json.RawMessage(message.Call.Arguments)}
+	tool := HarnessTool{UUID: uuid.NewString(), CallID: string(call.ID), Name: call.Name,
+		Arguments: json.RawMessage(call.Arguments)}
 	err = requireHarnessLease(NewCloudHarnessMapper(executor).AttachTool(ctx, harnessToolRecord{
 		Key: key, MessageID: messageID, TurnUUID: turn.UUID, ToolUUID: tool.UUID,
 	}))

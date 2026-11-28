@@ -98,7 +98,7 @@ func (s *Store) RestoreHarnessInput(ctx context.Context, input db.HarnessInput) 
 	if err != nil {
 		return db.HarnessInputMessage{}, err
 	}
-	return db.HarnessInputMessage{Text: user.ModelText(), Metadata: user.Metadata}, nil
+	return db.HarnessInputMessage{Text: user.Text, Metadata: user.Metadata}, nil
 }
 
 func assistantEchoKey(raw json.RawMessage, eventType string) (requestID, source, key string, err error) {

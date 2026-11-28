@@ -130,58 +130,72 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
-    <sql id="pageEventTime">
-        <choose>
-            <when test="params.UseInputReceivedAt">
-                CASE WHEN session_events.event_type = 'user.message' THEN session_events.created_at
-                     ELSE COALESCE(session_events.processed_at, session_events.created_at) END
-            </when>
-            <otherwise>COALESCE(session_events.processed_at, session_events.created_at)</otherwise>
-        </choose>
+    <sql id="pageFilters">
+        workspace_uuid = #{params.WorkspaceUUID}
+        AND session_external_id = #{params.SessionExternalID}
+        AND deleted_at IS NULL
+        AND processed_at IS NOT NULL
+        <if test="params.ThreadExternalID != ''">
+            AND thread_external_id = #{params.ThreadExternalID}
+        </if>
+        <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
+            AND thread_external_id = (
+                SELECT external_id FROM session_threads
+                WHERE workspace_uuid = #{params.WorkspaceUUID}
+                AND session_external_id = #{params.SessionExternalID}
+                AND parent_thread_uuid IS NULL
+                AND deleted_at IS NULL
+                ORDER BY created_at ASC, uuid ASC
+                LIMIT 1
+            )
+        </if>
+        <if test="len(params.Types) &gt; 0">
+            AND event_type IN
+            <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
+        </if>
+        <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
+        <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
+        <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
+        <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
     </sql>
 
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
         <where>
-            workspace_uuid = #{params.WorkspaceUUID}
-            AND session_external_id = #{params.SessionExternalID}
-            AND deleted_at IS NULL
-            <if test="params.ThreadExternalID != ''">
-                AND thread_external_id = #{params.ThreadExternalID}
-            </if>
-            <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
-                AND thread_external_id = (
-                    SELECT external_id FROM session_threads
-                    WHERE workspace_uuid = #{params.WorkspaceUUID}
-                    AND session_external_id = #{params.SessionExternalID}
-                    AND parent_thread_uuid IS NULL
-                    AND deleted_at IS NULL
-                    ORDER BY created_at ASC, uuid ASC
-                    LIMIT 1
-                )
-            </if>
-            <if test="len(params.Types) &gt; 0">
-                AND event_type IN
-                <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
-            </if>
-            <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
+            <include refid="pageFilters"/>
             <if test="params.Cursor != nil">
-                AND (<include refid="pageEventTime"/>, id)
+                AND (session_events.processed_at, id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT <include refid="pageEventTime"/>, id FROM session_events
+                    SELECT COALESCE(session_events.processed_at, session_events.created_at), id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
                 )
             </if>
         </where>
-        ORDER BY <include refid="pageEventTime"/>
+        ORDER BY session_events.processed_at
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="ListPageByWriteOrder" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        <where>
+            <include refid="pageFilters"/>
+            <if test="params.Cursor != nil">
+                AND id <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
+                (
+                    SELECT id FROM session_events
+                    WHERE workspace_uuid = #{params.WorkspaceUUID}
+                    AND session_external_id = #{params.SessionExternalID}
+                    AND external_id = #{params.Cursor.ExternalID}
+                )
+            </if>
+        </where>
+        ORDER BY id <choose><when test="params.Descending">DESC</when><otherwise>ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
 

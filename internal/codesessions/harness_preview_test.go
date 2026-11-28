@@ -6,7 +6,9 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
+	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
@@ -14,6 +16,22 @@ import (
 type failingHarnessPreviewSink struct {
 	recordingWorkerStreamSink
 	failedSequence uint64
+}
+
+type recordingHarnessModelSink struct {
+	recordingWorkerStreamSink
+	events [][]json.RawMessage
+	phases []db.HarnessModelPhase
+	err    error
+}
+
+func (s *recordingHarnessModelSink) PublishHarnessModelEvents(_ context.Context, _ db.CodeSession, _ db.HarnessTurnLease, phase db.HarnessModelPhase, events []json.RawMessage, _ *harness.Transition) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.events = append(s.events, events)
+	s.phases = append(s.phases, phase)
+	return nil
 }
 
 func (s *failingHarnessPreviewSink) PublishCodeSessionStreamEvent(ctx context.Context, route CodeSessionStreamRoute, epoch int64, payload json.RawMessage) error {
@@ -83,6 +101,67 @@ func TestHarnessPreviewReconcilesTextBlocksAndThinking(t *testing.T) {
 		len(result.Messages) != 2 || len(result.Messages[0].Content) != 0 || len(result.Messages[1].Content) != 2 ||
 		*result.Messages[1].Content[0].Text != "hello world" || *result.Messages[1].Content[1].Text != "second block" {
 		t.Fatalf("buffered result = %+v", result)
+	}
+}
+
+func TestHarnessThinkingFinalPublishesOnce(t *testing.T) {
+	for _, earlyFailure := range []bool{true, false} {
+		endedAt := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
+		service := newTestService(t, nil)
+		sink := &recordingHarnessModelSink{}
+		service.SetPublicEventSink(sink)
+		request := previewTestRequest()
+		if err := service.StartModelThinking(t.Context(), request, request.StartID, 0); err != nil {
+			t.Fatal(err)
+		}
+		blockID := maevents.StableAssistantEventID(request.CodeSessionID, request.StartID, 0, "agent.thinking")
+		eventID := request.harnessThinkingID(blockID)
+		if earlyFailure {
+			sink.err = errors.New("early publication unavailable")
+		}
+		if err := service.EndModelThinking(t.Context(), request, request.StartID, 0); (err != nil) != earlyFailure {
+			t.Fatalf("thinking completion error=%v, expected failure=%t", err, earlyFailure)
+		}
+		wantPhases := []db.HarnessModelPhase{db.HarnessModelEnd}
+		if !earlyFailure {
+			if err := service.EndModelThinking(t.Context(), request, request.StartID, 0); err != nil {
+				t.Fatal(err)
+			}
+			wantPhases = []db.HarnessModelPhase{db.HarnessModelThinking, db.HarnessModelEnd}
+		}
+		sink.err = nil
+		frame := HarnessModelFrame{Type: HarnessModelFinish, Result: &HarnessModelFinal{
+			Facts:  HarnessModelFacts{EndedAt: endedAt},
+			Blocks: []HarnessModelBlock{{Index: 0, Thinking: true}, {Index: 1, Text: "answer"}},
+			Next:   HarnessModelDone,
+		}}
+		if err := service.applyHarnessModelFrame(t.Context(), request, frame); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(sink.phases, wantPhases) || len(slices.Concat(sink.events...)) != 3 {
+			t.Fatalf("model publications: %v, %s", sink.phases, sink.events)
+		}
+		events := slices.Concat(sink.events...)
+		var thinking struct {
+			ModelRequestMessage
+			ProcessedAt time.Time `json:"processed_at"`
+		}
+		if err := json.Unmarshal(events[0], &thinking); err != nil || thinking.ID != eventID || thinking.Type != "agent.thinking" || len(thinking.Content) != 0 {
+			t.Fatalf("thinking completion=%+v, %v", thinking, err)
+		}
+		if earlyFailure != thinking.ProcessedAt.Equal(endedAt) {
+			t.Fatalf("thinking processed_at=%v, gateway ended_at=%v, early failure=%t", thinking.ProcessedAt, endedAt, earlyFailure)
+		}
+		for i, kind := range []string{"agent.message", "span.model_request_end"} {
+			var event modelRequestEvent
+			if err := json.Unmarshal(events[i+1], &event); err != nil || event.Type != kind ||
+				!event.ProcessedAt.Equal(thinking.ProcessedAt) {
+				t.Fatalf("completion event=%+v, err=%v, want type=%s at %v", event, err, kind, thinking.ProcessedAt)
+			}
+			if kind == "span.model_request_end" && !event.CreatedAt.Equal(endedAt) {
+				t.Fatalf("model end source time=%v, want %v", event.CreatedAt, endedAt)
+			}
+		}
 	}
 }
 

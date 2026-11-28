@@ -34,7 +34,7 @@ func TestMemoryConversationHistoryWithAncestors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	child, err := store.SpawnThread(ctx, "root", "spawn-child", true, SpawnContext{InheritUpTo: new(int64(2))})
+	child, err := store.SpawnThread(ctx, "root", "spawn-child", SpawnContext{InheritUpTo: new(int64(2))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,12 +53,12 @@ func TestMemoryConversationFreshBoundary(t *testing.T) {
 	ctx := t.Context()
 	var store ConversationStore = NewMemoryStore()
 	appendHistory(t, store, "root", "hidden")
-	fresh, err := store.SpawnThread(ctx, "root", "spawn-fresh", false, SpawnContext{})
+	fresh, err := store.SpawnThread(ctx, "root", "spawn-fresh", SpawnContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	appendHistory(t, store, fresh, "fresh")
-	child, err := store.SpawnThread(ctx, fresh, "spawn-child", false, SpawnContext{InheritUpTo: new(int64(1))})
+	child, err := store.SpawnThread(ctx, fresh, "spawn-child", SpawnContext{InheritUpTo: new(int64(1))})
 	if err != nil {
 		t.Fatal(err)
 	}

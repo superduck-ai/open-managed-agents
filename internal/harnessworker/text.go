@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"charm.land/fantasy"
@@ -51,14 +52,15 @@ func (w *Worker) executeTextTurn(ctx context.Context, claim db.HarnessTurnClaim,
 		}
 		history = append(history, message)
 	}
-	model, err := w.model(ctx, claim, token, available)
+	catalog, err := llmproviders.LoadCatalog(ctx, w.database, claim.Lease.Ref.OrganizationUUID)
+	if err != nil {
+		return fmt.Errorf("load harness model catalog: %w", err)
+	}
+	model, err := resolveModelConfig(claim, catalog)
 	if err != nil {
 		return err
 	}
-	if _, err := model.Complete(ctx, history); err != nil {
-		return fmt.Errorf("harness text model step failed: %w", err)
-	}
-	return nil
+	return w.runModelStream(ctx, claim, token, model, available, history, input)
 }
 
 func (w *Worker) modelInput(ctx context.Context, claim db.HarnessTurnClaim, delivery deliveryEnvelope) (cloudharness.StepInput, int, error) {
@@ -84,20 +86,40 @@ func (w *Worker) modelInput(ctx context.Context, claim db.HarnessTurnClaim, deli
 	return input, 0, err
 }
 
-func (w *Worker) model(ctx context.Context, claim db.HarnessTurnClaim, token string, tools []fantasy.Tool) (*fantasyadapter.FantasyModel, error) {
+const defaultMaxOutputTokens = 16 * 1024
+
+type modelConfig struct {
+	id              string
+	prompt          string
+	maxOutputTokens int64
+}
+
+func resolveModelConfig(claim db.HarnessTurnClaim, catalog llmproviders.Catalog) (modelConfig, error) {
 	modelID, prompt, err := codesessions.HarnessModelConfiguration(claim)
 	if err != nil {
-		return nil, err
+		return modelConfig{}, err
 	}
+	selected, err := catalog.Lookup(modelID)
+	if err != nil {
+		return modelConfig{}, fmt.Errorf("resolve harness session model: %w", err)
+	}
+	config := modelConfig{id: selected.QualifiedModelID(), prompt: prompt, maxOutputTokens: defaultMaxOutputTokens}
+	if limit := selected.Definition().MaxOutputTokens; limit != nil {
+		config.maxOutputTokens = int64(*limit)
+	}
+	return config, nil
+}
+
+func (w *Worker) model(ctx context.Context, turnID, token string, config modelConfig, tools []fantasy.Tool, client *http.Client) (*fantasyadapter.FantasyModel, error) {
 	provider, err := anthropic.New(
 		anthropic.WithBaseURL(w.apiURL), anthropic.WithAPIKey(token),
-		anthropic.WithHTTPClient(llmproviders.NewHTTPClient(0)),
-		anthropic.WithHeaders(map[string]string{sessioncontract.HarnessTurnHeader: claim.Lease.Ref.UUID}),
+		anthropic.WithHTTPClient(client),
+		anthropic.WithHeaders(map[string]string{sessioncontract.HarnessTurnHeader: turnID}),
 	)
 	if err != nil {
 		return nil, errors.New("configure harness model provider")
 	}
-	model, err := provider.LanguageModel(ctx, modelID)
+	model, err := provider.LanguageModel(ctx, config.id)
 	if err != nil {
 		return nil, errors.New("configure harness session model")
 	}
@@ -106,8 +128,9 @@ func (w *Worker) model(ctx context.Context, claim db.HarnessTurnClaim, token str
 		return nil, err
 	}
 	return fantasyadapter.NewModel(model, tools).
-		WithSystemPrompt(prompt).
+		WithSystemPrompt(config.prompt).
 		WithRuntimeReminder(reminder).
+		WithMaxOutputTokens(&config.maxOutputTokens).
 		WithProviderOptions(fantasy.ProviderOptions{
 			anthropic.Name: &anthropic.ProviderOptions{DisableParallelToolUse: new(true)},
 		}), nil

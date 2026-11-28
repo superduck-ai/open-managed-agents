@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"maps"
 	"slices"
 )
 
 type memoryState struct {
 	Metadata       json.RawMessage
-	Subscriptions  map[ToolCallID]struct{}
 	PendingChoices []UserChoice
 }
 
@@ -29,33 +27,6 @@ func (s *MemoryStore) SetMetadata(_ context.Context, rootThreadID ThreadID, meta
 	thread := s.threads[rootThreadID]
 	thread.values.Metadata = slices.Clone(metadata)
 	s.threads[rootThreadID] = thread
-	return nil
-}
-
-func (s *MemoryStore) GetActiveSubscriptions(_ context.Context, threadID ThreadID) ([]ToolCallID, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return slices.Sorted(maps.Keys(s.threads[threadID].values.Subscriptions)), nil
-}
-
-func (s *MemoryStore) AddActiveSubscription(_ context.Context, threadID ThreadID, toolCallID ToolCallID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	thread := s.threads[threadID]
-	subscriptions := maps.Collect(maps.All(thread.values.Subscriptions))
-	subscriptions[toolCallID] = struct{}{}
-	thread.values.Subscriptions = subscriptions
-	s.threads[threadID] = thread
-	return nil
-}
-
-func (s *MemoryStore) RemoveActiveSubscription(_ context.Context, threadID ThreadID, toolCallID ToolCallID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	thread := s.threads[threadID]
-	thread.values.Subscriptions = maps.Clone(thread.values.Subscriptions)
-	delete(thread.values.Subscriptions, toolCallID)
-	s.threads[threadID] = thread
 	return nil
 }
 

@@ -50,7 +50,7 @@ func validateHarnessInputs(session db.Session, events []db.SessionEvent) error {
 	return nil
 }
 
-func (h *Handler) PublishHarnessModelEvents(ctx context.Context, codeSession db.CodeSession, lease db.HarnessTurnLease, phase db.HarnessModelPhase, payloads []json.RawMessage, completion *harness.AssistantMessage) error {
+func (h *Handler) PublishHarnessModelEvents(ctx context.Context, codeSession db.CodeSession, lease db.HarnessTurnLease, phase db.HarnessModelPhase, payloads []json.RawMessage, completion *harness.Transition) error {
 	session, found, err := h.db.GetSessionByUUID(ctx, lease.Ref.WorkspaceUUID, lease.Ref.SessionUUID)
 	if err != nil {
 		return err
@@ -83,8 +83,15 @@ func (h *Handler) PublishHarnessModelEvents(ctx context.Context, codeSession db.
 	return h.enforceBudgetAfterEvents(ctx, session.WorkspaceUUID, session.ExternalID, events)
 }
 
-func (h *Handler) harnessModelCompletion(ctx context.Context, ref db.HarnessTurnRef, message harness.AssistantMessage) (*db.HarnessModelCompletion, error) {
-	completion := &db.HarnessModelCompletion{Message: message}
+func (h *Handler) harnessModelCompletion(ctx context.Context, ref db.HarnessTurnRef, transition harness.Transition) (*db.HarnessModelCompletion, error) {
+	if len(transition.Messages) != 1 {
+		return nil, db.ErrInvalidState
+	}
+	message, ok := transition.Messages[0].(harness.AssistantMessage)
+	if !ok {
+		return nil, db.ErrInvalidState
+	}
+	completion := &db.HarnessModelCompletion{Message: message, Pending: transition.Pending}
 	task, _, err := h.db.HarnessTurnTask(ctx, ref)
 	if err != nil || task.Kind != "" {
 		return completion, err

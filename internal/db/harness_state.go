@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"maps"
 	"slices"
 
 	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
@@ -22,11 +21,10 @@ func (d *DB) HarnessState(lease HarnessTurnLease) *HarnessStateStore {
 }
 
 type harnessThreadState struct {
-	MessageCount  int64
-	Version       uint64
-	Metadata      json.RawMessage
-	Subscriptions map[harness.ToolCallID]struct{}
-	Choices       []harness.UserChoice
+	MessageCount int64
+	Version      uint64
+	Metadata     json.RawMessage
+	Choices      []harness.UserChoice
 }
 
 func appendHarnessTransition(ctx context.Context, executor yourbatis.Executor, key harnessThreadKey, turnUUID *string, state harnessThreadState, messages []harness.MessageWithID) error {
@@ -58,16 +56,8 @@ func loadHarnessThreadState(ctx context.Context, mapper HarnessStateMapper, key 
 	if row.Metadata != nil {
 		state.Metadata = json.RawMessage(*row.Metadata)
 	}
-	for _, field := range []struct {
-		raw  json.RawMessage
-		dest any
-	}{
-		{row.ActiveSubscriptions, &state.Subscriptions},
-		{row.PendingUserChoices, &state.Choices},
-	} {
-		if err := json.Unmarshal(field.raw, field.dest); err != nil {
-			return harnessThreadState{}, err
-		}
+	if err := json.Unmarshal(row.PendingUserChoices, &state.Choices); err != nil {
+		return harnessThreadState{}, err
 	}
 	return state, nil
 }
@@ -77,25 +67,14 @@ func saveHarnessState(ctx context.Context, mapper HarnessStateMapper, key harnes
 	if len(state.Metadata) != 0 {
 		row.Metadata = new(string(state.Metadata))
 	}
-	if state.Subscriptions == nil {
-		state.Subscriptions = map[harness.ToolCallID]struct{}{}
-	}
 	if state.Choices == nil {
 		state.Choices = []harness.UserChoice{}
 	}
-	for _, field := range []struct {
-		value any
-		dest  *json.RawMessage
-	}{
-		{state.Subscriptions, &row.ActiveSubscriptions},
-		{state.Choices, &row.PendingUserChoices},
-	} {
-		raw, err := json.Marshal(field.value)
-		if err != nil {
-			return err
-		}
-		*field.dest = raw
+	choices, err := json.Marshal(state.Choices)
+	if err != nil {
+		return err
 	}
+	row.PendingUserChoices = choices
 	return mapper.SaveState(ctx, key, row)
 }
 
@@ -139,27 +118,6 @@ func (s *HarnessStateStore) SetMetadata(ctx context.Context, rootThreadID harnes
 		return errors.New("metadata must contain valid JSON")
 	}
 	return s.updateState(ctx, rootThreadID, func(state *harnessThreadState) { state.Metadata = metadata })
-}
-
-func (s *HarnessStateStore) GetActiveSubscriptions(ctx context.Context, threadID harness.ThreadID) ([]harness.ToolCallID, error) {
-	state, err := s.readState(ctx, threadID)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Sorted(maps.Keys(state.Subscriptions)), nil
-}
-
-func (s *HarnessStateStore) AddActiveSubscription(ctx context.Context, threadID harness.ThreadID, toolCallID harness.ToolCallID) error {
-	return s.updateState(ctx, threadID, func(state *harnessThreadState) {
-		if state.Subscriptions == nil {
-			state.Subscriptions = make(map[harness.ToolCallID]struct{})
-		}
-		state.Subscriptions[toolCallID] = struct{}{}
-	})
-}
-
-func (s *HarnessStateStore) RemoveActiveSubscription(ctx context.Context, threadID harness.ThreadID, toolCallID harness.ToolCallID) error {
-	return s.updateState(ctx, threadID, func(state *harnessThreadState) { delete(state.Subscriptions, toolCallID) })
 }
 
 func (s *HarnessStateStore) AddPendingUserChoice(ctx context.Context, threadID harness.ThreadID, choice harness.UserChoice) error {

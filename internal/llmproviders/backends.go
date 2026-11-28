@@ -61,8 +61,7 @@ func (c Catalog) RuntimeModels() (map[string]RuntimeModel, error) {
 		if err != nil {
 			continue
 		}
-		index := slices.IndexFunc(selected.Provider.Models, func(model db.LLMModel) bool { return model.ID == selected.UpstreamModelID })
-		models[id] = RuntimeModel{LLMModel: selected.Provider.Models[index], APIBackend: selected.Provider.APIBackend}
+		models[id] = RuntimeModel{LLMModel: selected.Definition(), APIBackend: selected.Provider.APIBackend}
 	}
 	return models, nil
 }

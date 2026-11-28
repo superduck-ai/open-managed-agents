@@ -3,6 +3,7 @@ package codesessions
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,72 @@ func TestHarnessSandboxOutcome(t *testing.T) {
 	if success.Failed || success.Text != "hello" {
 		t.Fatalf("unexpected tool result: %+v", success)
 	}
+}
+
+func TestHarnessBashKeepsSandboxDiagnostics(t *testing.T) {
+	stdout := "hello\n"
+	success := `{"stdout":"hello\n","stderr":"","exit_code":0,"status":"completed","timed_out":false,"cancelled":false,"stdout_truncated":false,"stderr_truncated":false}`
+	for _, test := range []struct {
+		name, tool, state, metadata, summary string
+	}{
+		{"failed call", "bash", "failed", success, success},
+		{"nonzero exit", "bash", "failed", strings.Replace(success, `"exit_code":0`, `"exit_code":1`, 1), ""},
+		{"truncated stdout", "bash", "succeeded", strings.Replace(success, `"stdout_truncated":false`, `"stdout_truncated":true`, 1), ""},
+		{"stderr", "bash", "succeeded", strings.Replace(success, `"stderr":""`, `"stderr":"warning"`, 1), ""},
+		{"mismatched summary", "bash", "succeeded", success, `{"stdout":"different"}`},
+		{"missing status", "bash", "succeeded", `{"stdout":"hello\n"}`, ""},
+		{"other tool", "read", "succeeded", success, success},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary := test.summary
+			if summary == "" {
+				summary = test.metadata
+			}
+			call := sandboxBashTestCall(t, test.tool, test.state, stdout, test.metadata, summary)
+			got := harnessSandboxResult(call)
+			if got.Text != stdout+"\n"+summary || got.Failed != (test.state == "failed") {
+				t.Fatalf("diagnostic was changed: %+v", got)
+			}
+		})
+	}
+}
+
+func TestHarnessBashPreservesExactStdout(t *testing.T) {
+	for _, test := range []struct {
+		name, stdout, preview string
+	}{
+		{"whitespace", " hello\n\n", " hello\n\n"},
+		{"empty", "", "(no output)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, err := json.Marshal(test.stdout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			execution := `"stderr":"","exit_code":0,"status":"completed","timed_out":false,"cancelled":false,"stdout_truncated":false,"stderr_truncated":false`
+			metadata := `{"stdout":` + string(stdout) + "," + execution + "}"
+			reordered := "{" + execution + `,"stdout":` + string(stdout) + "}"
+			call := sandboxBashTestCall(t, "bash", "succeeded", test.preview, metadata, reordered)
+			if got := harnessSandboxResult(call); got.Failed || got.Text != test.stdout {
+				t.Fatalf("tool result = %+v, want stdout %q", got, test.stdout)
+			}
+		})
+	}
+}
+
+func sandboxBashTestCall(t *testing.T, tool, state, preview, metadata, summary string) db.SandboxToolCall {
+	t.Helper()
+	result, err := json.Marshal(struct {
+		Content           []ModelRequestContent `json:"content"`
+		StructuredContent json.RawMessage       `json:"structuredContent"`
+	}{
+		Content:           []ModelRequestContent{{Type: "text", Text: &preview}, {Type: "text", Text: &summary}},
+		StructuredContent: json.RawMessage(metadata),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db.SandboxToolCall{ToolName: tool, State: state, Result: result}
 }
 
 func TestHarnessChoiceToolUsesExistingQuestionEvent(t *testing.T) {

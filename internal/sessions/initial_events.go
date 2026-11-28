@@ -10,14 +10,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type sessionInitialEvent struct {
-	Type            string                                    `json:"type"`
-	SessionThreadID *string                                   `json:"session_thread_id"`
-	Content         []sessionInitialContentBlock              `json:"content"`
-	Subscription    *sessioncontract.HarnessSubscriptionEvent `json:"subscription_event"`
+	Type            string                       `json:"type"`
+	SessionThreadID *string                      `json:"session_thread_id"`
+	Content         []sessionInitialContentBlock `json:"content"`
 }
 
 type sessionInitialContentBlock struct {
@@ -50,9 +48,6 @@ func normalizeSessionInitialEvents(session *db.Session, raw json.RawMessage, now
 		}
 		if boundary.Type != "user.message" && boundary.Type != "user.define_outcome" {
 			return nil, errors.New("initial_events only accepts user.message and user.define_outcome")
-		}
-		if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && boundary.Subscription != nil {
-			return nil, errors.New("subscription events require an existing session")
 		}
 		if boundary.SessionThreadID != nil {
 			return nil, errors.New("initial_events cannot target an existing session thread")

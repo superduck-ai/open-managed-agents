@@ -71,26 +71,3 @@ func (q *MemoryInputQueue) redeliver(batch []StepInput) {
 		q.enqueue(input)
 	}
 }
-
-type MemoryDeferQueue struct {
-	mu     sync.Mutex
-	inputs map[ThreadID][]StepInput
-}
-
-func (q *MemoryDeferQueue) Push(_ context.Context, input InputMessage, messageID string) (bool, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.inputs == nil {
-		q.inputs = make(map[ThreadID][]StepInput)
-	}
-	q.inputs[input.GroupID] = append(q.inputs[input.GroupID], StepInput{Message: input, DedupID: messageID})
-	return true, nil
-}
-
-func (q *MemoryDeferQueue) Drain(_ context.Context, threadID ThreadID) ([]StepInput, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	inputs := q.inputs[threadID]
-	delete(q.inputs, threadID)
-	return inputs, nil
-}

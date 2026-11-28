@@ -67,7 +67,10 @@ trap stop_worker INT TERM
 
 while :; do
   started_at=$SECONDS
-  "$WORKER_BINARY" -api-url "$OMA_API_URL" &
+  sh -c '
+    printf "harness worker process started pid=%s\n" "$$"
+    exec "$@"
+  ' oma-harness-worker "$WORKER_BINARY" -api-url "$OMA_API_URL" -serve &
   WORKER_PID=$!
   status=0
   wait "$WORKER_PID" || status=$?

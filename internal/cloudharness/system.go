@@ -7,51 +7,72 @@ import (
 	"sync"
 )
 
-type Model interface {
-	Complete(context.Context, []Message) (ModelCompleted, error)
-}
-
 type ToolExecutor interface {
 	Execute(context.Context, ToolCall) ToolResult
 }
 
+type ClaimedTask struct {
+	Work          Work
+	ModelPolicy   ModelWork
+	CompleteModel func(context.Context) (ModelCompleted, error)
+	CommitModel   func(context.Context, Transition) error
+	DispatchTool  func(context.Context, ToolWork) error
+}
+
+type StepInput struct {
+	Message InputMessage
+	DedupID string
+}
+
+type ThreadStepOutcome struct {
+	ThreadID ThreadID
+	Outcome  StepOutcome
+}
+
 type AgentSystem struct {
-	stepMu       sync.Mutex
-	conversation ConversationStore
-	stateStore   ExecutionStateStore
-	model        Model
-	tools        ToolExecutor
-	sender       InputSender
+	stepMu sync.Mutex
+	memory *MemoryStore
+	model  Model
+	tools  ToolExecutor
+	sender InputSender
+	task   *ClaimedTask
 }
 
-type threadBatch struct {
-	id     ThreadID
-	inputs []StepInput
-	state  State
-	seen   map[string]struct{}
+func NewAgentSystem(store *MemoryStore, model Model, tools ToolExecutor, sender InputSender) *AgentSystem {
+	return &AgentSystem{memory: store, model: model, tools: tools, sender: sender}
 }
 
-func NewAgentSystem(conversation ConversationStore, stateStore ExecutionStateStore, model Model, tools ToolExecutor, sender InputSender) *AgentSystem {
-	return &AgentSystem{conversation: conversation, stateStore: stateStore, model: model, tools: tools, sender: sender}
+func NewClaimedAgentSystem(task ClaimedTask) *AgentSystem {
+	return &AgentSystem{task: &task}
 }
 
 func (s *AgentSystem) Sender() InputSender {
 	return s.sender
 }
 
-func (s *AgentSystem) Step(ctx context.Context, inputs []StepInput, observer ThreadObserver, deferQueue DeferQueue) ([]ThreadStepOutcome, error) {
-	s.stepMu.Lock()
-	defer s.stepMu.Unlock()
+func (s *AgentSystem) Step(ctx context.Context, inputs []StepInput, observer ThreadObserver, deferQueue DeferQueue) (outcomes []ThreadStepOutcome, err error) {
+	stepMu := &s.stepMu
+	if s.memory != nil {
+		stepMu = &s.memory.stepMu
+	}
+	stepMu.Lock()
+	defer stepMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	groups := groupStepInputs(inputs)
-	for index, group := range groups {
-		ready, err := s.loadBatch(ctx, group, deferQueue)
-		if err != nil {
-			return nil, fmt.Errorf("load thread %s batch: %w", group.id, err)
+	if s.task != nil && (len(inputs) != 1 || deferQueue != nil) {
+		return nil, fmt.Errorf("%w: expected one claimed task", ErrUnexpectedInput)
+	}
+	threads := s.groupStepInputs(inputs)
+	if deferQueue != nil {
+		defer func() {
+			err = errors.Join(err, restoreDeferred(context.WithoutCancel(ctx), threads, deferQueue))
+		}()
+	}
+	for _, thread := range threads {
+		if err := thread.load(ctx, deferQueue); err != nil {
+			return nil, fmt.Errorf("load thread %s batch: %w", thread.id, err)
 		}
-		groups[index] = ready
 	}
 
 	var observerMu sync.Mutex
@@ -62,198 +83,40 @@ func (s *AgentSystem) Step(ctx context.Context, inputs []StepInput, observer Thr
 			observer.OnEvent(threadID, event)
 		}
 	}
-	outcomes := make([]ThreadStepOutcome, len(groups))
-	failures := make([]error, len(groups))
+	outcomes = make([]ThreadStepOutcome, len(threads))
+	failures := make([]error, len(threads))
 	var steps sync.WaitGroup
-	for index, group := range groups {
+	for index, thread := range threads {
 		steps.Go(func() {
-			outcome, err := s.stepThread(ctx, group, notify)
-			outcomes[index] = ThreadStepOutcome{ThreadID: group.id, Outcome: outcome}
+			outcome, err := thread.step(ctx, notify)
+			if err == nil {
+				thread.deferred = nil
+			}
+			outcomes[index] = ThreadStepOutcome{ThreadID: thread.id, Outcome: outcome}
 			failures[index] = err
 		})
 	}
 	steps.Wait()
 	for index, err := range failures {
 		if err != nil {
-			return nil, fmt.Errorf("step thread %s: %w", groups[index].id, err)
+			return nil, fmt.Errorf("step thread %s: %w", threads[index].id, err)
 		}
 	}
 	return outcomes, nil
 }
 
-func (s *AgentSystem) loadBatch(ctx context.Context, group threadBatch, deferQueue DeferQueue) (threadBatch, error) {
-	state, err := s.stateStore.LoadState(ctx, group.id)
-	if err != nil {
-		return threadBatch{}, err
-	}
-	group.state = state
-	group.seen = make(map[string]struct{})
-	group.inputs, err = s.filterDeferrable(ctx, group, deferQueue)
-	return group, err
-}
-
-func groupStepInputs(inputs []StepInput) []threadBatch {
+func (s *AgentSystem) groupStepInputs(inputs []StepInput) []*threadExecution {
 	indexByThread := make(map[ThreadID]int)
-	var groups []threadBatch
+	var threads []*threadExecution
 	for _, input := range inputs {
 		threadID := input.Message.GroupID
 		index, exists := indexByThread[threadID]
 		if !exists {
-			index = len(groups)
+			index = len(threads)
 			indexByThread[threadID] = index
-			groups = append(groups, threadBatch{id: threadID})
+			threads = append(threads, &threadExecution{system: s, id: threadID})
 		}
-		groups[index].inputs = append(groups[index].inputs, input)
+		threads[index].inputs = append(threads[index].inputs, input)
 	}
-	return groups
-}
-
-func (s *AgentSystem) stepThread(ctx context.Context, group threadBatch, notify func(ThreadID, AgentEvent)) (StepOutcome, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if len(group.inputs) == 0 {
-		return Skipped{}, nil
-	}
-	state, err := s.prepareInputs(ctx, group)
-	if err != nil {
-		return nil, err
-	}
-	outcome, state, err := s.completeModel(ctx, group.id, state, notify)
-	if err != nil {
-		return nil, err
-	}
-	switch work := state.Pending.(type) {
-	case ApprovalWork:
-		notify(group.id, AgentEvent{Kind: ToolApprovalRequested, Call: work.Call})
-	case ToolWork:
-		if err := s.dispatchTool(ctx, group.id, state, work, notify); err != nil {
-			return nil, err
-		}
-	}
-	return outcome, nil
-}
-
-func (s *AgentSystem) prepareInputs(ctx context.Context, group threadBatch) (State, error) {
-	state := group.state
-	for _, input := range group.inputs {
-		if err := s.storeInputMetadata(ctx, group.id, input.Message); err != nil {
-			return State{}, err
-		}
-		dedupID := input.DedupID
-		if group.isProcessed(dedupID) {
-			continue
-		}
-		next, err := s.commitInput(ctx, group.id, state, input)
-		if err != nil {
-			return State{}, err
-		}
-		if next.Version != state.Version && dedupID != "" {
-			group.seen[dedupID] = struct{}{}
-		}
-		state = next
-	}
-	return state, nil
-}
-
-func (s *AgentSystem) storeInputMetadata(ctx context.Context, threadID ThreadID, message InputMessage) error {
-	if len(message.Metadata) == 0 {
-		return nil
-	}
-	if _, user := message.Content.(UserMessage); user {
-		if err := s.conversation.EnsureRootThread(ctx, threadID); err != nil {
-			return err
-		}
-	}
-	ancestors, err := s.conversation.GetAncestorChain(ctx, threadID)
-	if err != nil {
-		return err
-	}
-	if len(ancestors) != 0 {
-		threadID = ancestors[0].ThreadID
-	}
-	return s.stateStore.SetMetadata(ctx, threadID, message.Metadata)
-}
-
-func (group threadBatch) isProcessed(dedupID string) bool {
-	_, exists := group.seen[dedupID]
-	return dedupID != "" && exists
-}
-
-func (s *AgentSystem) commitInput(ctx context.Context, threadID ThreadID, state State, input StepInput) (State, error) {
-	content := input.Message.Content
-	switch content.(type) {
-	case ResumeThread:
-		return state, nil
-	case UserMessage:
-		if err := s.conversation.EnsureRootThread(ctx, threadID); err != nil {
-			return State{}, err
-		}
-	case Approval, ToolResult:
-	default:
-		return State{}, fmt.Errorf("%w: unsupported batch input %T", ErrUnexpectedInput, content)
-	}
-	transition, err := Step(state, content)
-	if err != nil {
-		if _, isText := content.(UserMessage); !isText && errors.Is(err, ErrUnexpectedInput) {
-			return state, nil
-		}
-		return State{}, err
-	}
-	return s.stateStore.Commit(ctx, threadID, state.Version, transition, input.DedupID)
-}
-
-func (s *AgentSystem) completeModel(ctx context.Context, threadID ThreadID, state State, notify func(ThreadID, AgentEvent)) (StepOutcome, State, error) {
-	if _, waiting := state.Pending.(ModelWork); !waiting {
-		return Skipped{}, state, nil
-	}
-	if s.model == nil {
-		return nil, State{}, errors.New("model is required for pending completion")
-	}
-	history, _, _, err := s.conversation.LoadHistoryWithAncestors(ctx, threadID)
-	if err != nil {
-		return nil, State{}, err
-	}
-	notify(threadID, AgentEvent{Kind: CompletionStarted})
-	result, err := s.model.Complete(ctx, history)
-	if err != nil {
-		return nil, State{}, fmt.Errorf("complete model work: %w", err)
-	}
-	if !result.Persisted {
-		state, err = s.apply(ctx, threadID, state, result, "")
-		if err != nil {
-			return nil, State{}, err
-		}
-	}
-	notify(threadID, AgentEvent{Kind: CompletionFinished, Usage: result.Usage})
-	return Completed{Usage: result.Usage, ContextWindow: result.ContextWindow}, state, nil
-}
-
-func (s *AgentSystem) dispatchTool(ctx context.Context, threadID ThreadID, state State, work ToolWork, notify func(ThreadID, AgentEvent)) error {
-	if s.Sender() == nil {
-		return errors.New("input sender is required for tool results")
-	}
-	if work.Result.CallID == "" {
-		if s.tools == nil {
-			return errors.New("tool executor is required for pending tool work")
-		}
-		notify(threadID, AgentEvent{Kind: ToolExecutionStarted, Call: work.Call})
-		work.Result = s.tools.Execute(ctx, work.Call)
-		if _, err := s.apply(ctx, threadID, state, toolExecuted{Result: work.Result}, ""); err != nil {
-			return err
-		}
-	}
-	message := InputMessage{GroupID: threadID, Content: work.Result}
-	if err := s.Sender().SendToInputQueue(ctx, message, "tool-result:"+string(work.Call.ID)); err != nil {
-		return fmt.Errorf("send tool result: %w", err)
-	}
-	return nil
-}
-
-func (s *AgentSystem) apply(ctx context.Context, threadID ThreadID, state State, input Input, dedupID string) (State, error) {
-	transition, err := Step(state, input)
-	if err != nil {
-		return State{}, err
-	}
-	return s.stateStore.Commit(ctx, threadID, state.Version, transition, dedupID)
+	return threads
 }

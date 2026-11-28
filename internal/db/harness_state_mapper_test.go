@@ -11,7 +11,7 @@ func TestHarnessStateMapperBindings(t *testing.T) {
 	dialect := yourbatis.DialectPostgres
 	key := harnessThreadKey{Scope: harnessConversationScope{OrganizationUUID: "org", WorkspaceUUID: "workspace", SessionUUID: "session"}, UUID: "thread"}
 	scopeNames := []string{"key.Scope.OrganizationUUID", "key.Scope.WorkspaceUUID", "key.Scope.SessionUUID", "key.UUID"}
-	stateNames := []string{"state.Metadata", "state.ActiveSubscriptions", "state.PendingUserChoices"}
+	stateNames := []string{"state.Metadata", "state.PendingUserChoices"}
 	state := harnessStateRow{Version: 4}
 	for _, contract := range []mapperBuilderContract{
 		{
@@ -25,7 +25,7 @@ func TestHarnessStateMapperBindings(t *testing.T) {
 			wantID: "HarnessStateMapper.SaveState", wantKind: yourbatis.StatementInsert,
 			wantArgumentNames:          slices.Concat(scopeNames, []string{"state.Version"}, stateNames),
 			wantSensitiveArgumentNames: stateNames,
-			wantSQLFragments:           []string{"INSERT INTO harness_thread_state", "metadata, active_subscriptions, pending_user_choices", "ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid)"},
+			wantSQLFragments:           []string{"INSERT INTO harness_thread_state", "metadata, pending_user_choices", "ON CONFLICT (organization_uuid, workspace_uuid, session_uuid, thread_uuid)"},
 		},
 		{
 			statement: harnessStateMapperDeleteStatesStatement, bound: buildHarnessStateMapperDeleteStates(dialect, key.Scope),

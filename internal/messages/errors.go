@@ -17,6 +17,10 @@ func invalidRequestError(cause error) *httpapi.Error {
 	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", cause.Error())
 }
 
+func harnessModelStreamRequiredError() *httpapi.Error {
+	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Cloud Harness model requests require a worker stream")
+}
+
 func requestTooLargeError() *httpapi.Error {
 	return httpapi.NewError(http.StatusRequestEntityTooLarge, "request_too_large", "Request body exceeds maximum size")
 }

@@ -98,18 +98,21 @@ Harness 模式会在后端下方增加 `harness-status` 分屏。
 不发送中断，也不提前写入启动命令。脚本先等待后端输出监听成功，再读取生效的
 `environment_runner.cloud_harness` 配置。开启时调用 `just restart-harness` 并使用
 `oma-harness` 分屏，否则调用 `just restart-brain` 并使用 `oma-brain` 分屏。
-Harness 启动器在绑定环境中读取生成配置和当前 portless API alias。它构建一次，
-此后逐个启动 Worker。每个进程连接数据库并绑定 JetStream consumer 后输出就绪日志，再处理一条投递。
+Harness 启动器在绑定环境中读取生成配置和当前 portless API alias。它构建一次，启动一个常驻
+Worker 进程，并在进程退出后重新启动。Worker 连接数据库并绑定 JetStream consumer 后输出就绪日志。
+Worker 边拉取边执行，不同 Session 的投递可以在同一进程中并行处理。
 脚本等执行服务就绪后启动 Web，每次使用唯一就绪标记。状态分屏在 Web 就绪后启动，
-每秒查询执行分屏。它用 Worker 日志显示当前阶段和最近一条输入经过的阶段，用启动器输出的退出记录
-显示进程 PID、退出原因和存活时长。空队列轮询退出时，面板继续保留最近一条实际输入及其结果。
+每秒查询执行分屏。`Agent loops` 显示当前 Worker 已领取、尚未结束的投递数量。同一投递的模型和工具
+阶段计为一个 loop。等待新投递或已挂起等待外部结果的输入不计入。进程信息不可用或日志无法对应
+当前 Worker 时显示 `—`。面板按处理循环记录最近一条结束输入的阶段、结果和耗时，并单独显示
+上一个 Worker 进程的退出状态与存活时长。
 启动器停止或执行分屏消失时，监视进程退出。再次执行 `just restart` 时，状态分屏随本
 worktree 的旧分屏一起关闭。
 
 启动全部成功后才切换到服务标签页；失败时控制分屏显示服务名、panel ID、
 失败阶段及该分屏最近 30 行输出，停止后续启动并保留新分屏。脚本回归入口为
 `bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 验证等待、替换、拒绝误关、
-任务阶段、退出记录及失败诊断。
+任务阶段、交错执行的 agent loop 计数、退出记录及失败诊断。
 
 三个服务就绪后，脚本汇总输出当前环境的 Web 与 API 完整 HTTP URL。
 交互终端使用 OSC 8 超链接，重定向输出或 `TERM=dumb` 时使用纯文本 URL。

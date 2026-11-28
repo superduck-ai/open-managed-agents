@@ -154,13 +154,13 @@ func appendHarnessMessages(ctx context.Context, mapper HarnessConversationMapper
 	return order, nil
 }
 
-func (s *HarnessConversationStore) SpawnThread(ctx context.Context, parentThreadID harness.ThreadID, callID harness.ToolCallID, subscription bool, spawn harness.SpawnContext) (harness.ThreadID, error) {
+func (s *HarnessConversationStore) SpawnThread(ctx context.Context, parentThreadID harness.ThreadID, callID harness.ToolCallID, spawn harness.SpawnContext) (harness.ThreadID, error) {
 	if spawn.InheritUpTo != nil && *spawn.InheritUpTo < 0 {
 		return "", harness.ErrInvalidHistoryOrder
 	}
 	child := harness.ThreadID(uuid.NewString())
 	err := s.write(ctx, func(mapper HarnessConversationMapper) error {
-		return insertSpawnedHarnessThread(ctx, mapper, s.key(child), string(parentThreadID), callID, subscription, spawn)
+		return insertSpawnedHarnessThread(ctx, mapper, s.key(child), string(parentThreadID), callID, spawn)
 	})
 	if err != nil {
 		return "", err
@@ -168,7 +168,7 @@ func (s *HarnessConversationStore) SpawnThread(ctx context.Context, parentThread
 	return child, nil
 }
 
-func insertSpawnedHarnessThread(ctx context.Context, mapper HarnessConversationMapper, child harnessThreadKey, parentUUID string, callID harness.ToolCallID, subscription bool, spawn harness.SpawnContext) error {
+func insertSpawnedHarnessThread(ctx context.Context, mapper HarnessConversationMapper, child harnessThreadKey, parentUUID string, callID harness.ToolCallID, spawn harness.SpawnContext) error {
 	parent, err := mapper.LockThread(ctx, harnessThreadKey{Scope: child.Scope, UUID: parentUUID})
 	if err != nil {
 		return mapNoRows(err)
@@ -176,7 +176,7 @@ func insertSpawnedHarnessThread(ctx context.Context, mapper HarnessConversationM
 	return mapper.InsertThread(ctx, child, harnessConversationThread{
 		RootThreadUUID: parent.RootThreadUUID, ParentThreadUUID: &parent.ThreadUUID,
 		SpawnMessageSeq: new(harnessSpawnOrder(spawn)), SpawnToolCallID: new(string(callID)),
-		Subscription: subscription, Fresh: spawn.InheritUpTo == nil,
+		Fresh: spawn.InheritUpTo == nil,
 	})
 }
 
@@ -199,11 +199,6 @@ func (s *HarnessConversationStore) IsThreadClosed(ctx context.Context, threadID 
 
 func (s *HarnessConversationStore) CloseThread(ctx context.Context, threadID harness.ThreadID) error {
 	return s.write(ctx, func(mapper HarnessConversationMapper) error { return mapper.CloseThread(ctx, s.key(threadID)) })
-}
-
-func (s *HarnessConversationStore) IsSubscriptionEventThread(ctx context.Context, threadID harness.ThreadID) (bool, error) {
-	row, err := s.thread(ctx, threadID)
-	return row.Subscription, err
 }
 
 func (s *HarnessConversationStore) IsFreshContextThread(ctx context.Context, threadID harness.ThreadID) (bool, error) {

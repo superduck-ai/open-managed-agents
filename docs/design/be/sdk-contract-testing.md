@@ -30,7 +30,7 @@ sequenceDiagram
 
 Agent 更新/归档和 Environment 读取测试先通过 API 创建真实资源。Skill multipart 生命周期上传有效 `SKILL.md`，创建两个真实版本，再验证列表、读取、下载与删除。Batch 原先验证“非法参数也模拟成功”的测试改为断言拒绝流式请求；现有 Batch worker 集成测试继续验证实际作业、结果存储和终态。
 
-`tests/sdk_fixture_removal_test.go` 在独立 schema 中显式注册旧 SDK 身份，验证六类固定 ID 都不能读取不存在的资源，向不存在的 Session 发送事件也不会成功。真实 Session 消息测试比较发送响应与持久化历史，并核对 SSE 的相同字段及 primary thread 归属。`TestCodeSessionWorkerDeliveryControlsJetStreamAcknowledgement` 补充重复 processed ACK 必须被忽略的断言；`TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents` 覆盖启动前排队与连接后投递。
+`tests/sdk_fixture_removal_test.go` 在独立 schema 中显式注册旧 SDK 身份，验证六类固定 ID 都不能读取不存在的资源，向不存在的 Session 发送事件也不会成功。真实 Session 消息测试核对两次 SSE 通知：接收回执对应发送响应，确认通知对应公开历史。排队期间历史为空，两次通知沿用同一事件 ID 和 primary thread 归属。`TestCodeSessionWorkerDeliveryControlsJetStreamAcknowledgement` 补充重复 processed ACK 必须被忽略的断言；`TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents` 覆盖启动前排队与连接后投递。
 
 仅用于生成假响应的 Session fixture 测试已删除；File Resource 的字段、时间戳及不泄漏 `source` 断言转由真实 `responseFromResource` 测试承担。对象存储和 Worker broker 的替身保留在测试侧。
 

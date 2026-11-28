@@ -43,7 +43,9 @@ func TestHarnessToolTaskCheckpointPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := HarnessTool{CallID: "toolu_read", Name: "Read", Arguments: json.RawMessage(`{"file_path":"/tmp/example"}`)}
-	if _, err := store.RecordHarnessModelEvents(ctx, initial.Lease, initial.CodeSession, HarnessModelEnd, nil, &HarnessModelCompletion{Message: harness.AssistantMessage{Call: spec.conversationCall()}, UserText: user.Text}); err != nil {
+	requestedCall := spec.conversationCall()
+	completion := &HarnessModelCompletion{Message: harness.AssistantMessage{Call: requestedCall}, Pending: harness.ToolWork{Call: requestedCall}, UserText: user.Text}
+	if _, err := store.RecordHarnessModelEvents(ctx, initial.Lease, initial.CodeSession, HarnessModelEnd, nil, completion); err != nil {
 		t.Fatal(err)
 	}
 

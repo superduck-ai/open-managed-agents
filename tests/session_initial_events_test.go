@@ -54,13 +54,7 @@ func TestSessionInitialEvents(t *testing.T) {
 				t.Fatalf("status=%s want=%s", session.Status, test.status)
 			}
 			record := mustSessionRecord(t, app, session.ID)
-			events, more, err := app.db.ListSessionEventsPage(t.Context(), db.ListSessionEventsPageParams{WorkspaceUUID: record.WorkspaceUUID, SessionExternalID: session.ID, Limit: 100, Order: "asc"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if more {
-				t.Fatal("unexpected history pagination")
-			}
+			events := sessionActivationEvents(t, app, record)
 			var texts []string
 			for _, event := range events {
 				if event.EventType == "user.message" {
@@ -100,6 +94,12 @@ func TestSessionInitialEvents(t *testing.T) {
 		}
 		session := createSession(t, app, string(raw))
 		defer cleanupSession(t, app, session.ID)
+		record := mustSessionRecord(t, app, session.ID)
+		result, err := app.pool.Exec(t.Context(), `UPDATE session_events SET processed_at = now()
+			WHERE workspace_uuid = $1 AND session_uuid = $2 AND event_type = 'user.message' AND processed_at IS NULL`, record.WorkspaceUUID, record.UUID)
+		if err != nil || result.RowsAffected() != 1 {
+			t.Fatalf("confirm large input: %v, %v", result, err)
+		}
 		history := listSessionEvents(t, app, session.ID, "", defaultTestKey)
 		found := false
 		for _, event := range history.Data {
@@ -152,4 +152,18 @@ func TestSessionInitialEvents(t *testing.T) {
 			t.Fatalf("partial session persisted: found=%v err=%v", found, err)
 		}
 	})
+}
+
+func sessionActivationEvents(t *testing.T, app *testApp, session db.Session) []db.SessionEvent {
+	t.Helper()
+	var events []db.SessionEvent
+	err := app.db.WithManagedAgentActivationTx(t.Context(), func(tx db.ManagedAgentActivationTx) error {
+		var err error
+		events, err = tx.ListSessionEventsForActivation(t.Context(), session)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
 }

@@ -200,7 +200,7 @@ func (e deliveryEnvelope) stepInput(legacy json.RawMessage, dedupID string) (clo
 		if err != nil {
 			return cloudharness.StepInput{}, err
 		}
-		text = &textInput{GroupID: cloudharness.ThreadID(e.Turn.SessionUUID), Text: value.ModelText(), Metadata: value.Metadata}
+		text = &textInput{GroupID: cloudharness.ThreadID(e.Turn.SessionUUID), Text: value.Text, Metadata: value.Metadata}
 	}
 	return cloudharness.StepInput{
 		Message: cloudharness.InputMessage{GroupID: text.GroupID, Content: cloudharness.UserMessage{Text: text.Text}, Metadata: text.Metadata},

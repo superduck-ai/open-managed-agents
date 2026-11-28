@@ -5,8 +5,6 @@ package tests
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -30,13 +28,7 @@ func TestSessionWorkerFailedTurnStopReason(t *testing.T) {
 	state("idle")
 	state("idle")
 	assertWorkerIdleReasons(t, app, worker.SessionExternalID, "retries_exhausted")
-	response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events?beta=true",
-		strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"Retry"}]}]}`), defaultTestKey, true)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("retry input status=%d: %s", response.StatusCode, readAll(t, response.Body))
-	}
-	queued := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	queued := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Retry"}]}]}`, defaultTestKey)
 	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, queued.Data[0], "id"))
 	state("running")
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,

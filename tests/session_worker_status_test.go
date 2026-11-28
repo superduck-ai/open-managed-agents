@@ -98,17 +98,10 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"session.status_running","uuid":"late-worker-running","id":"sevt_late_worker_running"}`))
 	counts := make(map[string]int)
-	processed := 0
 	for _, raw := range listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey).Data {
 		counts[sessionEventStringField(t, raw, "type")]++
-		if sessionEventStringField(t, raw, "type") == "user.message" && sessionInputProcessedAt(t, raw) != "" {
-			processed++
-		}
 	}
-	if processed != 0 {
-		t.Fatalf("expected no processed input before worker delivery, got %d", processed)
-	}
-	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 2 {
+	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 0 {
 		t.Fatalf("concurrent inputs duplicated running: %v", counts)
 	}
 }
@@ -165,13 +158,14 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if event.ID != "" {
 			live = append(live, event)
 		}
-		if len(live) == 2 {
+		if len(live) == 3 {
 			break
 		}
 	}
-	if len(live) != 2 {
-		t.Fatalf("running pair missing before ACK: %+v, scan: %v", live, scanner.Err())
+	if len(live) != 3 || live[2].ID != sessionEventStringField(t, sent.Data[0], "id") || live[2].ProcessedAt != "" {
+		t.Fatalf("missing running events or pending input before ACK: %+v, scan: %v", live, scanner.Err())
 	}
+	live = live[:2]
 	consumePublicInput(t, app, codeSession, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 
 	// Worker initialization reports idle before consuming the accepted inputs.
@@ -268,8 +262,8 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		}
 		waiting := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+codeSession.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`), defaultTestKey, true)
 		assertError(t, waiting, http.StatusBadRequest, "invalid_request_error")
-		if history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message", defaultTestKey); len(history.Data) != 2 {
-			t.Fatalf("pending tool request persisted a message: %s", history.Data)
+		if history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message", defaultTestKey); len(history.Data) != 1 {
+			t.Fatalf("unexpected confirmed messages: %s", history.Data)
 		}
 	}
 	pauses := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_idle&types[]=session.thread_status_idle&order=desc&limit=2", defaultTestKey)

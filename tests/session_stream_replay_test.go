@@ -75,7 +75,13 @@ func TestSessionStreamReplay(t *testing.T) {
 	pending.CreatedAt = stored.ProcessedAt.Add(time.Microsecond)
 	pending.ProcessedAt = time.Time{}
 	pending.Payload = json.RawMessage(`{"id":"queued_replay_input","type":"user.message","processed_at":null,"content":[]}`)
-	if _, err := app.db.AppendSessionEventsIfAbsent(t.Context(), code.WorkspaceUUID, code.SessionExternalID, []db.SessionEvent{pending}); err != nil {
+	confirmation := pending
+	confirmation.UUID = uuid.NewV4().String()
+	confirmation.ExternalID = "queued_tool_confirmation"
+	confirmation.EventType = "user.tool_confirmation"
+	confirmation.CreatedAt = pending.CreatedAt.Add(time.Microsecond)
+	confirmation.Payload = json.RawMessage(`{"id":"queued_tool_confirmation","type":"user.tool_confirmation","processed_at":null}`)
+	if _, err := app.db.AppendSessionEventsIfAbsent(t.Context(), code.WorkspaceUUID, code.SessionExternalID, []db.SessionEvent{pending, confirmation}); err != nil {
 		t.Fatal(err)
 	}
 	var records []db.SessionEvent
@@ -91,6 +97,22 @@ func TestSessionStreamReplay(t *testing.T) {
 	if _, err := app.db.AppendSessionEventsIfAbsent(t.Context(), code.WorkspaceUUID, code.SessionExternalID, records); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("resume after pending receipt", func(t *testing.T) {
+		response := open(code.SessionExternalID, pending.ExternalID)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("pending receipt cursor status = %d", response.StatusCode)
+		}
+		scanner := bufio.NewScanner(response.Body)
+		for scanner.Scan() {
+			if data, ok := strings.CutPrefix(scanner.Text(), "data: "); ok {
+				if got := sessionEventStringField(t, []byte(data), "id"); got != records[0].ExternalID {
+					t.Fatalf("first event after pending receipt = %s, want %s", got, records[0].ExternalID)
+				}
+				return
+			}
+		}
+		t.Fatalf("no event after pending receipt: %v", scanner.Err())
+	})
 	response := open(code.SessionExternalID, cursor.ID)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.StatusCode, readAll(t, response.Body))

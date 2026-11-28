@@ -279,6 +279,9 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && eventType == "user.message" {
+		if payload["subscription_event"] != nil {
+			return db.SessionEvent{}, nil, false, errors.New("cloud harness does not accept subscription events")
+		}
 		var harnessPayload struct {
 			Metadata json.RawMessage `json:"metadata"`
 		}

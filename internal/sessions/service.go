@@ -664,19 +664,19 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	}
 	useInputReceivedAt := session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime
 	records, hasMore, err := h.eventPayloads.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
-		WorkspaceUUID:      session.WorkspaceUUID,
-		UseInputReceivedAt: useInputReceivedAt,
-		SessionExternalID:  sessionID,
-		ThreadExternalID:   threadID,
-		PrimaryOnly:        threadID == "",
-		Limit:              limit,
-		Cursor:             cursor,
-		Order:              order,
-		Types:              parseRepeatedQuery(r, "types[]", "types"),
-		CreatedAtGT:        createdAtGT,
-		CreatedAtGTE:       createdAtGTE,
-		CreatedAtLT:        createdAtLT,
-		CreatedAtLTE:       createdAtLTE,
+
+		WorkspaceUUID:     session.WorkspaceUUID,
+		SessionExternalID: sessionID,
+		ThreadExternalID:  threadID,
+		PrimaryOnly:       threadID == "",
+		Limit:             limit,
+		Cursor:            cursor,
+		Order:             order,
+		Types:             parseRepeatedQuery(r, "types[]", "types"),
+		CreatedAtGT:       createdAtGT,
+		CreatedAtGTE:      createdAtGTE,
+		CreatedAtLT:       createdAtLT,
+		CreatedAtLTE:      createdAtLTE,
 	})
 	if errors.Is(err, db.ErrInvalidCursor) {
 		return invalidRequest(err)

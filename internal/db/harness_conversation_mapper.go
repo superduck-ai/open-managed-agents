@@ -22,7 +22,6 @@ type harnessConversationThread struct {
 	SpawnMessageSeq  *int64  `db:"spawn_message_seq"`
 	SpawnToolCallID  *string `db:"spawn_tool_call_id"`
 	Closed           bool    `db:"closed"`
-	Subscription     bool    `db:"is_subscription_event"`
 	Compaction       bool    `db:"is_compaction"`
 	Fresh            bool    `db:"fresh_context"`
 	MessageCount     int64   `db:"message_count"`

@@ -33,22 +33,112 @@ func (f observerFunc) OnEvent(threadID ThreadID, event AgentEvent) {
 	f(threadID, event)
 }
 
+func TestClaimedStepStopsWhenModelCommitFails(t *testing.T) {
+	commitErr := errors.New("lease revoked")
+	call := ToolCall{ID: "call", Name: "read", Arguments: "{}"}
+	system := NewClaimedAgentSystem(ClaimedTask{
+		Work: ModelWork{AutoExecuteTools: true},
+		CompleteModel: func(context.Context) (ModelCompleted, error) {
+			return ModelCompleted{Message: AssistantMessage{Call: call}}, nil
+		},
+		CommitModel: func(context.Context, Transition) error { return commitErr },
+		DispatchTool: func(context.Context, ToolWork) error {
+			t.Error("dispatched a tool after a failed commit")
+			return nil
+		},
+	})
+	_, err := system.Step(t.Context(), []StepInput{inputFor("thread", "", ResumeThread{})}, nil, nil)
+	if !errors.Is(err, commitErr) {
+		t.Fatalf("step error = %v", err)
+	}
+}
+
+func TestClaimedStepCommitsModelBeforeSeparateToolTask(t *testing.T) {
+	call := ToolCall{ID: "call", Name: "read", Arguments: "{}"}
+	message := AssistantMessage{Call: call}
+	var next Work
+	var execution []string
+	dispatch := func(_ context.Context, work ToolWork) error {
+		execution = append(execution, "dispatch")
+		if work.Call != call {
+			t.Errorf("dispatched call = %+v, want %+v", work.Call, call)
+		}
+		return nil
+	}
+	model := NewClaimedAgentSystem(ClaimedTask{
+		ModelPolicy: ModelWork{AutoExecuteTools: true},
+		CompleteModel: func(context.Context) (ModelCompleted, error) {
+			execution = append(execution, "model")
+			return ModelCompleted{Message: message}, nil
+		},
+		CommitModel: func(_ context.Context, transition Transition) error {
+			execution = append(execution, "commit")
+			next = transition.Pending
+			if !slices.Equal(transition.Messages, []Message{message}) {
+				t.Errorf("committed messages = %+v", transition.Messages)
+			}
+			return nil
+		},
+		DispatchTool: dispatch,
+	})
+	user := inputFor("thread", "input", UserMessage{Text: "Read the file."})
+	if _, err := model.Step(t.Context(), []StepInput{user}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewClaimedAgentSystem(ClaimedTask{Work: next, DispatchTool: dispatch})
+	resume := inputFor("thread", "", ResumeThread{})
+	if _, err := tool.Step(t.Context(), []StepInput{resume}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(execution, []string{"model", "commit", "dispatch"}) {
+		t.Fatalf("execution order = %v", execution)
+	}
+}
+
+func TestClaimedStepResumesFromMatchingToolResult(t *testing.T) {
+	call := ToolCall{ID: "current", Name: "read", Arguments: "{}"}
+	calls, commits := 0, 0
+	system := NewClaimedAgentSystem(ClaimedTask{
+		Work: ToolWork{Call: call},
+		CompleteModel: func(context.Context) (ModelCompleted, error) {
+			calls++
+			return ModelCompleted{Message: AssistantMessage{Text: "done"}}, nil
+		},
+		CommitModel: func(context.Context, Transition) error {
+			commits++
+			return nil
+		},
+	})
+	stale := inputFor("thread", "old:result", ToolResult{CallID: "old"})
+	if _, err := system.Step(t.Context(), []StepInput{stale}, nil, nil); !errors.Is(err, ErrUnexpectedInput) || calls != 0 || commits != 0 {
+		t.Fatalf("stale result: model calls = %d, commits = %d, error = %v", calls, commits, err)
+	}
+	result := inputFor("thread", "current:result", ToolResult{CallID: call.ID})
+	if _, err := system.Step(t.Context(), []StepInput{result}, nil, nil); err != nil || calls != 1 || commits != 1 {
+		t.Fatalf("current result: model calls = %d, commits = %d, error = %v", calls, commits, err)
+	}
+}
+
 func TestAgentSystemReemitsPendingApprovalWhenResumed(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemoryStore()
 	call := ToolCall{ID: "call", Name: "add"}
-	state := Transition{Pending: ApprovalWork{Call: call}}
-	if _, err := store.Commit(ctx, "thread", 0, state, "input"); err != nil {
+	if err := store.AppendMessages(ctx, "thread", []MessageWithID{
+		{ID: "input", Message: UserMessage{Text: "original"}},
+		{ID: "call", Message: AssistantMessage{Call: call}},
+	}); err != nil {
 		t.Fatal(err)
 	}
+	store.setPending("thread", ApprovalWork{Call: call})
 	want := []AgentEvent{{Kind: ToolApprovalRequested, Call: call}}
 	for _, input := range []StepInput{
 		inputFor("thread", "input", UserMessage{Text: "replayed"}),
+		inputFor("thread", "stale-approval", Approval{CallID: "stale", Granted: true}),
 		inputFor("thread", "", ResumeThread{}),
 	} {
 		var events []AgentEvent
 		observer := observerFunc(func(_ ThreadID, event AgentEvent) { events = append(events, event) })
-		system := NewAgentSystem(store, store, nil, nil, nil)
+		system := NewAgentSystem(store, nil, nil, nil)
 		if _, err := system.Step(ctx, []StepInput{input}, observer, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +171,7 @@ func TestAgentSystemRetriesToolDeliveryWithoutExecutingAgain(t *testing.T) {
 		return ModelCompleted{Message: AssistantMessage{Text: "42"}}, nil
 	})
 
-	system := NewAgentSystem(store, store, model, tool, failingSender)
+	system := NewAgentSystem(store, model, tool, failingSender)
 	if _, err := system.Step(ctx, []StepInput{inputFor("thread", "user", UserMessage{Text: "calculate"})}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +180,7 @@ func TestAgentSystemRetriesToolDeliveryWithoutExecutingAgain(t *testing.T) {
 		t.Fatalf("got %v, want queue error", err)
 	}
 
-	replacement := NewAgentSystem(store, store, model, tool, queue)
+	replacement := NewAgentSystem(store, model, tool, queue)
 	outcome, err := replacement.Step(ctx, approval, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +227,7 @@ func TestAgentSystemBatchesByThreadAndWaitsForOtherThreads(t *testing.T) {
 		}
 		return ModelCompleted{Message: AssistantMessage{Text: "done"}}, nil
 	})
-	system := NewAgentSystem(store, store, model, nil, nil)
+	system := NewAgentSystem(store, model, nil, nil)
 	inputs := []StepInput{
 		inputFor("first", "1", UserMessage{Text: "first"}),
 		inputFor("second", "1", UserMessage{Text: "error"}),
@@ -160,16 +250,26 @@ func TestAgentSystemDefersSyntheticInputUntilApprovalSettles(t *testing.T) {
 	store := NewMemoryStore()
 	queue := &MemoryDeferQueue{}
 	call := ToolCall{ID: "call", Name: "add"}
-	if _, err := store.Commit(ctx, "thread", 0, Transition{Pending: ApprovalWork{Call: call}}, "prior-user"); err != nil {
+	if err := store.AppendMessages(ctx, "thread", []MessageWithID{
+		{ID: "prior-user", Message: UserMessage{Text: "original"}},
+		{ID: "call", Message: AssistantMessage{Call: call}},
+	}); err != nil {
 		t.Fatal(err)
 	}
+	store.setPending("thread", ApprovalWork{Call: call})
+	modelError := errors.New("model unavailable with deferred input")
+	attempts := 0
 	model := modelFunc(func(_ context.Context, history []Message) (ModelCompleted, error) {
-		if len(history) != 2 || history[1] != (UserMessage{Text: "deferred"}) {
+		if len(history) != 4 || history[3] != (UserMessage{Text: "deferred"}) {
 			return ModelCompleted{}, errors.New("deferred input did not follow approval")
+		}
+		attempts++
+		if attempts == 1 {
+			return ModelCompleted{}, modelError
 		}
 		return ModelCompleted{Message: AssistantMessage{Text: "done"}}, nil
 	})
-	system := NewAgentSystem(store, store, model, nil, nil)
+	system := NewAgentSystem(store, model, nil, nil)
 	synthetic := inputFor("thread", "event", UserMessage{Text: "deferred"})
 	synthetic.Message.Synthetic = true
 	outcome, err := system.Step(ctx, []StepInput{synthetic}, nil, queue)
@@ -188,6 +288,9 @@ func TestAgentSystemDefersSyntheticInputUntilApprovalSettles(t *testing.T) {
 		t.Fatalf("replayed user input released deferred work: %#v", outcome)
 	}
 	denial := inputFor("thread", "denial", Approval{CallID: call.ID})
+	if _, err := system.Step(ctx, []StepInput{denial}, nil, queue); !errors.Is(err, modelError) {
+		t.Fatalf("deferred completion error = %v, want %v", err, modelError)
+	}
 	outcome, err = system.Step(ctx, []StepInput{denial}, nil, queue)
 	if err != nil {
 		t.Fatal(err)
@@ -204,11 +307,11 @@ func TestAgentSystemDeduplicatesInput(t *testing.T) {
 		return ModelCompleted{Message: AssistantMessage{Text: "hello"}}, nil
 	})
 	inputs := []StepInput{inputFor("thread", "input-id", UserMessage{Text: "hello"})}
-	system := NewAgentSystem(store, store, model, nil, nil)
+	system := NewAgentSystem(store, model, nil, nil)
 	if _, err := system.Step(ctx, inputs, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	replacement := NewAgentSystem(store, store, nil, nil, nil)
+	replacement := NewAgentSystem(store, nil, nil, nil)
 	outcomes, err := replacement.Step(ctx, inputs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -222,26 +325,38 @@ func inputFor(threadID ThreadID, dedupID string, input Input) StepInput {
 	return StepInput{Message: InputMessage{GroupID: threadID, Content: input}, DedupID: dedupID}
 }
 
-func TestAgentSystemAcceptsCompletionAlreadyCommittedByModel(t *testing.T) {
+func TestAgentSystemAppendsInputAndOutputOnlyAfterModelSucceeds(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemoryStore()
-	call := ToolCall{ID: "call", Name: "Read", Arguments: "{}"}
-	answer := AssistantMessage{Call: call}
-	model := modelFunc(func(ctx context.Context, _ []Message) (ModelCompleted, error) {
-		state, err := store.LoadState(ctx, "thread")
-		if err != nil {
-			return ModelCompleted{}, err
-		}
-		_, err = store.Commit(ctx, "thread", state.Version, Transition{Pending: ToolWork{Call: call}, Messages: []Message{answer}}, "")
-		return ModelCompleted{Message: answer, Persisted: err == nil}, err
+	modelError := errors.New("model unavailable")
+	user := UserMessage{Text: "read"}
+	answer := AssistantMessage{Text: "done"}
+	input := []StepInput{inputFor("thread", "input", user)}
+	failingModel := modelFunc(func(context.Context, []Message) (ModelCompleted, error) {
+		return ModelCompleted{}, modelError
 	})
-	system := NewAgentSystem(store, store, model, nil, nil)
-	if _, err := system.Step(ctx, []StepInput{inputFor("thread", "input", UserMessage{Text: "read"})}, nil, nil); err != nil {
+	system := NewAgentSystem(store, failingModel, nil, nil)
+	if _, err := system.Step(ctx, input, nil, nil); !errors.Is(err, modelError) {
+		t.Fatalf("failed completion = %v, want %v", err, modelError)
+	}
+	history, err := store.LoadHistoryUpTo(ctx, "thread", nil, nil)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("failed completion stored history: %+v, %v", history, err)
+	}
+
+	model := modelFunc(func(_ context.Context, history []Message) (ModelCompleted, error) {
+		if !slices.Equal(history, []Message{user}) {
+			return ModelCompleted{}, errors.New("retried model must see the input exactly once")
+		}
+		return ModelCompleted{Message: answer}, nil
+	})
+	replacement := NewAgentSystem(store, model, nil, nil)
+	if _, err := replacement.Step(ctx, input, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	state, err := store.LoadState(ctx, "thread")
-	if err != nil || state.MessageCount != 2 || state.Pending != (ToolWork{Call: call}) {
-		t.Fatalf("external completion was committed again: %+v, %v", state, err)
+	history, err = store.LoadHistoryUpTo(ctx, "thread", nil, nil)
+	if err != nil || !slices.Equal(history, []Message{user, answer}) {
+		t.Fatalf("committed history = %+v, %v", history, err)
 	}
 }
 
@@ -251,7 +366,7 @@ func TestAgentSystemStoresInputMetadataOnRoot(t *testing.T) {
 	if err := store.EnsureRootThread(ctx, "root"); err != nil {
 		t.Fatal(err)
 	}
-	childID, err := store.SpawnThread(ctx, "root", "spawn", false, SpawnContext{})
+	childID, err := store.SpawnThread(ctx, "root", "spawn", SpawnContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +375,7 @@ func TestAgentSystemStoresInputMetadataOnRoot(t *testing.T) {
 	})
 	input := inputFor(childID, "input", UserMessage{Text: "hello"})
 	input.Message.Metadata = []byte(`{"event":9007199254740993}`)
-	system := NewAgentSystem(store, store, model, nil, nil)
+	system := NewAgentSystem(store, model, nil, nil)
 	if _, err := system.Step(ctx, []StepInput{input}, nil, nil); err != nil {
 		t.Fatal(err)
 	}

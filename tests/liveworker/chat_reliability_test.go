@@ -264,11 +264,11 @@ func TestChatReliability(t *testing.T) {
 			continue
 		}
 		inputs++
-		if (inputs == 1 && event.ID != first) || (inputs == 2 && (event.ID != second || event.Processed != nil)) {
-			t.Fatal("active input was not queued in history order")
+		if event.ID != first || event.Processed == nil {
+			t.Fatal("history must contain only the confirmed first input")
 		}
 	}
-	if inputs != 2 || calls.Load() != 1 {
+	if inputs != 1 || calls.Load() != 1 {
 		t.Fatal("queued input started a concurrent model request")
 	}
 	chatProof(t, started, "busy_input_queued")

@@ -32,6 +32,7 @@ func run(logger *slog.Logger) error {
 	apiURL := flag.String("api-url", os.Getenv("OMA_API_URL"), "OMA model gateway base URL")
 	wait := flag.Duration("wait", 30*time.Second, "Deadline for one input delivery")
 	timeout := flag.Duration("timeout", 2*time.Minute, "Deadline for processing one input delivery")
+	serve := flag.Bool("serve", false, "Keep polling for input deliveries")
 	flag.Parse()
 	baseURL, err := llmproviders.ValidateBaseURL(strings.TrimSpace(*apiURL))
 	if err != nil {
@@ -61,7 +62,11 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("bind harness input consumer: %w", err)
 	}
 	logger.InfoContext(ctx, "harness worker ready")
-	worker := harnessworker.New(database, queue, baseURL, logger.With("component", "harness_worker"))
+	worker := harnessworker.New(database, queue, baseURL, logger.With("component", "harness_worker", "pid", os.Getpid()))
+	if *serve {
+		worker.Serve(ctx, *wait, *timeout)
+		return nil
+	}
 	claimed, err := worker.RunOnce(ctx, *wait, *timeout)
 	if err == nil && !claimed {
 		logger.InfoContext(ctx, "no harness input available")

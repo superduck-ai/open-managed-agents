@@ -103,8 +103,8 @@ func TestHarnessQueueRejectsInvalidContinuation(t *testing.T) {
 	}
 }
 
-func TestHarnessJetStreamCarriesInputsAndWakeups(t *testing.T) {
-	ctx := t.Context()
+func harnessTestQueue(t *testing.T) *Queue {
+	t.Helper()
 	server, err := natsserver.NewServer(&natsserver.Options{
 		Host: "127.0.0.1", Port: -1, NoSigs: true, JetStream: true, StoreDir: t.TempDir(),
 	})
@@ -124,11 +124,16 @@ func TestHarnessJetStreamCarriesInputsAndWakeups(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(connection.Close)
-	queue, err := Provision(ctx, connection, 1)
+	queue, err := Provision(t.Context(), connection, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return queue
+}
 
+func TestHarnessJetStreamCarriesInputsAndWakeups(t *testing.T) {
+	ctx := t.Context()
+	queue := harnessTestQueue(t)
 	ref := testDeliveryRef()
 	session := db.Session{UUID: ref.SessionUUID, OrganizationUUID: ref.OrganizationUUID, WorkspaceUUID: ref.WorkspaceUUID}
 	thread := cloudharness.ThreadID(ref.SessionUUID)

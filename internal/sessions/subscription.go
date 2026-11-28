@@ -67,7 +67,7 @@ func (h *Handler) subscribeSessionThread(ctx context.Context, session db.Session
 }
 
 func (h *Handler) subscribeSession(ctx context.Context, session db.Session, connection *streamConnection, options StreamOptions) (*EventSubscription, error) {
-	connection.useInputReceivedAt = session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime
+	connection.cloudHarness = session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime
 	cursorID := options.AfterEventID
 	ctx, cancel := context.WithCancel(ctx)
 	id, deliveries := h.streams.subscribe(session.WorkspaceUUID, session.ExternalID)
@@ -214,7 +214,7 @@ func (s *EventSubscription) replayInput(ctx context.Context, anchor sessionStrea
 }
 
 func (s *EventSubscription) eventOrderTime(event sessionStreamEvent) time.Time {
-	receivedAt := sessionInputReceivedAt(event.EventType, event.CreatedAt, s.connection.useInputReceivedAt)
+	receivedAt := sessionInputReceivedAt(event.EventType, event.CreatedAt, s.connection.cloudHarness)
 	if !receivedAt.IsZero() {
 		return receivedAt
 	}

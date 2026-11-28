@@ -12,7 +12,7 @@
     <sql id="thread"> <include refid="scope"/> AND thread_uuid = #{key.UUID}</sql>
     <sql id="threadColumns">
         thread_uuid, root_thread_uuid, parent_thread_uuid, spawn_message_seq, spawn_tool_call_id, closed,
-        is_subscription_event, is_compaction, fresh_context, message_count
+        is_compaction, fresh_context, message_count
     </sql>
 
     <insert id="EnsureRoot" result="rows">
@@ -30,9 +30,9 @@
     <insert id="InsertThread" result="exec">
         INSERT INTO harness_thread_hierarchy
             (organization_uuid, workspace_uuid, session_uuid, thread_uuid, root_thread_uuid, parent_thread_uuid,
-             spawn_message_seq, spawn_tool_call_id, is_subscription_event, fresh_context)
+             spawn_message_seq, spawn_tool_call_id, fresh_context)
         VALUES (<include refid="scopeValues"/>, #{key.UUID}, #{thread.RootThreadUUID},
-                #{thread.ParentThreadUUID}, #{thread.SpawnMessageSeq}, #{thread.SpawnToolCallID}, #{thread.Subscription}, #{thread.Fresh})
+                #{thread.ParentThreadUUID}, #{thread.SpawnMessageSeq}, #{thread.SpawnToolCallID}, #{thread.Fresh})
     </insert>
     <update id="CloseThread" result="exec">
         UPDATE harness_thread_hierarchy SET closed = true WHERE <include refid="thread"/>

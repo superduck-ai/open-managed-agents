@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -404,6 +405,10 @@ func codeSessionEventFromWorkerEnvelope(envelope workerevents.EnvelopeV1) db.Cod
 }
 
 func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(sessioncontract.HarnessModelStreamHeader) == "1" {
+		h.handleHarnessModelStream(w, r)
+		return
+	}
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	if !ok {

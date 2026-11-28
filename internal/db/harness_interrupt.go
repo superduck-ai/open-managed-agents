@@ -63,7 +63,7 @@ func cancelQueuedHarnessInputTx(ctx context.Context, executor yourbatis.Executor
 	if err := requireHarnessLease(mapper.SetQueuedState(ctx, ref, harnessInputCancelled)); err != nil {
 		return nil, err
 	}
-	return settleHarnessInputTx(ctx, executor, session, inputUUID, "interrupted")
+	return settleHarnessInputTx(ctx, executor, session, inputUUID, HarnessInterrupted)
 }
 
 func interruptHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, row harnessTurnRow, child *SessionThread, childOnly bool, at time.Time) ([]SessionEvent, error) {
@@ -113,7 +113,7 @@ func interruptHarnessTurnTx(ctx context.Context, executor yourbatis.Executor, se
 	if err != nil || childOnly {
 		return batch.Events, err
 	}
-	final, err := settleHarnessInputTx(ctx, executor, session, row.InputEventUUID, "interrupted")
+	final, err := settleHarnessInputTx(ctx, executor, session, row.InputEventUUID, HarnessInterrupted)
 	return append(batch.Events, final...), err
 }
 
@@ -145,7 +145,7 @@ func finishInterruptedDelegation(ctx context.Context, executor yourbatis.Executo
 			return nil, err
 		}
 	}
-	return harnessSubagentReportEvents(code, primary, child, tool, report, result, "interrupted", at)
+	return harnessSubagentReportEvents(code, primary, child, tool, report, result, HarnessInterrupted, at)
 }
 
 func clearHarnessInterruptChoices(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow) error {

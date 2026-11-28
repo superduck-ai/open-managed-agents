@@ -22,9 +22,12 @@ func TestHarnessInterruptFirstQueuedInputPostgres(t *testing.T) {
 		t.Fatalf("later input bypassed the queue: %v", err)
 	}
 	interrupt := newHarnessInterruptTestEvent(nil)
-	if _, err := store.AppendSessionUserEvents(ctx, first.WorkspaceUUID, harnessControlSessionID, []SessionEvent{interrupt}, nil, nil, nil); err != nil {
+	changes, err := store.AppendSessionUserEvents(ctx, first.WorkspaceUUID, harnessControlSessionID, []SessionEvent{interrupt}, nil, nil, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	requireInterruptEndTurn(t, changes.Events, "session.status_idle", "")
+	requireInterruptEndTurn(t, changes.Events, "session.thread_status_idle", "sthr_harness")
 	if input, found, err := store.FindHarnessInput(ctx, first); err != nil || !found || input.State != harnessInputCancelled {
 		t.Fatalf("first queued input was not cancelled: %q, %t, %v", input.State, found, err)
 	}
@@ -57,6 +60,15 @@ func TestHarnessInterruptSubagentResumesParentPostgres(t *testing.T) {
 	changes, err := store.AppendSessionUserEvents(ctx, ref.WorkspaceUUID, harnessControlSessionID, []SessionEvent{event}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	requireInterruptEndTurn(t, changes.Events, "session.thread_status_idle", child.Subagent.ExternalID)
+	if !slices.ContainsFunc(changes.Events, func(event SessionEvent) bool {
+		var result struct {
+			IsError bool `json:"is_error"`
+		}
+		return event.EventType == "agent.tool_result" && json.Unmarshal(event.Payload, &result) == nil && result.IsError
+	}) {
+		t.Fatal("missing error tool result for interrupted delegation")
 	}
 	if !slices.Contains(changes.SettledInputEventIDs, event.ExternalID) || !slices.ContainsFunc(changes.Events, func(event SessionEvent) bool {
 		return event.ExternalID == startID+"_end" && event.ThreadExternalID != nil && *event.ThreadExternalID == child.Subagent.ExternalID
@@ -110,9 +122,12 @@ func TestHarnessSessionStopCancelsChildSandboxToolPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := newHarnessInterruptTestEvent(nil)
-	if _, err := store.AppendSessionUserEvents(ctx, ref.WorkspaceUUID, harnessControlSessionID, []SessionEvent{event}, nil, nil, nil); err != nil {
+	changes, err := store.AppendSessionUserEvents(ctx, ref.WorkspaceUUID, harnessControlSessionID, []SessionEvent{event}, nil, nil, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	requireInterruptEndTurn(t, changes.Events, "session.status_idle", "")
+	requireInterruptEndTurn(t, changes.Events, "session.thread_status_idle", "sthr_harness")
 	state, err := store.HarnessTurnState(ctx, ref)
 	if err != nil || state != HarnessInterrupted {
 		t.Fatalf("root stop should settle the whole turn: %q, %v", state, err)
@@ -135,6 +150,27 @@ func TestHarnessSessionStopCancelsChildSandboxToolPostgres(t *testing.T) {
 	if result, ok := history[2].(harness.ToolResult); !ok || !result.Failed {
 		t.Fatalf("root conversation has a dangling tool call: %+v", history)
 	}
+}
+
+func requireInterruptEndTurn(t *testing.T, events []SessionEvent, eventType, threadID string) {
+	t.Helper()
+	for _, event := range events {
+		if event.EventType != eventType {
+			continue
+		}
+		var status sessionStatusPayload
+		if err := json.Unmarshal(event.Payload, &status); err != nil {
+			t.Fatal(err)
+		}
+		if status.SessionThreadID != threadID {
+			continue
+		}
+		if status.StopReason == nil || status.StopReason.Type != "end_turn" {
+			t.Fatalf("%s for %q: expected end_turn, got %+v", eventType, threadID, status.StopReason)
+		}
+		return
+	}
+	t.Fatalf("missing %s for %q", eventType, threadID)
 }
 
 func startInterruptTestSubagent(t *testing.T, store *DB, parent HarnessTurnClaim) HarnessTurnClaim {

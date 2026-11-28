@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -163,6 +164,9 @@ func clearStoppedToolRequestsTx(ctx context.Context, executor yourbatis.Executor
 }
 
 func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, source *SessionEvent, reason *sessionStopReason) (*sessionStopReason, bool, error) {
+	if reason != nil && reason.Type == HarnessInterrupted && session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime {
+		return &sessionStopReason{Type: "end_turn"}, true, nil
+	}
 	if reason != nil && reason.Type != "end_turn" && reason.Type != "retries_exhausted" {
 		return reason, true, nil
 	}

@@ -36,12 +36,12 @@ func validateHarnessInputs(session db.Session, events []db.SessionEvent) error {
 		switch event.EventType {
 		case "user.message":
 			_, err = sessioncontract.ParseHarnessUserInput(event.Payload)
-		case "user.interrupt":
+		case "user.interrupt", "user.tool_confirmation":
 			continue
 		case "user.custom_tool_result":
 			_, err = sessioncontract.ParseHarnessChoiceResponse(event.Payload)
 		default:
-			return errors.New("cloud harness accepts text messages, interrupts, and answers to pending questions")
+			return errors.New("cloud harness accepts text messages, interrupts, tool confirmations, and answers to pending questions")
 		}
 		if err != nil {
 			return err

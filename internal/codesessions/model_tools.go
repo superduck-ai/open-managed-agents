@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"time"
 
+	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelRequest, tools []ModelRequestToolUse, at time.Time) ([]json.RawMessage, error) {
+func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelRequest, tools []ModelRequestToolUse, at time.Time, completion *harness.Transition) ([]json.RawMessage, error) {
 	if len(tools) == 0 {
 		return nil, nil
 	}
@@ -25,6 +26,11 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 		if err != nil {
 			return nil, err
 		}
+		if completion != nil && harnessToolAsks(request, tool, permission) {
+			if pending, ok := completion.Pending.(harness.ToolWork); ok {
+				completion.Pending = harness.ApprovalWork{Call: pending.Call}
+			}
+		}
 		event, err := modelToolUsePayload(request, tool, identity, permission, external, at)
 		if err != nil {
 			return nil, err
@@ -35,6 +41,10 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	}
 	return payloads, nil
 }
+func harnessToolAsks(request *ModelRequest, tool ModelRequestToolUse, permission resolvedToolPermission) bool {
+	return request.harnessLease != nil && request.toolThreadID == "" && permission == resolvedToolPermissionAsk && isSandboxToolName(managedAgentToolName(tool.Name))
+}
+
 func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identity toolIdentity, permission resolvedToolPermission, external bool, at time.Time) (json.RawMessage, error) {
 	question := identity.Kind == "agent_toolset" && identity.ToolName == "ask_user_question"
 	if question && (request.harnessLease == nil || permission == resolvedToolPermissionDeny || tool.InputRejected) {
@@ -46,7 +56,7 @@ func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identi
 			return nil, nil
 		}
 		permission = resolvedToolPermissionDeny
-	} else if !question && (permission != resolvedToolPermissionAllow || (external && identity.Kind == "agent_toolset")) {
+	} else if !question && !harnessToolAsks(request, tool, permission) && (permission != resolvedToolPermissionAllow || (external && identity.Kind == "agent_toolset")) {
 		return nil, nil
 	}
 	var input map[string]any

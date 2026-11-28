@@ -107,6 +107,15 @@ func TestHarnessChoiceBindings(t *testing.T) {
 	})
 }
 
+func TestHarnessApprovalBindings(t *testing.T) {
+	ref := HarnessTurnRef{UUID: "turn", OrganizationUUID: "org", WorkspaceUUID: "workspace", SessionUUID: "session"}
+	bound := buildCloudHarnessMapperResumeApproval(yourbatis.DialectPostgres, ref, "input", "deny", "reason")
+	assertMapperBuilderContract(t, mapperBuilderContract{statement: cloudHarnessMapperResumeApprovalStatement, bound: bound,
+		wantSensitiveArgumentNames: []string{"denyMessage"}, wantID: "CloudHarnessMapper.ResumeApproval", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"decision", "denyMessage", "inputUUID", "ref.UUID", "ref.OrganizationUUID", "ref.WorkspaceUUID", "ref.SessionUUID"},
+		wantSQLFragments:  []string{"'decision', CAST($1 AS text)", "'resume_input_uuid', CAST($3 AS text)", "t.execution->>'state' = 'waiting_choice'"}})
+}
+
 func TestHarnessExternalWakeBindings(t *testing.T) {
 	ref := HarnessTurnRef{UUID: "turn", OrganizationUUID: "org", WorkspaceUUID: "workspace", SessionUUID: "session"}
 	params := harnessLeaseParams{Lease: HarnessTurnLease{Ref: ref, Epoch: 17}}

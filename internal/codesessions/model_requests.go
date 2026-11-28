@@ -267,7 +267,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	}
 	event.Billing = modelRequestBilling(request.calculator, request.Model, result.Usage)
 	event.PriceSnapshot = request.calculator.PriceSnapshot(request.Model)
-	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), processedAt)
+	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), processedAt, completion)
 	if err != nil {
 		return err
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type toolCallSubmission struct {
@@ -126,10 +127,10 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope.CallID = request.CallID
-	h.submitToolCall(w, r, scope, request, false)
+	h.submitToolCall(w, r, scope, request, nil)
 }
 
-func (h *Handler) submitToolCall(w http.ResponseWriter, r *http.Request, scope db.SandboxToolCallScope, request toolCallSubmission, requireAllow bool) {
+func (h *Handler) submitToolCall(w http.ResponseWriter, r *http.Request, scope db.SandboxToolCallScope, request toolCallSubmission, harnessTool *db.HarnessTool) {
 	if _, err := h.db.GetSandboxToolCall(r.Context(), scope); err == nil {
 		call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input})
 		if err == nil {
@@ -153,7 +154,7 @@ func (h *Handler) submitToolCall(w http.ResponseWriter, r *http.Request, scope d
 	if thread == "root" {
 		thread = ""
 	}
-	allowed, err := h.service.sandboxToolAllowed(r.Context(), session, thread, request.Tool, requireAllow)
+	allowed, err := h.service.sandboxToolAllowed(r.Context(), session, thread, request.Tool, harnessTool)
 	if err != nil {
 		h.errorAdapter.Write(w, r, toolCallOperationError(err))
 		return
@@ -192,9 +193,12 @@ func isSandboxToolName(name string) bool {
 	}
 }
 
-func (s *Service) sandboxToolAllowed(ctx context.Context, session db.CodeSession, thread, tool string, requireAllow bool) (bool, error) {
-	if requireAllow {
-		return s.harnessSandboxToolAllowed(ctx, session, thread, tool)
+func (s *Service) sandboxToolAllowed(ctx context.Context, session db.CodeSession, thread, tool string, harnessTool *db.HarnessTool) (bool, error) {
+	if harnessTool != nil {
+		return s.harnessSandboxToolAllowed(ctx, session, thread, tool, harnessTool.Decision)
+	}
+	if codeSessionWorkerTransport(session) == sessioncontract.CloudHarnessRuntime {
+		return false, nil
 	}
 	policies, err := s.currentRuntimeToolPolicies(ctx, session, thread)
 	if err != nil {

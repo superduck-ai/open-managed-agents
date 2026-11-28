@@ -306,7 +306,7 @@ func recordHarnessEventsTx(ctx context.Context, executor yourbatis.Executor, lea
 			return nil, err
 		}
 		switch completion.Pending.(type) {
-		case harness.UserChoiceWork:
+		case harness.UserChoiceWork, harness.ApprovalWork:
 			waiting, err := parkHarnessChoiceTx(ctx, executor, session, lease, row, tool, batch.Events)
 			return append(batch.Events, waiting...), err
 		case harness.ToolWork:

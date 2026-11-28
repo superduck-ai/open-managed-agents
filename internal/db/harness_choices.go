@@ -13,30 +13,19 @@ import (
 )
 
 func parkHarnessChoiceTx(ctx context.Context, executor yourbatis.Executor, session Session, lease HarnessTurnLease, row harnessTurnRow, tool HarnessTool, events []SessionEvent) ([]SessionEvent, error) {
-	index := slices.IndexFunc(events, func(event SessionEvent) bool { return event.EventType == "agent.custom_tool_use" })
+	eventType := "agent.tool_use"
+	if tool.Name == sessioncontract.HarnessAskUserQuestion {
+		eventType = "agent.custom_tool_use"
+	}
+	index := slices.IndexFunc(events, func(event SessionEvent) bool { return event.EventType == eventType })
 	if index < 0 {
 		return nil, ErrInvalidState
 	}
 	event := events[index]
-	question, err := sessioncontract.ParseHarnessChoiceQuestion(tool.Arguments)
-	if err != nil {
-		return nil, err
-	}
-	options := make([]string, 0, len(question.Options))
-	for _, option := range question.Options {
-		options = append(options, option.Label)
-	}
-	key := harnessRootKey(lease.Ref)
-	state, err := lockHarnessThreadState(ctx, executor, key)
-	if err != nil {
-		return nil, err
-	}
-	if len(state.Choices) != 0 {
-		return nil, ErrInvalidState
-	}
-	state.Choices = []harness.UserChoice{{ID: harness.ChoiceID(event.ExternalID), Prompt: question.Question, Choices: options, ResponseURL: "/v1/sessions/" + session.ExternalID + "/events"}}
-	if err := saveHarnessState(ctx, NewHarnessStateMapper(executor), key, state); err != nil {
-		return nil, err
+	if tool.Name == sessioncontract.HarnessAskUserQuestion {
+		if err := saveHarnessQuestion(ctx, executor, session, lease, tool, event); err != nil {
+			return nil, err
+		}
 	}
 	if err := checkpointHarnessTool(ctx, NewCloudHarnessMapper(executor), lease, row, tool, HarnessWaitingChoice); err != nil {
 		return nil, err
@@ -53,6 +42,27 @@ func parkHarnessChoiceTx(ctx context.Context, executor yourbatis.Executor, sessi
 		EventType: "session.status_idle", Payload: payload, CreatedAt: event.CreatedAt, ProcessedAt: event.CreatedAt,
 	}})
 	return batch.Events, err
+}
+
+func saveHarnessQuestion(ctx context.Context, executor yourbatis.Executor, session Session, lease HarnessTurnLease, tool HarnessTool, event SessionEvent) error {
+	question, err := sessioncontract.ParseHarnessChoiceQuestion(tool.Arguments)
+	if err != nil {
+		return err
+	}
+	options := make([]string, 0, len(question.Options))
+	for _, option := range question.Options {
+		options = append(options, option.Label)
+	}
+	key := harnessRootKey(lease.Ref)
+	state, err := lockHarnessThreadState(ctx, executor, key)
+	if err != nil {
+		return err
+	}
+	if len(state.Choices) != 0 {
+		return ErrInvalidState
+	}
+	state.Choices = []harness.UserChoice{{ID: harness.ChoiceID(event.ExternalID), Prompt: question.Question, Choices: options, ResponseURL: "/v1/sessions/" + session.ExternalID + "/events"}}
+	return saveHarnessState(ctx, NewHarnessStateMapper(executor), key, state)
 }
 
 func setHarnessChoiceMetadata(ctx context.Context, executor yourbatis.Executor, session Session, tool HarnessTool, event SessionEvent) error {
@@ -84,10 +94,6 @@ func setHarnessChoiceMetadata(ctx context.Context, executor yourbatis.Executor, 
 }
 
 func acceptHarnessChoiceTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, event SessionEvent) ([]SessionEvent, error) {
-	answer, err := sessioncontract.ParseHarnessChoiceResponse(event.Payload)
-	if err != nil {
-		return nil, err
-	}
 	ref := HarnessTurnRef{OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID}
 	mapper := NewCloudHarnessMapper(executor)
 	row, found, err := mapper.LockWaitingChoice(ctx, ref)
@@ -102,28 +108,31 @@ func acceptHarnessChoiceTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return nil, err
 	}
-	if !found || tool.Name != sessioncontract.HarnessAskUserQuestion {
-		return nil, ErrInvalidState
+	if !found || event.ToolUseID == nil {
+		return nil, ErrSessionToolUseNotPending
 	}
-	question, err := sessioncontract.ParseHarnessChoiceQuestion(tool.Arguments)
-	if err != nil {
+	if event.EventType == "user.tool_confirmation" {
+		if tool.Name == sessioncontract.HarnessAskUserQuestion || maevents.ToolUseEventID(worker.ExternalID, tool.CallID, "") != *event.ToolUseID {
+			return nil, ErrSessionToolUseNotPending
+		}
+		var confirmation struct {
+			Result      string `json:"result"`
+			DenyMessage string `json:"deny_message"`
+		}
+		if json.Unmarshal(event.Payload, &confirmation) != nil || (confirmation.Result != "allow" && confirmation.Result != "deny") {
+			return nil, ErrSessionInputConflict
+		}
+		if confirmation.Result != "deny" {
+			confirmation.DenyMessage = ""
+		}
+		if err := requireHarnessLease(mapper.ResumeApproval(ctx, ref, event.UUID, confirmation.Result, confirmation.DenyMessage)); err != nil {
+			return nil, err
+		}
+		event.ProcessedAt = event.CreatedAt
+	} else if err := finishHarnessQuestion(ctx, executor, mapper, ref, tool, event); err != nil {
 		return nil, err
 	}
-	if !question.Accepts(answer) {
-		return nil, ErrSessionInputConflict
-	}
-	if err := clearHarnessChoice(ctx, executor, ref, answer.ID); err != nil {
-		return nil, err
-	}
-	if err := requireHarnessLease(mapper.FinishTool(ctx, harnessToolResultParams{
-		Ref: ref, ToolUUID: tool.UUID, Text: answer.Text, Failed: answer.Failed,
-	})); err != nil {
-		return nil, err
-	}
-	if err := requireHarnessLease(mapper.ResumeChoice(ctx, ref, event.UUID)); err != nil {
-		return nil, err
-	}
-	metadata, err := maevents.SettlePendingToolRequest(worker.WorkerExternalMetadata, worker.ExternalID, primary.ExternalID, primary.ExternalID, answer.ID)
+	metadata, err := maevents.SettlePendingToolRequest(worker.WorkerExternalMetadata, worker.ExternalID, primary.ExternalID, primary.ExternalID, *event.ToolUseID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,4 +160,33 @@ func clearHarnessChoice(ctx context.Context, executor yourbatis.Executor, ref Ha
 	}
 	state.Choices = nil
 	return saveHarnessState(ctx, NewHarnessStateMapper(executor), key, state)
+}
+
+func finishHarnessQuestion(ctx context.Context, executor yourbatis.Executor, mapper CloudHarnessMapper, ref HarnessTurnRef, tool harnessToolRow, event SessionEvent) error {
+	answer, err := sessioncontract.ParseHarnessChoiceResponse(event.Payload)
+	if err != nil {
+		return err
+	}
+	if tool.Name != sessioncontract.HarnessAskUserQuestion {
+		return ErrSessionToolUseNotPending
+	}
+	question, err := sessioncontract.ParseHarnessChoiceQuestion(tool.Arguments)
+	if err != nil {
+		return err
+	}
+	if !question.Accepts(answer) {
+		return ErrSessionInputConflict
+	}
+	if err := clearHarnessChoice(ctx, executor, ref, answer.ID); err != nil {
+		return err
+	}
+	if err := requireHarnessLease(mapper.FinishTool(ctx, harnessToolResultParams{
+		Ref: ref, ToolUUID: tool.UUID, Text: answer.Text, Failed: answer.Failed,
+	})); err != nil {
+		return err
+	}
+	if err := requireHarnessLease(mapper.ResumeChoice(ctx, ref, event.UUID)); err != nil {
+		return err
+	}
+	return nil
 }

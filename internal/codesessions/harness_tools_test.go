@@ -31,6 +31,26 @@ func TestHarnessSandboxToolsFollowBrainCatalog(t *testing.T) {
 	}
 }
 
+func TestHarnessBashApproval(t *testing.T) {
+	for _, tc := range []struct {
+		policy   resolvedToolPermission
+		decision string
+		want     bool
+	}{
+		{resolvedToolPermissionAsk, "", false}, {resolvedToolPermissionAllow, "deny", false}, {resolvedToolPermissionDeny, "allow", false},
+		{resolvedToolPermissionAsk, "allow", true}, {resolvedToolPermissionAuto, "allow", true}, {resolvedToolPermissionAllow, "", true},
+	} {
+		if got := harnessPermissionAllowsExecution(tc.policy, tc.decision); got != tc.want {
+			t.Errorf("policy %s, decision %q: got %t", tc.policy, tc.decision, got)
+		}
+	}
+	session := db.Session{AgentSnapshot: json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)}
+	tools, err := HarnessModelTools(session)
+	if err != nil || len(tools) != 1 || tools[0].Name != "Bash" {
+		t.Fatalf("model tools: %+v, %v", tools, err)
+	}
+}
+
 func TestHarnessSandboxOutcome(t *testing.T) {
 	lost := harnessSandboxResult(db.SandboxToolCall{State: "lost"})
 	if !lost.Failed || lost.Text == "" {

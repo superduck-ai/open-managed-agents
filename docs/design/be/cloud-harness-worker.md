@@ -84,7 +84,7 @@ Worker 在持有租约时读取已提交的历史，并按稳定的消息 ID 将
 
 ## 工具执行
 
-Cloud Harness 与 Brain 共用 Bash、Read、Write、Edit、Grep、Glob 的工具定义及沙箱执行队列。模型只看到会话当前允许自动执行的工具，提交沙箱调用时再次检查最新策略。沙箱按需创建。沙箱身份要求 Session 运行时和 Code Session 的 transport 都为 `cloud_harness`，并且沙箱仍绑定到同一租户的活动 Environment Work。沙箱 Manager 需要支持工具领取协议。本地镜像仍带 `0.1.0` 时，可通过 `environment_runner.manager_artifact` 安装与沙箱架构匹配的 `0.1.1` 或更新构件。人工确认、外部 MCP、宿主工具和图片工具结果尚未接入。
+Cloud Harness 与 Brain 共用 Bash、Read、Write、Edit、Grep、Glob 的工具定义及沙箱执行队列。根线程向模型提供已启用的沙箱工具。评估为 ask 的结构化调用在同一事务内保存参数、登记待确认的公开事件并进入 requires_action。匹配的 user.tool_confirmation 恢复原工具任务。allow 只授权该次调用，提交沙箱前再次检查当前策略；deny 将可选的 deny_message 作为失败工具结果返回模型。子线程继续只提供父子策略都允许自动执行的工具。沙箱按需创建。沙箱身份要求 Session 运行时和 Code Session 的 transport 都为 `cloud_harness`，并且沙箱仍绑定到同一租户的活动 Environment Work。沙箱 Manager 需要支持工具领取协议。本地镜像仍带 `0.1.0` 时，可通过 `environment_runner.manager_artifact` 安装与沙箱架构匹配的 `0.1.1` 或更新构件。外部 MCP、宿主工具和图片工具结果尚未接入。
 
 模型每次最多请求一个工具。网关将工具 UUID 关联到对应的助手历史行。工具名、原始调用 ID、参数和调用前文字从该历史消息读取。在模型结果事务内，关联历史行并将回合推进到工具阶段。当前 Worker 用稳定的工具 UUID 提交或取回同一条沙箱调用。沙箱结果未知时，向模型返回失败结果。重投复用原沙箱调用。
 

@@ -25,6 +25,10 @@ func HarnessSandboxTools(session db.Session) ([]sandboxtools.Definition, error) 
 	if err != nil {
 		return nil, err
 	}
+	return harnessSandboxDefinitions(policies, false)
+}
+
+func harnessSandboxDefinitions(policies []toolPermissionToolset, includeConfirmation bool) ([]sandboxtools.Definition, error) {
 	definitions, err := sandboxtools.Definitions()
 	if err != nil {
 		return nil, err
@@ -32,7 +36,7 @@ func HarnessSandboxTools(session db.Session) ([]sandboxtools.Definition, error) 
 	enabled := (builtinToolCatalog{}).runtimeTools(policies)
 	var allowed []sandboxtools.Definition
 	for _, tool := range definitions {
-		if slices.Contains(enabled, tool.Name) && resolveAgentToolPermission(policies, tool.RemoteName) == resolvedToolPermissionAllow {
+		if slices.Contains(enabled, tool.Name) && (includeConfirmation || resolveAgentToolPermission(policies, tool.RemoteName) == resolvedToolPermissionAllow) {
 			allowed = append(allowed, tool)
 		}
 	}
@@ -40,11 +44,11 @@ func HarnessSandboxTools(session db.Session) ([]sandboxtools.Definition, error) 
 }
 
 func HarnessModelTools(session db.Session) ([]sandboxtools.Definition, error) {
-	tools, err := HarnessSandboxTools(session)
+	policies, err := runtimeRootToolsets(session.AgentSnapshot)
 	if err != nil {
 		return nil, err
 	}
-	policies, err := runtimeRootToolsets(session.AgentSnapshot)
+	tools, err := harnessSandboxDefinitions(policies, true)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +86,18 @@ func HarnessModelTools(session db.Session) ([]sandboxtools.Definition, error) {
 	return tools, nil
 }
 
-func (s *Service) harnessSandboxToolAllowed(ctx context.Context, code db.CodeSession, thread, name string) (bool, error) {
+func harnessPermissionAllowsExecution(permission resolvedToolPermission, decision string) bool {
+	switch decision {
+	case "allow":
+		return permission == resolvedToolPermissionAllow || permission == resolvedToolPermissionAsk || permission == resolvedToolPermissionAuto
+	case "":
+		return permission == resolvedToolPermissionAllow
+	default:
+		return false
+	}
+}
+
+func (s *Service) harnessSandboxToolAllowed(ctx context.Context, code db.CodeSession, thread, name string, decision string) (bool, error) {
 	if !isSandboxToolName(name) || code.SessionExternalID == "" {
 		return false, nil
 	}
@@ -91,7 +106,8 @@ func (s *Service) harnessSandboxToolAllowed(ctx context.Context, code db.CodeSes
 		return false, err
 	}
 	enabled := s.builtinTools().runtimeTools(policies)
-	if resolveAgentToolPermission(policies, name) != resolvedToolPermissionAllow ||
+	permission := resolveAgentToolPermission(policies, name)
+	if !harnessPermissionAllowsExecution(permission, decision) ||
 		!slices.ContainsFunc(enabled, func(alias string) bool { return managedAgentToolName(alias) == name }) {
 		return false, nil
 	}
@@ -159,7 +175,7 @@ func (h *Handler) handleHarnessToolSubmit(w http.ResponseWriter, r *http.Request
 	}
 	name := managedAgentToolName(tool.Name)
 	request := toolCallSubmission{CallID: tool.UUID, Tool: name, Input: tool.Arguments, TimeoutMS: harnessToolTimeout(name, tool.Arguments)}
-	h.submitToolCall(w, r, scope, request, true)
+	h.submitToolCall(w, r, scope, request, &tool)
 }
 
 func (h *Handler) handleHarnessToolWait(w http.ResponseWriter, r *http.Request) {
@@ -249,9 +265,16 @@ func (h *Handler) completeHarnessTool(ctx context.Context, scope db.SandboxToolC
 }
 
 func (h *Handler) harnessToolOutcome(ctx context.Context, code db.CodeSession, scope db.SandboxToolCallScope, tool db.HarnessTool) (sessioncontract.HarnessToolResult, error) {
+	if tool.Decision == "deny" {
+		message := tool.DenyMessage
+		if message == "" {
+			message = "The user denied this tool call."
+		}
+		return sessioncontract.HarnessToolResult{Text: message, Failed: true}, nil
+	}
 	call, err := h.db.GetSandboxToolCall(ctx, scope)
 	if errors.Is(err, db.ErrNotFound) {
-		allowed, err := h.service.harnessSandboxToolAllowed(ctx, code, scope.ThreadID, managedAgentToolName(tool.Name))
+		allowed, err := h.service.harnessSandboxToolAllowed(ctx, code, scope.ThreadID, managedAgentToolName(tool.Name), tool.Decision)
 		if err != nil {
 			return sessioncontract.HarnessToolResult{}, err
 		}

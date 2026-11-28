@@ -10,6 +10,7 @@
         t.execution->>'task_kind' AS task_kind,
         t.execution->>'subagent_thread_uuid' AS subagent_thread_uuid,
         t.execution->>'delegation_tool_uuid' AS delegation_tool_uuid,
+        COALESCE(t.execution->>'decision', '') AS decision, COALESCE(t.execution->>'deny_message', '') AS deny_message,
         t.execution->>'resume_input_uuid' AS resume_input_uuid
     </sql>
     <sql id="scopedRef">
@@ -100,6 +101,14 @@
           AND t.execution->>'resume_input_kind' = #{kind}
           AND t.execution->>'state' IN ('pending', 'running', 'waiting_tool')
     </select>
+
+    <update id="ResumeApproval" result="rows">
+        UPDATE harness_thread_state t
+        SET execution = execution || jsonb_build_object(
+            'state', 'pending', 'decision', CAST(#{decision} AS text), 'deny_message', CAST(#{denyMessage,sensitive=true} AS text),
+            'resume_input_uuid', CAST(#{inputUUID} AS text), 'resume_input_kind', 'choice_response', 'wake_pending', true)
+        WHERE <include refid="scopedRef"/> AND t.execution->>'state' = 'waiting_choice'
+    </update>
 
     <update id="ResumeChoice" result="rows">
         UPDATE harness_thread_state t
@@ -263,7 +272,7 @@
         SET execution = execution || jsonb_build_object(
             'state', CAST(#{params.State} AS text), 'task_uuid', CAST(#{params.TaskUUID} AS text),
             'tool_uuid', CAST(#{params.ToolUUID} AS text), 'task_kind', CAST(#{params.Kind} AS text), 'lease_until', NULL,
-            'attempts', 0, 'subagent_thread_uuid', CAST(#{params.SubagentThreadUUID} AS text),
+            'attempts', 0, 'decision', NULL, 'deny_message', NULL, 'subagent_thread_uuid', CAST(#{params.SubagentThreadUUID} AS text),
             'delegation_tool_uuid', CAST(#{params.DelegationToolUUID} AS text))
         WHERE <include refid="paramsLease"/>
     </update>

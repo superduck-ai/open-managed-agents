@@ -45,6 +45,8 @@ func (d *DB) ParkHarnessTool(ctx context.Context, lease HarnessTurnLease, toolUU
 }
 
 type HarnessTool struct {
+	DenyMessage        string
+	Decision           string
 	UUID               string
 	CallID             string
 	Name               string
@@ -88,7 +90,10 @@ func (d *DB) ActiveHarnessTool(ctx context.Context, ref HarnessTurnRef, taskUUID
 	if err == nil && !found {
 		err = ErrNotFound
 	}
-	return tool.tool(), err
+	active := tool.tool()
+	active.Decision = row.Decision
+	active.DenyMessage = row.DenyMessage
+	return active, err
 }
 
 func (d *DB) ListHarnessTools(ctx context.Context, ref HarnessTurnRef) ([]HarnessTool, error) {

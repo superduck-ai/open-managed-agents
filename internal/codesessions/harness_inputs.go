@@ -73,7 +73,7 @@ func (s *Service) WithHarnessInputSender(factory HarnessInputSenderFactory) *Ser
 func (s *Service) publishHarnessInputs(ctx context.Context, session db.Session, events []db.SessionEvent) error {
 	for _, event := range events {
 		switch event.EventType {
-		case "user.custom_tool_result":
+		case "user.custom_tool_result", "user.tool_confirmation":
 			if s.harnessInputs == nil {
 				return workerEventUnavailable(errors.New("harness input sender is unavailable"))
 			}

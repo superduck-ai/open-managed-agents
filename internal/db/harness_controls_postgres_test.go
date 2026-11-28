@@ -7,12 +7,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	harness "github.com/superduck-ai/open-managed-agents/internal/cloudharness"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
@@ -204,5 +206,64 @@ func TestHarnessSandboxResultWakesParkedTurnPostgres(t *testing.T) {
 	continuation, found, err := store.HarnessResumeWork(ctx, inputRef, HarnessToolResult)
 	if err != nil || !found || continuation.Kind != HarnessModelTask || continuation.ToolUUID != task.ToolUUID {
 		t.Fatalf("tool result redelivery lost the model: %+v, %t, %v", continuation, found, err)
+	}
+}
+
+func TestHarnessApprovalWaitAndResumePostgres(t *testing.T) {
+	for _, decision := range []string{"deny", "allow"} {
+		t.Run(decision, func(t *testing.T) {
+			ctx, _, store, claim := newHarnessControlTurn(t)
+			ref := claim.Lease.Ref
+			now := time.Now().UTC()
+			call := harness.ToolCall{ID: "toolu_bash", Name: "Bash", Arguments: `{"command":"echo ok"}`}
+			use := SessionEvent{UUID: uuid.NewString(), ExternalID: maevents.ToolUseEventID(claim.CodeSession.ExternalID, string(call.ID), ""), EventType: "agent.tool_use", CreatedAt: now, ProcessedAt: now, Payload: json.RawMessage(`{"name":"bash","evaluated_permission":"ask"}`)}
+			if _, err := store.RecordHarnessModelEvents(ctx, claim.Lease, claim.CodeSession, HarnessModelStart, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := store.RecordHarnessModelEvents(ctx, claim.Lease, claim.CodeSession, HarnessModelEnd, []SessionEvent{use}, &HarnessModelCompletion{
+				UserText: "Start", Message: harness.AssistantMessage{Call: call}, Pending: harness.ApprovalWork{Call: call}})
+			if err != nil || !slices.ContainsFunc(stored, func(e SessionEvent) bool { return e.EventType == "session.status_idle" }) {
+				t.Fatalf("park: %v, %v", stored, err)
+			}
+			task, state, err := store.HarnessTurnTask(ctx, ref)
+			if err != nil || state != HarnessWaitingChoice {
+				t.Fatalf("state %q: %v", state, err)
+			}
+			if _, err := store.ActiveHarnessTool(ctx, ref, task.UUID, claim.Lease.Epoch); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("tool available before approval: %v", err)
+			}
+			wrong := "sevt_wrong"
+			confirmation := SessionEvent{UUID: uuid.NewString(), ExternalID: "sevt_confirm", EventType: "user.tool_confirmation", CreatedAt: now.Add(time.Second), ToolUseID: &wrong,
+				Payload: json.RawMessage(fmt.Sprintf(`{"result":%q,"tool_use_id":%q,"deny_message":"Use a different command"}`, decision, use.ExternalID))}
+			appendConfirmation := func() error {
+				_, err := store.AppendSessionUserEvents(ctx, ref.WorkspaceUUID, harnessControlSessionID, []SessionEvent{confirmation}, nil, nil, nil)
+				return err
+			}
+			if err := appendConfirmation(); err == nil {
+				t.Fatal("accepted unrelated confirmation")
+			}
+			confirmation.ToolUseID = &use.ExternalID
+			if err := appendConfirmation(); err != nil {
+				t.Fatal(err)
+			}
+			if err := appendConfirmation(); err == nil {
+				t.Fatal("accepted duplicate confirmation")
+			}
+			resume := ref
+			resume.UUID = confirmation.UUID
+			next, found, err := store.HarnessResumeWork(ctx, resume, HarnessChoiceResponse)
+			if err != nil || !found || next != task {
+				t.Fatalf("resume: %+v, %v", next, err)
+			}
+			delivery := HarnessTurnDelivery{InputUUID: resume.UUID, TaskUUID: task.UUID, ToolUUID: task.ToolUUID, Kind: task.Kind}
+			active, err := store.ClaimHarnessTurn(ctx, ref, delivery, "confirmed-hash", time.Now().Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool, err := store.ActiveHarnessTool(ctx, ref, task.UUID, active.Lease.Epoch)
+			if err != nil || tool.Decision != decision || (decision == "deny" && tool.DenyMessage != "Use a different command") || tool.CallID != string(call.ID) {
+				t.Fatalf("decision: %+v, %v", tool, err)
+			}
+		})
 	}
 }

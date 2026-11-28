@@ -21,6 +21,8 @@ type harnessTurnRow struct {
 	TaskKind           string  `db:"task_kind"`
 	SubagentThreadUUID *string `db:"subagent_thread_uuid"`
 	DelegationToolUUID *string `db:"delegation_tool_uuid"`
+	DenyMessage        string  `db:"deny_message"`
+	Decision           string  `db:"decision"`
 	ResumeInputUUID    *string `db:"resume_input_uuid"`
 }
 
@@ -100,6 +102,7 @@ type CloudHarnessMapper interface {
 	LockCurrentTurn(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
 	LockWaitingChoice(ctx context.Context, ref HarnessTurnRef) (harnessTurnRow, bool, error)
 	FindResumeWork(ctx context.Context, ref HarnessTurnRef, kind string) (harnessTurnRow, bool, error)
+	ResumeApproval(ctx context.Context, ref HarnessTurnRef, inputUUID, decision, denyMessage string) (int64, error)
 	ResumeChoice(ctx context.Context, ref HarnessTurnRef, taskUUID string) (int64, error)
 	ParkTool(ctx context.Context, params harnessLeaseParams, toolUUID string) (int64, error)
 	ListReadyInputs(ctx context.Context, limit int) ([]harnessWakeRow, error)

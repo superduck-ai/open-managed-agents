@@ -46,6 +46,8 @@ func recordHarnessModelHistory(ctx context.Context, executor yourbatis.Executor,
 	case nil:
 	case harness.ToolWork:
 		call = pending.Call
+	case harness.ApprovalWork:
+		call = pending.Call
 	case harness.UserChoiceWork:
 		call = pending.Call
 	default:

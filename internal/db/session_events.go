@@ -103,7 +103,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 }
 
 func sessionClientEventBatchTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker *codeSessionInputStateRow, event SessionEvent, startTurn bool) ([]SessionEvent, error) {
-	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && event.EventType == "user.custom_tool_result" {
+	if session.ExecutionRuntime == sessioncontract.CloudHarnessRuntime && (event.EventType == "user.custom_tool_result" || event.EventType == "user.tool_confirmation") {
 		return acceptHarnessChoiceTx(ctx, executor, session, primary, worker, event)
 	}
 	if !startTurn {

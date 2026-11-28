@@ -258,7 +258,7 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 				}
 
 				resp := doSessionRequest(t, app, method, path, nil, defaultTestKey, true)
-				if state == "running" {
+				if state == "running" || operation == "archive" {
 					assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 					assertWebhookCount(t, app, "session.status_terminated", session.ID, 0)
 					assertWebhookCount(t, app, "session.deleted", session.ID, 0)
@@ -272,16 +272,7 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 					t.Fatalf("remove unstarted: %d %s", resp.StatusCode, readAll(t, resp.Body))
 				}
 				assertWebhookCount(t, app, "session.status_terminated", session.ID, 1)
-				if operation == "delete" {
-					assertWebhookCount(t, app, "session.deleted", session.ID, 1)
-				} else {
-					repeated := doSessionRequest(t, app, method, path, nil, defaultTestKey, true)
-					repeated.Body.Close()
-					if repeated.StatusCode != http.StatusOK {
-						t.Fatalf("repeat archive=%d", repeated.StatusCode)
-					}
-					assertWebhookCount(t, app, "session.status_terminated", session.ID, 1)
-				}
+				assertWebhookCount(t, app, "session.deleted", session.ID, 1)
 				if stream != nil {
 					scanner := bufio.NewScanner(stream.Body)
 					deleted := false
@@ -307,15 +298,7 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 						t.Fatalf("worker not revoked: status=%s err=%v", worker.Status, err)
 					}
 				}
-				if operation == "archive" {
-					if retrieveSession(t, app, session.ID, defaultTestKey).Status != "terminated" {
-						t.Fatal("archived unstarted turn still running")
-					}
-					terminated := listSessionEvents(t, app, session.ID, "types[]=session.status_terminated&types[]=session.thread_status_terminated", defaultTestKey)
-					if len(terminated.Data) != 2 {
-						t.Fatalf("archived unstarted turn status history = %s", terminated.Data)
-					}
-				}
+
 			})
 		}
 	}

@@ -36,6 +36,9 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 	if err != nil {
 		return SessionRemoval{}, err
 	}
+	if archive && session.Status == "running" {
+		return SessionRemoval{}, ErrInvalidState
+	}
 	if session.Status != "running" && session.Status != "rescheduling" && (!archive || session.Status != "idle") {
 		return SessionRemoval{}, nil
 	}

@@ -62,6 +62,8 @@ Debug 模式仍执行同一个 DELETE，不会在数据库已推进到 stopped �
 
 ## Session 归档清理
 
+归档事务先锁定 Session。如果状态为 `running`，接口返回 HTTP 400（`invalid_request_error`），不会写终止事件或启动沙箱回收。调用方可以发送 `user.interrupt`，等会话进入 `idle` 后再次归档。
+
 Cloud Session 的 archive 在同一个 Yourbatis 事务内归档 Session、终止对应 Code Session，
 停止关联 Work，并将所有有 Provider ID 且未 stopped 的关联沙箱标记为
 `stopping + session_archived`。事务失败时这些状态一起回滚；重复 archive 不重新打开已删除的沙箱。

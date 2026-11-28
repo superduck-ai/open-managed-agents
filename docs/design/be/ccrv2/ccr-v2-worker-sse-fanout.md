@@ -193,7 +193,7 @@ flowchart TD
 
 `system.message` 在接收时设置处理时间并广播。工具确认和 `AskUserQuestion` 回答（`user.custom_tool_result`）生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应。Worker 用外层 `event_id` 回 ACK；ACK、重投和清理仍属于内部投递通道，不触碰公开 Session 事件。工具控制响应发布成功与清理对应待确认 metadata 共用同一个 Worker 行锁，发布失败保留请求以便重试，发布前在锁内复核 Worker epoch。清理同时移除对应的旧格式请求，避免旧值重新生效。
 
-Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。成功 result 不驱动 idle；失败 result 以 retries_exhausted 结束本轮。result 不补造模型 span；正常结束状态由 Worker 状态上报产生，模型 span 由下文的代理请求生命周期产生。已接纳但 Worker 尚未开始的回合，可以直接归档或删除：事务按 Session → Worker 锁定并复核，撤销 Worker 凭证，并经统一写入入口写入 session.thread_status_terminated → session.status_terminated；提交后清空该 Worker 的 JetStream 投递队列，再广播状态事件并投递 webhook。已开始执行的回合仍拒绝归档、删除。归档后的 Session 不能再激活 Worker。
+Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。成功 result 不驱动 idle；失败 result 以 retries_exhausted 结束本轮。result 不补造模型 span；正常结束状态由 Worker 状态上报产生，模型 span 由下文的代理请求生命周期产生。Session 已进入 `running` 时，归档返回 HTTP 400，即使 Worker 尚未开始执行。已接纳但 Worker 尚未开始的回合可以直接删除：事务按 Session → Worker 锁定并复核，撤销 Worker 凭证，并经统一写入入口写入 session.thread_status_terminated → session.status_terminated；提交后清空该 Worker 的 JetStream 投递队列，再广播状态事件并投递 webhook。已开始执行的回合仍拒绝归档、删除。归档后的 Session 不能再激活 Worker。
 
 已知风险：输入接纳在发送事务内提交，Worker 投递（`QueuePublicSessionEvents`）在提交之后执行，两者之间没有 outbox。投递失败时接口返回错误，但本轮已进入 running，且没有自动补投；Worker 收不到输入也不会上报 running，历史保留一条已处理但未执行的 `user.message`。忙碌状态也阻止再发消息，不能以重发掩盖恢复缺口。后续通过事务内 outbox 或推迟接纳到投递成功来修复，见 [#388](https://github.com/superduck-ai/open-managed-agents/issues/388)。
 

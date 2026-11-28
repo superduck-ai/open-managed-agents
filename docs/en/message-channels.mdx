@@ -1,0 +1,169 @@
+---
+title: "Message channels"
+sidebarTitle: "Message channels"
+description: "Connect messaging platforms, choose the execution identity for direct chats and group chats, and use agents through a bot."
+---
+
+Message channels let people use OMA agents inside chat. A channel receives messages, creates or reuses a [session](/docs/en/sessions) according to its access rules and identity configuration, and sends the agent reply back to the corresponding chat or thread.
+
+## Choose a messaging platform
+
+| Platform | Availability | Onboarding |
+| --- | --- | --- |
+| Feishu | Supported | [Scan to bind or enter app credentials](#connect-feishu) |
+| [DingTalk](#connect-dingtalk) | Not yet available | — |
+| [WeCom](#connect-wecom) | Not yet available | — |
+| [WeChat](#connect-wechat) | Not yet available | — |
+
+## Configure a channel
+
+In the target workspace, open **Channels → New channel**, choose a platform, and connect the bot. Then choose the default agent and [environment](/docs/en/environments), and mount shared vaults, files, memory stores, or Git repositories as needed. The version policy either pins a specific version or lets new sessions use the latest version.
+
+Connecting a bot grants the channel permission to send and receive messages. To get messages into an agent, you also decide who can use this entry point and which identity the work runs as.
+
+| Setting | How to choose |
+| --- | --- |
+| Channel access (`mode`) | Choose open (`open`) or pairing (`pairing`) to decide which chats can connect. |
+| Execution identity (`identity_resolution.mode`) | Choose a fixed identity (`fixed`) so approved messages use a specified identity, or scope pairing (`pairing`) to derive the identity and agent from the direct-chat user or group inside the channel. |
+| Tool credentials | Use direct-chat personal authorization when people need access to external services as themselves. Mount a shared vault explicitly when several people share a service account. |
+
+You can set the identity resolution mode when creating the channel through the [channel API](/docs/en/api/channels/create-channel). When a message arrives, OMA uses the channel configuration to decide session ownership.
+
+### Direct-chat self pairing
+
+With scope pairing, the first direct-chat message that matches the access rules triggers self pairing. OMA creates or reuses a personal identity for the sender, binds that direct chat to the default agent, and then processes the original message. Later messages use the existing pairing with its agent and version.
+
+When both access and execution identity are set to `pairing`, you can also choose an existing ENV OAuth client in **Direct-chat pairing authorization**. This suits services that need personal credentials before first use. The user receives an authorization card first; after the user authorizes, OMA writes the credentials to the personal vault, activates the pairing, and continues processing the first message. After unpairing, a still-approved user can pair again and keeps the original personal identity and vault.
+
+### Authorize on demand during a conversation
+
+Tools can also ask for authorization only when they are actually called. An MCP server can return an OAuth challenge, and a CLI running through Bash can request a connection through the native sandbox OAuth entry point. Ordinary Bash commands do not trigger authorization automatically.
+
+When **Waiting for authorization** appears in a direct chat, the original sender clicks **Go to authorization**, verifies the account, and consents to the external service. The waiting tool call then continues. When existing credentials are valid or can be refreshed, the tool continues directly. When shared credentials need reauthorization, the administrator of that vault handles it.
+
+## Manage sessions in chat
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show the commands the current bot supports |
+| `/status` | Show the current session status |
+| `/new` or `/reset` | Make the next message create a new session |
+| `/resume` | List resumable sessions in the current chat or thread |
+| `/resume session_id` | Switch back to the specified compatible session |
+| `/stop` | Stop the current task |
+
+When restoring a session, OMA verifies the channel app, chat scope, execution target, version, and mounted resources. In a fixed-identity channel, after `/new` the next message creates a session from the current channel configuration. For a paired chat, `/new` only resets the session binding, and the next message still uses the agent and version from the pairing record.
+
+## Connect Feishu
+
+### Scan to bind
+
+In **Channels → New channel**, choose **Feishu**, then scan and confirm the authorization in **Connect app**.
+
+### Connect manually
+
+1. **Create an app and add a bot.** Sign in to the [Feishu Open Platform developer console](https://open.feishu.cn/app), choose **Create custom app**, and fill in the app name and description. In the app, add **Bot** under **Add app capabilities**. For an existing app, check the bot capability and the configuration below.
+2. **Request permissions.** In **Permissions → Batch operations → Import/export permissions**, choose **Import**, paste the following JSON, and submit the request. This list matches the permissions OMA requests when scanning to bind.
+
+   ```json
+   {
+     "scopes": {
+       "tenant": [
+         "application:app_slash_command:read",
+         "application:app_slash_command:write",
+         "application:application:self_manage",
+         "application:bot.basic_info:read",
+         "application:bot.menu:write",
+         "cardkit:card:read",
+         "cardkit:card:write",
+         "contact:contact.base:readonly",
+         "docs:document.comment:create",
+         "docs:document.comment:delete",
+         "docs:document.comment:read",
+         "docs:document.comment:update",
+         "docs:document.comment:write_only",
+         "docx:document.block:convert",
+         "docx:document:readonly",
+         "docx:document:write_only",
+         "drive:drive.metadata:readonly",
+         "im:chat.members:bot_access",
+         "im:chat:create",
+         "im:chat:read",
+         "im:chat:update",
+         "im:message",
+         "im:message.group_at_msg.include_bot:readonly",
+         "im:message.group_at_msg:readonly",
+         "im:message.p2p_msg:readonly",
+         "im:message.pins:read",
+         "im:message.pins:write_only",
+         "im:message.reactions:read",
+         "im:message.reactions:write_only",
+         "im:message:readonly",
+         "im:message:send_as_bot",
+         "im:message:send_multi_users",
+         "im:message:send_sys_msg",
+         "im:message:update",
+         "im:resource",
+         "wiki:node:read"
+       ],
+       "user": [
+         "contact:user.employee_id:readonly",
+         "offline_access"
+       ]
+     }
+   }
+   ```
+
+3. **Enter app credentials and enable the channel.** Copy **App ID** and **App Secret** from the app's **Credentials and basic info** page. In OMA, open **Channels → New channel → Feishu → Connect app**, enter both credentials, and save and enable the channel. After confirming the channel is connected, return to the Feishu Open Platform.
+4. **Subscribe to message events.** In **Events and callbacks → Event configuration**, choose **Receive events through a long connection** and add the message receive event `im.message.receive_v1`.
+5. **Subscribe to card callbacks.** In **Events and callbacks → Callback configuration**, choose **Receive callbacks through a long connection** and add **Card callback interaction** (`card.action.trigger`) under **Subscribed callbacks**.
+6. **Publish the app.** In **Version management and release → Create version**, fill in the version information, add the acceptance accounts to the app availability scope, and submit for release. When your organization requires approval, verify messaging after the version is released.
+
+### App ID binding is unique
+
+A Feishu App ID can be bound to only one undeleted channel in the entire OMA instance. This holds across workspaces and organizations, so the same Feishu app cannot connect two channels at once.
+
+| Channel state | Holds the App ID |
+| --- | --- |
+| App bound (`binding_status` is `bound`) | Yes |
+| Disabled but app bound (`enabled` is `false`) | Yes |
+| Deleted | No |
+| App not bound yet (`binding_status` is `unbound`) | No |
+
+When you create or edit a channel and another channel already holds that App ID, the API returns HTTP 409 with error type `conflict_error` and error code `channel_app_already_bound`. The console shows "This app is already bound to another channel. Use a different app." on the channel form. To use the App ID for another channel, delete the channel that holds it first, or use a different Feishu app. See [Errors](/docs/en/api/errors) for the error structure.
+
+### Add the new-session menu
+
+In the Feishu developer console, add **New session** under **Bot → Bot custom menu**, set the response action to **Push event**, and use `chat_new` as the event ID. In **Events and callbacks → Event configuration**, subscribe to the bot custom menu event `application.bot.menu_v6` over the long connection, then release an app version. Scanning to bind a new app subscribes to this event as well.
+
+This menu is for direct chats with the bot and behaves like `/new`. After the bot confirms, the next direct-chat message creates a new OMA session.
+
+### Verify messaging
+
+Run **Connection check** on the OMA channel detail page. Send a direct message to the bot from an account in the app availability scope and confirm that you get a reply. For group chats, optionally choose a fixed identity, add the bot to the group, and @-mention it.
+
+With **Thread replies** enabled, group chats use a separate session per thread. With **Main session replies**, the bot replies in the group's main session. Group chats use the shared vaults explicitly mounted on the current execution target.
+
+Direct chats use **Main session replies** by default. You can choose **Thread replies** separately under **Identity and replies** in the channel configuration. With thread replies enabled, a new task in the direct-chat main window creates a new thread, and a message inside a thread continues that thread's session.
+
+## Connect DingTalk
+
+DingTalk channels are not yet available in OMA.
+
+## Connect WeCom
+
+WeCom channels are not yet available in OMA.
+
+## Connect WeChat
+
+WeChat channels are not yet available in OMA.
+
+## Troubleshoot
+
+| Symptom | What to check |
+| --- | --- |
+| The bot receives no messages | Check that the channel is enabled, bound, and connected. For Feishu, also check the app availability scope, the message event subscription, and whether the bot is @-mentioned in group chats. |
+| A message reports pending pairing or a disabled identity | Check the access rules, pairing status, and execution identity status for that chat. |
+| Saving the channel reports that the app is already bound | Another undeleted channel holds that App ID, and disabled channels still hold it. Delete the channel that holds it, or use a different Feishu app. |
+| The authorization card cannot be completed | Use the original sender account and check the OAuth client's allowed domains and callback URL. |
+| The agent cannot find a mounted file | The channel API default file path is `/uploads/{file_id}`, read inside the sandbox from `/mnt/session/uploads/{file_id}`. Git repositories live under the mount path configured under `/workspace/`. |

@@ -35,7 +35,7 @@ Go 是控制台唯一后端入口。`internal/channels` 通过现有 Mapper 验�
 
 智能体渠道路径挂在 `/v1/agents/{agent_id}/channels` 下，不要求 `beta=true`。工作区级列表、授权及凭据校验位于 `/v1/channels`。浏览器 Cookie 变更请求必须携带合法的 `X-CSRF-Token`；API Key 调用不要求 Cookie 或 CSRF。
 
-工作区 API Key 可以调用渠道列表、创建、更新和连接检查，工作区列表、扫码授权、凭据校验，以及 `/v1/channel_pairings` 的查询和解除绑定。渠道删除、执行环境读写、渠道内旧配对审批，以及渠道二维码 `/qr` 与 `/qr_sessions`，只接受平台登录会话。工作区 API Key 访问这些路径返回 HTTP 404 和 `not_found_error`。这是相对原先这些路径同时接受 API Key 的收窄；公开合同以 `openapi/oma.zh.json` 为准，不包含这些控制台路径。
+工作区 API Key 可以调用渠道列表、创建、更新和连接检查，工作区列表、扫码授权、凭据校验，以及 `/v1/channel_pairings` 的查询和解除绑定。渠道删除、执行环境读写、渠道内旧配对审批，以及渠道二维码 `/qr` 与 `/qr_sessions`，只接受平台登录会话。工作区 API Key 访问这些路径返回 HTTP 404 和 `not_found_error`。这是相对原先这些路径同时接受 API Key 的收窄；公开合同以 `openapi/oma.zh.json` 与 `openapi/oma.en.json` 为准，两者保持同一组路径，不包含这些控制台路径。
 
 | 路径 | 方法 | 行为 |
 | --- | --- | --- |

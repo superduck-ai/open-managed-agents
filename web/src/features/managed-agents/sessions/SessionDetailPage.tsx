@@ -116,7 +116,7 @@ import {
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
 import { SessionHeaderSummary } from './SessionHeaderSummary';
-import { latestSessionIdlePresentationState } from './sessionExecutionState';
+import { latestSessionIdlePresentationState, sessionInterruptState } from './sessionExecutionState';
 import { buildSessionEntriesByLane } from './sessionLaneEntries';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionStartState } from './SessionStartState';
@@ -133,17 +133,17 @@ const SESSION_CHROME_GUTTER_CLASS_NAME = 'px-4 @min-[640px]:px-6 @min-[1024px]:p
 function sessionPendingAction(
   toolCall: ToolCallEntry | null,
   onConfirm: (input: SessionToolConfirmationInput) => Promise<void>,
-  disabled: boolean,
+  state: ReturnType<typeof sessionConversationState>,
   threadNameById: Map<string, string>,
   mainLabel: string,
 ) {
-  if (!toolCall) return undefined;
+  if (!toolCall || state.stopped) return undefined;
   const threadId = sessionEventThreadId(toolCall.event);
   return (
     <SessionRequiresActionCard
       toolCall={toolCall}
       onConfirm={onConfirm}
-      disabled={disabled}
+      disabled={state.disabled || state.stopping}
       threadLabel={threadNameById.get(threadId) ?? (threadId === SESSION_MAIN_LANE_ID ? mainLabel : threadId)}
     />
   );
@@ -732,7 +732,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
-  const conversationState = sessionConversationState(session, events, budgetReached);
+  const conversationState = sessionConversationState(session, events, budgetReached, requiresActionEventIDs.size > 0);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
@@ -874,9 +874,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 <SessionMessageComposer
                   key={`${activeWorkspaceId}:${session.id}`}
                   acceptingMessages={conversationState.acceptingMessages}
-                  awaitingAction={requiresActionEventIDs.size > 0}
+                  awaitingAction={conversationState.awaitingAction}
                   disabled={conversationState.composerDisabled}
                   live={conversationState.live}
+                  stopping={conversationState.stopping}
                   onError={setMutationError}
                   onResourcesChanged={() => {
                     void queryClient.invalidateQueries({ queryKey: ['files', activeWorkspaceId] });
@@ -885,7 +886,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                     });
                     void refreshSessionResources();
                   }}
-                  onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                  onInterruptAccepted={(acceptedEvents) => {
+                    eventData.appendPrimaryEvents(acceptedEvents);
+                    if (!acceptedEvents.length) setEventRefreshKey((value) => value + 1);
+                  }}
                   onMessageSent={(sentEvents) => {
                     eventData.appendPrimaryEvents(sentEvents);
                     setSentMessageVersion((version) => version + 1);
@@ -960,7 +964,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               pendingAction={sessionPendingAction(
                 activeAwaitingToolCall,
                 handleToolConfirmation,
-                conversationState.disabled,
+                conversationState,
                 threadNameById,
                 lanes[0].label,
               )}
@@ -1039,17 +1043,25 @@ function sessionConversationState(
   session: SessionApiResponse,
   events: QuickstartSessionEvent[],
   budgetReached: boolean,
+  hasPendingAction: boolean,
 ) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
   const idleState = latestSessionIdlePresentationState(events);
+  const interrupt = sessionInterruptState(events);
+  const stopping = !archived && interrupt === 'stopping';
+  const stopped = status === 'idle' && interrupt === 'stopped';
+  const awaitingAction = !stopped && (hasPendingAction || (status === 'idle' && idleState === 'awaiting_action'));
   const disabled = archived || status === 'deleted' || status === 'terminated';
   return {
     acceptingMessages:
-      !archived && !budgetReached && (status === 'queued' || (status === 'idle' && idleState !== 'awaiting_action')),
+      !archived && !budgetReached && !stopping && (status === 'queued' || (status === 'idle' && !awaitingAction)),
+    awaitingAction,
+    stopping,
+    stopped,
     disabled,
     composerDisabled: disabled || budgetReached,
-    live: !archived && sessionStatusIsLive(status),
+    live: !disabled && (sessionStatusIsLive(status) || awaitingAction),
   };
 }
 

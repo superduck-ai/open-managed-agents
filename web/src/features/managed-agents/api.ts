@@ -1,3 +1,4 @@
+import type { BetaManagedAgentsUserInterruptEventParams } from '@anthropic-ai/sdk/resources/beta/sessions/events';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import {
   consoleApi,
@@ -15,7 +16,7 @@ import { sessionFileResourcePayload } from './sessions/file-resource-form';
 import { managedResourcesBody } from './resources/git-resource';
 import { budgetCreateBody, budgetUpdateBody } from './resources/budget';
 import { sessionEditBody } from './sessions/sessionEdit';
-import { sessionEventType } from './sessions/sessionTraceModel';
+import { sessionEventType, sessionTimestampMs } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
   type AgentCreatedFilter,
@@ -772,7 +773,7 @@ export async function fetchSessionEventsPage({
 }
 
 export function sessionEventWithResponseThread(event: QuickstartSessionEvent, threadId?: string) {
-  if (!threadId) {
+  if (!threadId || event.type === 'user.interrupt') {
     return event;
   }
   const hasOwner =
@@ -848,11 +849,14 @@ export function postSessionToolConfirmation(
   );
 }
 
-export function interruptQuickstartSession(sessionId: string, workspaceId: string) {
-  return anthropicBetaApi.sessions.events.send<unknown>(
+export function interruptSession(sessionId: string, workspaceId: string, sessionThreadId?: string) {
+  const event: BetaManagedAgentsUserInterruptEventParams = sessionThreadId
+    ? { type: 'user.interrupt', session_thread_id: sessionThreadId }
+    : { type: 'user.interrupt' };
+  return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
-      events: [{ type: 'user.interrupt' }],
+      events: [event],
     },
     workspaceId,
   );
@@ -1405,13 +1409,23 @@ export function sessionDetailScopeEvents(
   sessionId: string,
   threadIds: string[],
 ) {
-  const events = threadIds.flatMap((threadId) => {
+  const streams = threadIds.map((threadId) => {
     const cache = queryClient.getQueryData<SessionDetailEventCache>(
       sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
     );
     return cache?.events ?? [];
   });
-  return mergeSessionEventsById(events);
+  if (streams.length <= 1) return mergeSessionEventsById(streams[0] ?? []);
+
+  const timeline = streams.flatMap((stream) => {
+    let orderTime = 0;
+    return stream.map((event) => {
+      orderTime = Math.max(orderTime, sessionTimestampMs(event.processed_at ?? event.created_at));
+      return { event, orderTime };
+    });
+  });
+  timeline.sort((left, right) => left.orderTime - right.orderTime);
+  return mergeSessionEventsById(timeline.map(({ event }) => event));
 }
 
 export function sessionDetailDeltaFrames(

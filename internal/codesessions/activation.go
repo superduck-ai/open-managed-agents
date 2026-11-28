@@ -110,7 +110,7 @@ func (s *Service) prepareActivation(ctx context.Context, snapshot activationSnap
 	}
 	batch.events = append(batch.events, initialize)
 	for _, event := range snapshot.events {
-		if !maevents.IsPublicWorkerInputEvent(event.EventType) {
+		if !maevents.IsPublicWorkerInputEvent(event.EventType) || event.EventType == "user.interrupt" && !event.ProcessedAt.IsZero() {
 			continue
 		}
 		restored, err := s.eventPayloads.RestorePublic(ctx, event)

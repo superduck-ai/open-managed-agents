@@ -205,14 +205,13 @@ func TestSessionExplicitThreadStatusOwnership(t *testing.T) {
 		t.Fatalf("child history lost owned status: %s", events.Data)
 	}
 	primary := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.thread_status_running", defaultTestKey)
-	if len(primary.Data) != 0 {
-		t.Fatalf("owned status leaked into primary: %s", primary.Data)
+	if len(primary.Data) != 1 || sessionEventStringField(t, primary.Data[0], "session_thread_id") != child {
+		t.Fatalf("session stream lost the child running status: %s", primary.Data)
 	}
-	// Without explicit ownership, the coordination status still belongs to primary.
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"session.thread_status_idle","uuid":"coordination-idle","session_thread_id":`+quoteJSON(child)+`}`))
 	primary = listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.thread_status_idle", defaultTestKey)
-	if len(primary.Data) != 1 {
-		t.Fatalf("missing primary coordination status: %s", primary.Data)
+	if len(primary.Data) != 1 || sessionEventStringField(t, primary.Data[0], "session_thread_id") != child {
+		t.Fatalf("session stream lost the child idle status: %s", primary.Data)
 	}
 }
 

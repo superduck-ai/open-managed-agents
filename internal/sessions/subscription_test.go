@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +76,66 @@ func TestInternalSubscriptionReplaySuppressesQueuedDuplicates(t *testing.T) {
 		if err != nil || got.ExternalID != want {
 			t.Fatalf("补读与实时交界重复或遗漏: got=%+v want=%s err=%v", got, want, err)
 		}
+	}
+}
+
+func TestThreadIdleSubscriptionVisibility(t *testing.T) {
+	h, session := subscriptionFixture(t)
+	subscribeThread := func(id string) *EventSubscription {
+		t.Helper()
+		sub, err := h.subscribeSession(t.Context(), db.Session{WorkspaceUUID: "workspace", ExternalID: "session"},
+			newStreamConnection(id, id == "primary", nil), StreamOptions{ThreadID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sub.Close)
+		return sub
+	}
+	parent, child, sibling := subscribeThread("primary"), subscribeThread("child"), subscribeThread("sibling")
+	idle := func(id, physical, payload string) sessionStreamEvent {
+		return sessionStreamEvent{WorkspaceUUID: "workspace", SessionExternalID: "session", ExternalID: id, ThreadExternalID: new(physical),
+			EventType: "session.thread_status_idle", Payload: json.RawMessage(payload)}
+	}
+	h.receiveSessionEventsFanout([]sessionStreamEvent{
+		idle("child_idle", "primary", `{"session_thread_id":"child"}`),
+		idle("child_mirror", "child", `{"session_thread_id":"child","original_event_id":"child_idle"}`),
+		idle("sibling_idle", "sibling", `{"session_thread_id":"sibling"}`),
+		idle("sibling_mirror", "primary", `{"session_thread_id":"sibling","original_event_id":"sibling_idle"}`),
+		idle("primary_idle", "primary", `{"session_thread_id":"primary"}`),
+		idle("next_child_idle", "child", `{"session_thread_id":"child"}`),
+	})
+	h.streams.resetSession("session")
+	for _, tt := range []struct {
+		sub  *EventSubscription
+		want []string
+	}{
+		{session, []string{"child_idle", "sibling_idle", "primary_idle", "next_child_idle"}},
+		{parent, []string{"primary_idle"}},
+		{child, []string{"child_idle", "next_child_idle"}},
+		{sibling, []string{"sibling_idle"}},
+	} {
+		for _, want := range tt.want {
+			got, err := tt.sub.Receive(t.Context())
+			if err != nil || got.ExternalID != want {
+				t.Fatalf("thread %q got %q, %v, want %q", tt.sub.threadID, got.ExternalID, err, want)
+			}
+		}
+		if got, err := tt.sub.Receive(t.Context()); !errors.Is(err, ErrStreamReset) {
+			t.Fatalf("thread %q delivered extra event %q: %v", tt.sub.threadID, got.ExternalID, err)
+		}
+	}
+}
+
+func TestLegacyThreadIdleSSEOwner(t *testing.T) {
+	event := sessionStreamEvent{ExternalID: "legacy", ThreadExternalID: new("child"), EventType: "session.thread_status_idle",
+		Payload: json.RawMessage(`{"id":"legacy","type":"session.thread_status_idle"}`)}
+	if newStreamConnection("primary", true, nil).matches(event) || !newStreamConnection("child", false, nil).matches(event) {
+		t.Fatal("missing legacy payload owner must fall back to its stored thread")
+	}
+	recorder := httptest.NewRecorder()
+	writeSSE(recorder, event, "primary")
+	if !strings.Contains(recorder.Body.String(), `"session_thread_id":"child"`) {
+		t.Fatalf("incorrect owner on session stream: %s", recorder.Body)
 	}
 }
 

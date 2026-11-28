@@ -44,6 +44,7 @@ type codeSessionRow struct {
 }
 
 type codeSessionInputStateRow struct {
+	WorkerTransport        string `db:"worker_transport"`
 	ExternalID             string `db:"external_id"`
 	Status                 string `db:"status"`
 	WorkerTurnStarted      bool   `db:"worker_turn_started"`

@@ -118,7 +118,7 @@ export class Backend {
   connections = 0;
   sandboxCount = 0;
   modelScript: Payload[][] = [textEvents("hello")];
-  onModel?: (request: Payload) => Promise<Payload[] | Response>;
+  onModel?: (request: Payload, signal: AbortSignal) => Promise<Payload[] | Response>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
@@ -272,7 +272,7 @@ export class Backend {
       expect(request.headers.get("anthropic-version")).toBe("2023-06-01");
       this.requests.push(body);
       this.timeline.push({ type: "model.request" });
-      const script = this.onModel ? await this.onModel(body) : this.modelScript.shift();
+      const script = this.onModel ? await this.onModel(body, request.signal) : this.modelScript.shift();
       if (!script) return json({ error: "model script exhausted" }, 500);
       if (script instanceof Response) return script;
       return new Response(

@@ -233,6 +233,34 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 }
 
+func TestSessionEventMapperPublicThreadIdleScope(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		threadID    string
+		sessionView bool
+		wantArgs    []any
+		wantScope   string
+	}{
+		{"session history", "", true, []any{"workspace", "session", "workspace", "session", 6}, "parent_thread_uuid IS NULL"},
+		{"session replay", "primary", true, []any{"workspace", "session", "primary", 6}, "thread_external_id = $3"},
+		{"thread", "child", false, []any{"workspace", "session", "child", "child", 6}, "COALESCE(NULLIF(payload->>'session_thread_id', ''), thread_external_id) = $3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+			params := ListSessionEventsPageParams{
+				WorkspaceUUID: "workspace", SessionExternalID: "session", Limit: 5,
+				ThreadExternalID: tc.threadID, PrimaryOnly: tc.sessionView, PublicThreadIdle: true,
+			}
+			if _, err := NewSessionEventMapper(executor).ListPage(t.Context(), sessionEventPageParameters(params)); err != nil {
+				t.Fatal(err)
+			}
+			assertMapperTestExecution(t, executor, "SessionEventMapper.ListPage", yourbatis.StatementSelect, tc.wantArgs)
+			assertMapperSQLContains(t, executor.bound, "event_type = 'session.thread_status_idle' AND COALESCE(payload->>'original_event_id', '') = ''")
+			assertMapperSQLContains(t, executor.bound, tc.wantScope)
+		})
+	}
+}
+
 func TestSessionEventMapperLatestStatus(t *testing.T) {
 	for _, threadID := range []string{"sthr_primary", ""} {
 		bound := buildSessionEventMapperFindLatestStatus(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", threadID)
@@ -334,6 +362,27 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 	now := time.Now().UTC()
 	for _, contract := range []mapperBuilderContract{
 		{
+			statement: sessionEventMapperListCompletingInterruptsStatement,
+			bound:     buildSessionEventMapperListCompletingInterrupts(yourbatis.DialectPostgres, "workspace", "session", "thread", "input", true, now),
+			wantID:    "SessionEventMapper.ListCompletingInterrupts", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "at", "threadID", "inputID"},
+			wantSQLFragments:  []string{"processed_at IS NULL", "created_at <= $3", "payload->>'_interrupt_input_id' IS NULL AND payload->>'session_thread_id' IS NULL", "payload->>'_interrupt_input_id' = $5", "payload->>'session_thread_id' = $4", "ORDER BY created_at, external_id"},
+		},
+		{
+			statement: sessionEventMapperHasPendingInterruptsStatement,
+			bound:     buildSessionEventMapperHasPendingInterrupts(yourbatis.DialectPostgres, "workspace", "session", "thread"),
+			wantID:    "SessionEventMapper.HasPendingInterrupts", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID", "threadID"},
+			wantSQLFragments:  []string{"event_type = 'user.interrupt'", "processed_at IS NULL", "session_thread_id' = $4"},
+		},
+		{
+			statement: sessionEventMapperFindCancelableInputIDStatement,
+			bound:     buildSessionEventMapperFindCancelableInputID(yourbatis.DialectPostgres, "workspace", "session"),
+			wantID:    "SessionEventMapper.FindCancelableInputID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "workspaceUUID", "sessionExternalID"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "workspace_uuid = $3", "session_external_id = $4", "event_type = 'user.message'", "processed_at DESC NULLS LAST", "CASE WHEN processed_at IS NULL THEN id END ASC"},
+		},
+		{
 			statement: sessionEventMapperHasInputBlockingIdleStatement,
 			bound:     buildSessionEventMapperHasInputBlockingIdle(yourbatis.DialectPostgres, "workspace", "session", "thread", now),
 			wantID:    "SessionEventMapper.HasInputBlockingIdle", wantKind: yourbatis.StatementSelect,
@@ -345,7 +394,7 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 			bound:     buildSessionEventMapperMarkInputProcessed(yourbatis.DialectPostgres, "workspace", "session", "event", now),
 			wantID:    "SessionEventMapper.MarkInputProcessed", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"processedAt", "workspaceUUID", "sessionExternalID", "eventExternalID"},
-			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "event_type IN ('user.message', 'user.tool_confirmation')", "processed_at IS NULL", "RETURNING"},
+			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "event_type IN ('user.message', 'user.tool_confirmation', 'user.interrupt')", "processed_at IS NULL", "RETURNING"},
 		},
 	} {
 		assertMapperBuilderContract(t, contract)

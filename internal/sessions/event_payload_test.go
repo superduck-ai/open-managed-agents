@@ -16,6 +16,9 @@ func TestSessionEventResponsePreservesThreadIdentity(t *testing.T) {
 		threadID string
 		want     string
 	}{
+		{name: "session idle stored on primary", payload: `{"type":"session.status_idle"}`, owner: new("sthr_primary")},
+		{name: "session idle with stored thread field", payload: `{"type":"session.status_idle","session_thread_id":"sthr_primary"}`, threadID: "sthr_primary"},
+		{name: "thread idle on primary", payload: `{"type":"session.thread_status_idle"}`, owner: new("sthr_primary"), want: "sthr_primary"},
 		{name: "missing owner", payload: `{"type":"agent.message"}`},
 		{name: "primary history", payload: `{"type":"agent.message"}`, owner: new("sthr_primary"), want: "sthr_primary"},
 		{name: "child history", payload: `{"type":"agent.message"}`, owner: new("sthr_child"), want: "sthr_child"},
@@ -35,6 +38,17 @@ func TestSessionEventResponsePreservesThreadIdentity(t *testing.T) {
 				t.Fatalf("thread = %q, want %q", payload.ThreadID, test.want)
 			}
 		})
+	}
+}
+
+func TestMirroredThreadStatusResponse(t *testing.T) {
+	source := json.RawMessage(`{"id":"sevt_copy","type":"session.thread_status_idle","session_thread_id":"sthr_child","original_event_id":"sevt_origin","stop_reason":{"type":"end_turn"}}`)
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(eventPayloadForResponse(source, time.Now(), "sthr_primary"), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 5 || result["original_event_id"] != nil || string(result["id"]) != `"sevt_copy"` || string(result["session_thread_id"]) != `"sthr_child"` {
+		t.Fatalf("invalid public thread status: %v", result)
 	}
 }
 

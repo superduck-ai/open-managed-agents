@@ -370,7 +370,18 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
-			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
+			interrupt := envelope.EventType == "control_request" && envelope.EventSubtype == "interrupt"
+			if interrupt && publicEvent.ID != "" {
+				settled, err := h.discardAppliedInterrupt(ctx, codeSession, epoch, publicEvent.ID, delivery.AckSubject, cleanupJobID)
+				if err != nil {
+					h.logger.ErrorContext(ctx, "settle applied interrupt delivery", "code_session_id", codeSession.ExternalID, "error", err)
+					return
+				}
+				if settled {
+					continue
+				}
+			}
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Interrupt: interrupt, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
@@ -392,6 +403,24 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 			lastEpochValidation = time.Now()
 		}
 	}
+}
+
+func (h *Handler) discardAppliedInterrupt(ctx context.Context, session db.CodeSession, epoch int64, publicID, subject, cleanupID string) (bool, error) {
+	event, err := h.db.GetSessionEvent(ctx, session.WorkspaceUUID, session.SessionExternalID, publicID)
+	if errors.Is(err, db.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if event.EventType != "user.interrupt" || event.ProcessedAt.IsZero() {
+		return false, nil
+	}
+	err = h.db.WithLockedCodeSessionWorkerEpoch(ctx, session.ExternalID, epoch, func() (bool, error) { return false, h.service.workerEvents.DoubleAck(ctx, subject) })
+	if err == nil && cleanupID != "" {
+		h.service.triggerPayloadCleanupNow(ctx, cleanupID)
+	}
+	return true, err
 }
 
 func codeSessionEventFromWorkerEnvelope(envelope workerevents.EnvelopeV1) db.CodeSessionEvent {

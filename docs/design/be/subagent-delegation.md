@@ -34,6 +34,12 @@ DSH 发出的 sent/received 是主线程视角，不携带子线程 owner。资�
 
 对照资料为 Claude Session threads 的 Primary thread events 与 Session thread events。普通回归检查事件生成、主子副本身份、历史响应以及前端四条消息的分组和连线。
 
+## 线程进入 idle 时的事件
+
+线程每次进入 idle 时产生一条 `session.thread_status_idle`。它的 `session_thread_id` 指向进入 idle 的线程。会话级历史和 SSE 汇总所有线程的 idle，按线程 ID 查询或订阅时只返回该线程的 idle。两处使用同一条记录的 `id`、`processed_at` 和 `stop_reason`。客户端可以直接按 `id` 合并列表，也可以在任一可见流中用这个 ID 重连。旧会话读取原始事件，过滤以前写入的跨流副本。用旧副本 ID 作为 SSE 游标会返回 400，重新读取该线程的历史即可取得有效 ID。
+
+主线程和两个运行中的子线程一起被中断并结束本轮时，会话流共收到三条线程 idle。所有线程停止工作后，另有一条 `session.status_idle` 表示整个会话已空闲。线程再次运行并进入 idle 时会产生新 ID。Claude 规定了子线程 idle 在两个流中的可见性，OMA 参考 Qoder 为两处投递选用相同的 ID。[Claude Session threads](https://platform.claude.com/docs/en/managed-agents/session-threads#primary-thread-events)
+
 ## 术语
 
 | 术语       | 含义                                                |
@@ -314,7 +320,7 @@ preset ID 使用 `<root-session-id>/<agent-name>`；根会话的预定义名单�
 
 通用子任务不再接受动态 `system_prompt` 参数，临时角色要求放入 `prompt`。预定义 specialist 仍由 OMA 安装固定系统指令、工具和模型配置，不开放模型任意选择工具或模型，只允许选择官方参数枚举中的 preset。禁用 inline 时仍使用 `subagent`，但缺少 `agent_preset` 会在创建前拒绝；允许 inline 时省略参数创建临时子 Agent。子线程不加载任何委派或控制工具。当前持久化明确拒绝 seeded/fork 日志，因此不加载 `subagent_fork`，仍保持独立上下文和一层委派。
 
-子线程 ID 由 DSH 生成标准 UUID，OMA 公开线程事件及其传输层 agent_id 直接使用同一 ID。后端线程读写以字符串 ID 定位，不要求 `sthr_` 前缀；trace 导出校验同时接受原有 `sthr_` 与标准 UUID，避免子线程 trace 和工具事件错误关联到主线程。后端内部委派权限分类仅识别官方委派和控制工具名，继续依赖会话启用委派且禁止子线程再委派。
+新建 DSH 子线程在创建时分配带 `sthr_` 前缀的公开 ID。OMA 线程事件、定向中断、传输层 agent_id 和 DSH 恢复都使用同一 ID。已有 UUID 线程继续使用存储的原始标识。后端线程读写以字符串 ID 定位，不要求 `sthr_` 前缀；trace 导出校验同时接受原有 `sthr_` 与标准 UUID，避免子线程 trace 和工具事件错误关联到主线程。后端内部委派权限分类仅识别官方委派和控制工具名，继续依赖会话启用委派且禁止子线程再委派。
 
 官方创建工具的 canonical value 为 `{kind: "activation", subagentId}`，模型收到 `started subagent <id>`；`send_message` 返回消息 ID，模型收到投递确认。报告由 DSH 单独投递并唤醒父 agent。根运行时在确认父 agent idle 后调用 `waitForChildren`，等待后重新检查父 agent，直到子任务和父级汇总都结束才确认输入完成。公共提示词不再硬编码 OMA 工具名，并提醒模型不能把接收确认当成完成。
 

@@ -1,5 +1,5 @@
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
-import { ArrowUp, Paperclip, Square, X } from 'lucide-react';
+import { ArrowUp, LoaderCircle, Paperclip, Square, X } from 'lucide-react';
 import { Button } from '../../../shared/ui/button';
 import {
   createSessionAttachment,
@@ -7,9 +7,9 @@ import {
   sessionAttachmentMessage,
   type SessionAttachment,
 } from './sessionAttachments';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
-import { interruptQuickstartSession, postQuickstartSessionMessage } from '../api';
+import { interruptSession, postQuickstartSessionMessage } from '../api';
 import { type QuickstartSessionEvent } from '../types';
 import { errorMessage } from '../utils';
 
@@ -19,7 +19,8 @@ export function SessionMessageComposer({
   disabled,
   live,
   onError,
-  onEventsChanged,
+  onInterruptAccepted,
+  stopping = false,
   onMessageSent,
   onResourcesChanged = () => {},
   sessionId,
@@ -30,7 +31,8 @@ export function SessionMessageComposer({
   disabled: boolean;
   live: boolean;
   onError: (error: string | null) => void;
-  onEventsChanged: () => void;
+  onInterruptAccepted: (events: QuickstartSessionEvent[]) => void;
+  stopping?: boolean;
   onMessageSent: (events: QuickstartSessionEvent[]) => void;
   onResourcesChanged?: () => void;
   sessionId: string;
@@ -49,13 +51,8 @@ export function SessionMessageComposer({
   const interruptingRef = useRef(false);
   const trimmedDraft = draft.trim();
   const composerDisabled = disabled || awaitingAction;
-  const sendDisabled = composerDisabled || !acceptingMessages || sending || interrupting;
-  useEffect(() => {
-    if (!live) {
-      interruptingRef.current = false;
-      setInterrupting(false);
-    }
-  }, [live]);
+  const stopPending = interrupting || stopping;
+  const sendDisabled = composerDisabled || !acceptingMessages || sending || stopPending;
 
   const submit = async () => {
     if ((!trimmedDraft && !attachments.length) || sendDisabled || sendingRef.current) {
@@ -86,15 +83,16 @@ export function SessionMessageComposer({
   };
 
   const interrupt = async () => {
-    if (interruptingRef.current) return;
+    if (stopping || interruptingRef.current) return;
     interruptingRef.current = true;
     setInterrupting(true);
     onError(null);
     try {
-      await interruptQuickstartSession(sessionId, workspaceId);
-      onEventsChanged();
+      const response = await interruptSession(sessionId, workspaceId);
+      onInterruptAccepted(response.data ?? []);
     } catch (error) {
       onError(errorMessage(error));
+    } finally {
       interruptingRef.current = false;
       setInterrupting(false);
     }
@@ -198,23 +196,7 @@ export function SessionMessageComposer({
               >
                 <Paperclip className="size-4" aria-hidden />
               </InputGroupButton>
-              {live ? (
-                <InputGroupButton
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-7 rounded-md text-muted-foreground hover:bg-session-hover hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-foreground"
-                  aria-label={
-                    interrupting
-                      ? msg('managedAgents.sessions.detail.stopping', 'Stopping session')
-                      : msg('managedAgents.sessions.detail.stop', 'Stop session')
-                  }
-                  disabled={interrupting}
-                  onClick={() => void interrupt()}
-                >
-                  <Square className="size-3.5 fill-current" aria-hidden />
-                </InputGroupButton>
-              ) : null}
+              <SessionStopButton live={live} stopping={stopPending} onClick={interrupt} />
               <InputGroupButton
                 type="submit"
                 variant="default"
@@ -234,5 +216,39 @@ export function SessionMessageComposer({
         </InputGroup>
       </div>
     </form>
+  );
+}
+
+function SessionStopButton({
+  live,
+  stopping,
+  onClick,
+}: {
+  live: boolean;
+  stopping: boolean;
+  onClick: () => Promise<void>;
+}) {
+  const { msg } = useI18n();
+  if (!live && !stopping) return null;
+  return (
+    <InputGroupButton
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      className="size-7 rounded-md text-muted-foreground hover:bg-session-hover hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-foreground"
+      aria-label={
+        stopping
+          ? msg('managedAgents.sessions.detail.stopping', 'Stopping session')
+          : msg('managedAgents.sessions.detail.stop', 'Stop session')
+      }
+      disabled={stopping}
+      onClick={() => void onClick()}
+    >
+      {stopping ? (
+        <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+      ) : (
+        <Square className="size-3.5 fill-current" aria-hidden />
+      )}
+    </InputGroupButton>
   );
 }

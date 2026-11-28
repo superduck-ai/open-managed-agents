@@ -2,6 +2,8 @@ package codesessions
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -56,7 +58,8 @@ func (s *Service) applyWorkerDeliveryUpdates(
 			return false, err
 		}
 		for _, update := range updates {
-			if references[update.EventID].PublicEventID != "" && (update.Status == "processing" || update.Status == "processed") {
+			ref, found := references[update.EventID]
+			if (!found && update.Status == "processed") || (ref.PublicEventID != "" && (update.Status == "processed" || update.Status == "processing" && !ref.Interrupt)) {
 				needsProcessing = true
 			}
 		}
@@ -152,16 +155,7 @@ func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeli
 }
 
 func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate, references map[string]workerevents.AckRef) error {
-	var inputIDs []string
-	for _, update := range updates {
-		if update.Status != "processing" && update.Status != "processed" {
-			continue
-		}
-		if id := references[update.EventID].PublicEventID; id != "" {
-			inputIDs = append(inputIDs, id)
-		}
-	}
-	if len(inputIDs) == 0 || s.sink == nil {
+	if s.sink == nil {
 		return nil
 	}
 	record, found, err := s.db.GetCodeSession(ctx, codeSessionID)
@@ -170,6 +164,27 @@ func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID str
 	}
 	if !found {
 		return db.ErrNotFound
+	}
+	var inputIDs []string
+	for _, update := range updates {
+		ref, known := references[update.EventID]
+		if known && ref.PublicEventID != "" && (update.Status == "processed" || update.Status == "processing" && !ref.Interrupt) {
+			inputIDs = append(inputIDs, ref.PublicEventID)
+		} else if !known && update.Status == "processed" && strings.HasPrefix(update.EventID, "sevt_") && usesBrainClaimTransport(record) {
+			recovered, err := s.db.GetSessionEvent(ctx, record.WorkspaceUUID, record.SessionExternalID, update.EventID)
+			if errors.Is(err, db.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if recovered.EventType == "user.interrupt" && recovered.ProcessedAt.IsZero() {
+				inputIDs = append(inputIDs, update.EventID)
+			}
+		}
+	}
+	if len(inputIDs) == 0 {
+		return nil
 	}
 	return s.sink.ProcessCodeSessionInputs(ctx, record, epoch, inputIDs)
 }

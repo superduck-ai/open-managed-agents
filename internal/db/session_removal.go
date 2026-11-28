@@ -20,7 +20,7 @@ type SessionEventChanges struct {
 
 func (c SessionEventChanges) WorkerInputEvents() []SessionEvent {
 	return slices.DeleteFunc(slices.Clone(c.Events), func(event SessionEvent) bool {
-		tracked := event.EventType == "user.message" || event.EventType == "user.tool_confirmation"
+		tracked := event.EventType == "user.message" || event.EventType == "user.tool_confirmation" || event.EventType == "user.interrupt"
 		return c.Replayed && tracked && !event.ProcessedAt.IsZero() || event.EventType == "user.interrupt" && slices.Contains(c.SettledInputEventIDs, event.ExternalID)
 	})
 }

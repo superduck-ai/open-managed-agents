@@ -3,16 +3,17 @@
 package db
 
 import (
-	"context"
-	"database/sql"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/yourbatis"
 )
 
-func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+func threadStatusFixture(t *testing.T) (*yourbatis.Tx, Session, SessionThread, SessionThread) {
+	t.Helper()
+	ctx := t.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -21,12 +22,12 @@ func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	tx, err := store.mapperDB.BeginTx(ctx, &sql.TxOptions{})
+	t.Cleanup(store.Close)
+	tx, err := store.mapperDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	t.Cleanup(func() { _ = tx.Rollback() })
 	execMapperFixtureSQL(t, ctx, tx, `CREATE TEMP TABLE session_threads (
  uuid uuid PRIMARY KEY, external_id text,organization_uuid uuid,workspace_uuid uuid,session_uuid uuid,session_external_id text,
  parent_thread_uuid uuid,parent_thread_external_id text,agent_snapshot jsonb,status text,usage jsonb,stats jsonb,
@@ -42,14 +43,20 @@ func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
 	const sid = "88000000-0000-0000-0000-000000000003"
 	primary := SessionThread{UUID: "88000000-0000-0000-0000-000000000004", ExternalID: "primary"}
 	child := SessionThread{UUID: "88000000-0000-0000-0000-000000000005", ExternalID: "child"}
-	for _, thread := range []SessionThread{primary, child} {
-		execMapperFixtureSQL(t, ctx, tx, `INSERT INTO session_threads(uuid,external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,agent_snapshot,status,usage,stats,created_at,updated_at) VALUES($1,$2,$3,$4,$5,'own-session','{}','idle','{}','{}',NOW(),NOW())`, thread.UUID, thread.ExternalID, org, workspace, sid)
-	}
-	session := Session{UUID: sid, ExternalID: "own-session", OrganizationUUID: org, WorkspaceUUID: workspace, Status: "idle"}
-	payload := []byte(`{"id":"original-status","type":"session.thread_status_idle","session_thread_id":"child","agent_name":"worker","stop_reason":{"type":"end_turn"}}`)
+	execMapperFixtureSQL(t, ctx, tx, `INSERT INTO session_threads(uuid,external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,parent_thread_uuid,agent_snapshot,status,usage,stats,created_at,updated_at)
+		VALUES ($1,'primary',$3,$4,$5,'own-session',NULL,'{}','running','{}','{}',NOW(),NOW()),
+		       ($2,'child',$3,$4,$5,'own-session',$1,'{}','running','{}','{}',NOW(),NOW())`,
+		primary.UUID, child.UUID, org, workspace, sid)
+	return tx, Session{UUID: sid, ExternalID: "own-session", OrganizationUUID: org, WorkspaceUUID: workspace, Status: "running"}, primary, child
+}
+
+func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
+	ctx := t.Context()
+	tx, session, primary, child := threadStatusFixture(t)
+	payload := []byte(`{"id":"original-status","type":"session.thread_status_running","session_thread_id":"child","agent_name":"worker"}`)
 	now := time.Now().UTC()
-	source := SessionEvent{UUID: "88000000-0000-0000-0000-000000000006", ExternalID: "original-status", EventType: "session.thread_status_idle", StatusThreadID: child.ExternalID, ThreadExternalID: &primary.ExternalID, Payload: payload, ProcessedAt: now, CreatedAt: now}
-	execMapperFixtureSQL(t, ctx, tx, `INSERT INTO session_events(uuid,external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,thread_uuid,thread_external_id,event_type,payload,processed_at,created_at) VALUES($1,$2,$3,$4,$5,'own-session',$6,'primary','session.thread_status_idle',CAST($7 AS jsonb),$8,$8)`, source.UUID, source.ExternalID, org, workspace, sid, primary.UUID, string(payload), now)
+	source := SessionEvent{UUID: "88000000-0000-0000-0000-000000000006", ExternalID: "original-status", EventType: "session.thread_status_running", StatusThreadID: child.ExternalID, ThreadExternalID: &primary.ExternalID, Payload: payload, ProcessedAt: now, CreatedAt: now}
+	execMapperFixtureSQL(t, ctx, tx, `INSERT INTO session_events(uuid,external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,thread_uuid,thread_external_id,event_type,payload,processed_at,created_at) VALUES($1,$2,$3,$4,$5,'own-session',$6,'primary','session.thread_status_running',CAST($7 AS jsonb),$8,$8)`, source.UUID, source.ExternalID, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, primary.UUID, string(payload), now)
 	ordinary, err := shouldWriteSessionStatus(ctx, tx, session, primary, source)
 	if err != nil || ordinary {
 		t.Fatal("ordinary duplicate status suppression changed", err)
@@ -70,7 +77,62 @@ func TestChildStatusMirrorSurvivesAppliedStatePostgres(t *testing.T) {
 	if err := tx.SQLTx().QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE thread_external_id='child'),count(*) FILTER(WHERE thread_external_id='primary') FROM session_events`).Scan(&own, &parent); err != nil || own != 1 || parent != 1 {
 		t.Fatal("missing or duplicate stream history", err)
 	}
-	if session.Status != "idle" {
+	if session.Status != "running" {
 		t.Fatal("mirror changed session state")
+	}
+}
+
+func TestPublicIdleHistoryPostgres(t *testing.T) {
+	ctx := t.Context()
+	tx, session, _, _ := threadStatusFixture(t)
+
+	execMapperFixtureSQL(t, ctx, tx, `INSERT INTO session_events(uuid,external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,thread_external_id,event_type,payload,processed_at,created_at)
+		SELECT gen_random_uuid(), external_id, $1, $2, $3, 'own-session', thread_id, event_type, payload::jsonb, $4, $4 FROM (VALUES
+			('child-idle', 'primary', 'session.thread_status_idle', '{"session_thread_id":"child"}'),
+			('child-copy', 'child', 'session.thread_status_idle', '{"session_thread_id":"child","original_event_id":"child-idle"}'),
+			('parent-idle', 'primary', 'session.thread_status_idle', '{"session_thread_id":"primary"}'),
+			('second-child-idle', 'child', 'session.thread_status_idle', '{"session_thread_id":"child"}'),
+			('second-child-copy', 'primary', 'session.thread_status_idle', '{"session_thread_id":"child","original_event_id":"second-child-idle"}'),
+			('session-idle', 'primary', 'session.status_idle', '{}'),
+			('legacy-child-idle', 'child', 'session.thread_status_idle', '{}')
+		) entries(external_id, thread_id, event_type, payload)`, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, time.Now().UTC())
+	for _, tc := range []struct {
+		name        string
+		threadID    string
+		sessionView bool
+		cursor      string
+		descending  bool
+		wantIDs     []string
+	}{
+		{"session", "", true, "", false, []string{"child-idle", "parent-idle", "second-child-idle", "session-idle", "legacy-child-idle"}},
+		{"primary", "primary", false, "", false, []string{"parent-idle", "session-idle"}},
+		{"child", "child", false, "", false, []string{"child-idle", "second-child-idle", "legacy-child-idle"}},
+		{"child after original", "child", false, "child-idle", false, []string{"second-child-idle", "legacy-child-idle"}},
+		{"session before child", "primary", true, "second-child-idle", true, []string{"parent-idle", "child-idle"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := sessionEventPageMapperParams{
+				WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.ExternalID, ThreadExternalID: tc.threadID,
+				PublicThreadIdle: true, PrimaryOnly: tc.sessionView, FetchLimit: 1, Descending: tc.descending,
+			}
+			if tc.cursor != "" {
+				params.Cursor = &SessionEventPageCursor{ExternalID: tc.cursor}
+			}
+			var ids []string
+			for len(ids) <= len(tc.wantIDs) {
+				rows, err := NewSessionEventMapper(tx).ListPage(ctx, params)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) == 0 {
+					break
+				}
+				ids = append(ids, rows[0].ExternalID)
+				params.Cursor = &SessionEventPageCursor{ExternalID: rows[0].ExternalID}
+			}
+			if !slices.Equal(ids, tc.wantIDs) {
+				t.Errorf("paged history = %v, want %v", ids, tc.wantIDs)
+			}
+		})
 	}
 }

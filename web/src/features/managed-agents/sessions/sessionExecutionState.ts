@@ -4,6 +4,7 @@ import { stringValueFromKeys, toRecord } from '../utils';
 const interruptedToolMessages = new Set([
   'Tool execution was interrupted before completion. Please retry.',
   'Tool execution was interrupted by the user.',
+  'Tool call interrupted.',
 ]);
 
 export function sessionToolResultWasInterrupted(event?: QuickstartSessionEvent) {
@@ -20,6 +21,31 @@ function eventThreadId(event: QuickstartSessionEvent) {
 
 function eventWasProcessed(event: QuickstartSessionEvent) {
   return typeof event.processed_at === 'string';
+}
+
+export function sessionInterruptState(events: QuickstartSessionEvent[]): 'stopping' | 'stopped' | undefined {
+  let interrupt: QuickstartSessionEvent | undefined;
+  let ended = false;
+  for (const event of events) {
+    if (event.type === 'user.interrupt' && !eventThreadId(event)) {
+      interrupt = event;
+    } else if (event.type === 'session.status_idle') {
+      const reason = toRecord(event.stop_reason)?.type;
+      ended = reason === 'end_turn';
+      if (!ended && reason !== 'requires_action') interrupt = undefined;
+    } else if (
+      event.type === 'session.status_running' ||
+      event.type === 'session.status_rescheduled' ||
+      (event.type === 'user.message' && !eventThreadId(event))
+    ) {
+      if (ended) interrupt = undefined;
+      ended = false;
+    } else if (event.type === 'session.status_terminated' || event.type === 'session.deleted') {
+      interrupt = undefined;
+      ended = false;
+    }
+  }
+  if (interrupt) return ended && eventWasProcessed(interrupt) ? 'stopped' : 'stopping';
 }
 
 function startsTurn(event: QuickstartSessionEvent) {

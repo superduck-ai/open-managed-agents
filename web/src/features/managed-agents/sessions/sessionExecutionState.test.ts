@@ -5,6 +5,7 @@ import { buildInspectorToolRows, buildInspectorToolTotals } from './sessionInspe
 import {
   interruptedSessionModelRequestIds,
   latestSessionIdlePresentationState,
+  sessionInterruptState,
   sessionEventPresentationState,
   sessionToolResultWasInterrupted,
 } from './sessionExecutionState';
@@ -63,6 +64,20 @@ describe('session execution state', () => {
     expect(interruptedSessionModelRequestIds(events).has(endId)).toBe(stopped);
   });
 
+  test('waits for an applied session interrupt and an aggregate end_turn in either delivery order', () => {
+    const receipt = { ...interrupt, processed_at: null };
+    const childIdle = { ...idle, type: 'session.thread_status_idle', session_thread_id: 'child' };
+    expect(sessionInterruptState([receipt, childIdle])).toBe('stopping');
+    expect(sessionInterruptState([receipt, idle])).toBe('stopping');
+    expect(sessionInterruptState([interrupt, childIdle])).toBe('stopping');
+    expect(sessionInterruptState([interrupt, { ...idle, stop_reason: { type: 'requires_action' } }])).toBe('stopping');
+    expect(sessionInterruptState([interrupt, idle])).toBe('stopped');
+    expect(sessionInterruptState([idle, interrupt])).toBe('stopped');
+    expect(sessionInterruptState([idle])).toBeUndefined();
+    expect(sessionInterruptState([{ ...interrupt, session_thread_id: 'primary' }, idle])).toBeUndefined();
+    expect(sessionInterruptState([interrupt, idle, { type: 'session.status_running' }])).toBeUndefined();
+  });
+
   test('normalizes presentation without changing raw diagnostic events', () => {
     const events = [start, interrupt, end, idle];
     const entries = buildSessionEventEntries(events, 'transcript', 0, undefined, { platformTranscriptFiltering: true });
@@ -106,6 +121,7 @@ describe('session execution state', () => {
   test.each([
     'Tool execution was interrupted before completion. Please retry.',
     'Tool execution was interrupted by the user.',
+    'Tool call interrupted.',
   ])('recognizes the Claude interruption result %s', (text) => {
     const result = {
       id: 'result',

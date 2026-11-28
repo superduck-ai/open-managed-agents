@@ -11,7 +11,8 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (json.RawMessage, error) {
+func workerPayloadForPublicEvent(codeSession db.CodeSession, event db.SessionEvent) (json.RawMessage, error) {
+	codeSessionID := codeSession.ExternalID
 	fields, err := decodeRawJSONObject(event.Payload)
 	if err != nil {
 		return nil, err
@@ -26,7 +27,11 @@ func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (j
 	receivedAt := event.CreatedAt.UTC()
 	switch schema.Type {
 	case "user.interrupt":
-		payload := map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}}
+		request := map[string]string{"subtype": "interrupt"}
+		if schema.InterruptInputID != "" && usesBrainClaimTransport(codeSession) {
+			request["input_id"] = schema.InterruptInputID
+		}
+		payload := map[string]any{"id": schema.ID, "uuid": schema.ID, "type": "control_request", "request_id": schema.ID, "request": request}
 		if schema.SessionThreadID != "" {
 			payload["session_thread_id"] = schema.SessionThreadID
 		}
@@ -161,7 +166,11 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
 		if !payload.IsError {
-			return []publicPayloadCandidate{completedWorkerResultCandidate(firstPayloadTime(object, event.CreatedAt))}, true, nil
+			candidate := completedWorkerResultCandidate(firstPayloadTime(object, event.CreatedAt))
+			if inputID, ok := strings.CutSuffix(stringField(object, "uuid"), "_result"); ok && strings.HasPrefix(inputID, "sevt_") {
+				candidate.payload["_result_input_id"] = inputID
+			}
+			return []publicPayloadCandidate{candidate}, true, nil
 		}
 		return []publicPayloadCandidate{{payload: map[string]any{
 			"type":         "session.error",
@@ -193,6 +202,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	if threadID == "" {
 		return nil, nil
 	}
+
 	fields, err := decodeRawJSONObject(event.Payload)
 	if err != nil {
 		return nil, err
@@ -346,7 +356,7 @@ func normalizePublicIdleStopReason(payload map[string]any) {
 	}
 	if reason, ok := raw.(string); ok {
 		reason = strings.TrimSpace(reason)
-		if reason == "" {
+		if reason == "" || reason == "cancelled" {
 			reason = "end_turn"
 		}
 		payload["stop_reason"] = map[string]any{"type": reason}
@@ -354,7 +364,7 @@ func normalizePublicIdleStopReason(payload map[string]any) {
 	}
 	if reason, ok := raw.(map[string]any); ok {
 		reasonType := strings.TrimSpace(stringField(reason, "type"))
-		if reasonType == "" {
+		if reasonType == "" || reasonType == "cancelled" {
 			reasonType = "end_turn"
 		}
 		normalized := map[string]any{"type": reasonType}

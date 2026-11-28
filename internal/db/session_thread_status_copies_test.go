@@ -9,7 +9,7 @@ import (
 func TestSessionChildStatusHasOwnAndPrimaryCopies(t *testing.T) {
 	primary := SessionThread{UUID: "primary-uuid", ExternalID: "primary"}
 	child := SessionThread{UUID: "child-uuid", ExternalID: "child"}
-	for _, eventType := range []string{"session.thread_status_running", "session.thread_status_idle", "session.thread_status_rescheduled", "session.thread_status_terminated"} {
+	for _, eventType := range []string{"session.thread_status_running", "session.thread_status_rescheduled", "session.thread_status_terminated"} {
 		for _, childOwner := range []bool{false, true} {
 			source := SessionEvent{UUID: "source-uuid", ExternalID: "event-original", EventType: eventType, StatusThreadID: child.ExternalID, ProcessedAt: time.Now().UTC(), Payload: []byte(`{"id":"event-original","type":"` + eventType + `","session_thread_id":"child","agent_name":"worker","stop_reason":{"type":"end_turn"}}`)}
 			if childOwner {
@@ -46,6 +46,20 @@ func TestSessionChildStatusHasOwnAndPrimaryCopies(t *testing.T) {
 			source.Payload = []byte(`invalid`)
 			if _, err := sessionThreadStatusCopies(source, primary, child); err == nil {
 				t.Fatal("malformed lifecycle accepted")
+			}
+		}
+	}
+}
+
+func TestSessionThreadIdleKeepsOneEventOnItsSubjectThread(t *testing.T) {
+	primary := SessionThread{ExternalID: "primary"}
+	child := SessionThread{ExternalID: "child"}
+	for _, target := range []SessionThread{primary, child} {
+		for _, origin := range []SessionThread{primary, target} {
+			event := SessionEvent{ExternalID: "original", EventType: "session.thread_status_idle", ThreadExternalID: &origin.ExternalID}
+			got, err := sessionThreadStatusCopies(event, primary, target)
+			if err != nil || len(got) != 1 || got[0].ExternalID != event.ExternalID || *got[0].ThreadExternalID != target.ExternalID {
+				t.Fatalf("idle from %s for %s: events=%v err=%v", origin.ExternalID, target.ExternalID, got, err)
 			}
 		}
 	}

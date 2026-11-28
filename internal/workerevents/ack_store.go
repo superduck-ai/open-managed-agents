@@ -14,6 +14,7 @@ import (
 )
 
 type AckRef struct {
+	Interrupt     bool      `json:"interrupt,omitempty"`
 	Lane          string    `json:"lane,omitempty"`
 	PublishedAt   time.Time `json:"published_at,omitzero"`
 	TraceParent   string    `json:"trace_parent,omitempty"`

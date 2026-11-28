@@ -139,6 +139,59 @@ test.each([
   expect(document.querySelector('[data-event-id^="global-stop-"]') !== null).toBe(threadId === 'sthr_analyst123456');
 });
 
+test('stops a session awaiting a child approval and accepts a new turn after the aggregate idle', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+  const api = mockManagedResourceApi();
+  api.resources.sessions[0].status = 'idle';
+  const history: Record<string, unknown>[] = api.resources.sessionEvents;
+  history.length = 0;
+  const at = (n: number) => new Date(Date.now() + n).toISOString();
+  history.push(
+    { id: 'task', type: 'user.message', processed_at: at(-2000), content: 'Delegate a task' },
+    {
+      id: 'waiting',
+      type: 'session.status_idle',
+      processed_at: at(-1000),
+      stop_reason: { type: 'requires_action', event_ids: ['approval'] },
+    },
+  );
+  renderManagedAgentsPage('sessions');
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop session' }));
+  expect((await screen.findByRole('button', { name: 'Stopping session' })).hasAttribute('disabled')).toBe(true);
+
+  cleanup();
+  const receipt = history.find((event) => event.type === 'user.interrupt')!;
+  expect(receipt.processed_at).toBeNull();
+  receipt.processed_at = at(0);
+  history.push({
+    id: 'child-end',
+    type: 'session.thread_status_idle',
+    session_thread_id: 'sthr_analyst123456',
+    processed_at: at(1),
+    stop_reason: { type: 'end_turn' },
+  });
+  renderManagedAgentsPage('sessions');
+  expect((await screen.findByRole('button', { name: 'Stopping session' })).hasAttribute('disabled')).toBe(true);
+
+  cleanup();
+  history.push({
+    id: 'session-end',
+    type: 'session.status_idle',
+    processed_at: at(5),
+    stop_reason: { type: 'end_turn' },
+  });
+  renderManagedAgentsPage('sessions');
+  await waitFor(() =>
+    expect(document.querySelector(`[data-event-id^="${receipt.id}-"] [data-execution-state="stopped"]`)).toBeTruthy(),
+  );
+  expect(screen.queryByRole('button', { name: 'Stopping session' })).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Next turn' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  await waitFor(() =>
+    expect(api.requests.some((request) => request.body?.events?.[0]?.content?.[0]?.text === 'Next turn')).toBe(true),
+  );
+});
+
 test('sending from older history resumes following the latest session message', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
   const api = mockManagedResourceApi();

@@ -64,20 +64,19 @@ func TestSessionMessageQueuesUntilWorkerProcessing(t *testing.T) {
 func TestSessionAcceptsControlInputsForActiveTurn(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("active-control-inputs"))
 	worker, _ := newPayloadIntegrationSession(t, app)
-	path := "/v1/sessions/" + worker.SessionExternalID + "/events?beta=true"
-	idleInterrupt := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[{"type":"user.interrupt"}]}`), defaultTestKey, true)
-	assertError(t, idleInterrupt, http.StatusConflict, "conflict_error")
-	if events := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey); len(events.Data) != 0 {
-		t.Fatalf("idle control input persisted: %s", events.Data)
+	idleInterrupt := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
+	if len(idleInterrupt.Data) != 1 || sessionInputProcessedAt(t, idleInterrupt.Data[0]) == "" {
+		t.Fatalf("idle interrupt did not settle: %s", idleInterrupt.Data)
 	}
+
 	sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"work"}]}]}`, defaultTestKey)
 	for _, input := range []string{
 		`{"type":"user.interrupt"}`,
 		`{"type":"user.tool_result","tool_use_id":"tool_one","content":[{"type":"text","text":"done"}]}`,
 	} {
 		sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
-		if len(sent.Data) != 1 || sessionInputProcessedAt(t, sent.Data[0]) == "" {
-			t.Fatalf("active control input was not processed on receipt: %s", sent.Data)
+		if len(sent.Data) != 1 || (sessionInputProcessedAt(t, sent.Data[0]) == "") != strings.Contains(input, "user.interrupt") {
+			t.Fatalf("unexpected processing state on receipt: %s", sent.Data)
 		}
 	}
 }

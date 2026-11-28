@@ -82,7 +82,7 @@ func (s *Service) publicWorkerPayload(ctx context.Context, codeSession db.CodeSe
 	if err != nil {
 		return nil, err
 	}
-	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
+	payload, err := workerPayloadForPublicEvent(codeSession, event)
 	if err == nil && event.EventType == "user.interrupt" {
 		return s.publicWorkerInterruptPayload(ctx, codeSession, payload)
 	}

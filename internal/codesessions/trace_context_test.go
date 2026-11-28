@@ -10,7 +10,7 @@ import (
 
 func TestWorkerPayloadCarriesOnlyServerStoredTraceContext(t *testing.T) {
 	forged := db.SessionEvent{ExternalID: "input", EventType: "user.message", CreatedAt: time.Now().UTC(), Payload: json.RawMessage(`{"id":"input","type":"user.message","content":[],"trace_context":{"traceparent":"forged"}}`)}
-	payload, err := workerPayloadForPublicEvent("code", forged)
+	payload, err := workerPayloadForPublicEvent(db.CodeSession{ExternalID: "code"}, forged)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,12 +23,12 @@ func TestWorkerPayloadCarriesOnlyServerStoredTraceContext(t *testing.T) {
 	parent, state := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "vendor=a"
 	stored := forged
 	stored.TraceParent = &parent
-	payload, err = workerPayloadForPublicEvent("code", stored)
+	payload, err = workerPayloadForPublicEvent(db.CodeSession{ExternalID: "code"}, stored)
 	if err != nil || json.Unmarshal(payload, &wire) != nil || wire.TraceContext["traceparent"] != parent || wire.TraceContext["tracestate"] != "" {
 		t.Fatalf("trace context = %s %v", payload, err)
 	}
 	stored.TraceState = &state
-	payload, _ = workerPayloadForPublicEvent("code", stored)
+	payload, _ = workerPayloadForPublicEvent(db.CodeSession{ExternalID: "code"}, stored)
 	if json.Unmarshal(payload, &wire) != nil || wire.TraceContext["tracestate"] != state {
 		t.Fatalf("trace state = %s", payload)
 	}

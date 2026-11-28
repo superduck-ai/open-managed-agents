@@ -86,3 +86,7 @@ Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声�
 场景通过公开 API 创建 Agent 与 Session，由真实 DSH 请求模型依次使用 Write、Edit、Read、Grep、Glob 和 Bash。生产 Runner 启动镜像内的 Linux Manager，工具通过持久化领取协议执行。必须同时观察六种公开工具事件、实际文件的 `beta-marker\n` 字节、只有一个沙箱，以及数据库中至少六条 succeeded 调用。对应阶段为 `real_model_six_tools`、`real_sandbox_bytes`、`real_claims_persisted`。随后直接通过生产协议向同一个真实 Manager 提交调用，检查相同身份重提只写入一个字节、大结果经 MinIO 还原、用户取消与 deadline 均确认 Bash 退出并保留部分输出，形成 `live_claim_replay_and_object` 和 `live_claim_cancel_and_deadline`。任一缺失都失败，不能只依据模型回答通过。
 
 该场景是一次真实模型 smoke，不覆盖模型质量基准、云端分配、停止确认丢失、崩溃窗口或性能。凭据只写入隔离 workspace 的加密 provider 记录，证据报告不记录 API key。`chat brain` 另用固定模型验证多节点与恢复，`chat roundtrip` 保留为聊天烟测。
+
+## 会话级停止
+
+运行 `chat doctor brain-cancel` 与 `chat brain-cancel`。使用带工具领取与取消协议的 Linux Manager、真实 DSH 进程、Runner 和 Docker 沙箱。模型固定工具选择，使停止发生在可观测的执行位置。父、子 Bash 都写出自己的 PID 后，官方 Go SDK 订阅会话 SSE，再通过 events.send 发送无目标的 user.interrupt。验证接收时 processed_at 为 null、应用后变为时间戳，回执、SSE 与历史的事件 ID 一致且没有附加线程目标或内部字段。第二轮等待父线程输出完成、子线程仍运行，再通过同一入口中断会话。检查线程原因、Bash 进程退出，等待超过原命令的 40 秒后确认结束标记不存在、模型请求数保持稳定。最后发送新消息并等待自然结束。此场景不使用生产会话或真实上游模型。

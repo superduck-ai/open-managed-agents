@@ -1,6 +1,6 @@
 import type { I18nMsg, QuickstartSessionEvent, SessionEventListEntry, SessionExecutionState } from '../types';
-import { stringValueFromKeys } from '../utils';
-import { sessionExecutionStateDescription } from './sessionExecutionState';
+import { stringValueFromKeys, toRecord } from '../utils';
+import { sessionExecutionStateDescription, sessionInterruptState } from './sessionExecutionState';
 
 function threadId(event: QuickstartSessionEvent) {
   return stringValueFromKeys(event, ['session_thread_id', 'thread_id']);
@@ -21,7 +21,7 @@ function interruptScope(events: QuickstartSessionEvent[], index: number) {
   const stop = events[index];
   const stopThread = threadId(stop);
   let before = events.length;
-  let settled = false;
+  let settled = !stopThread && sessionInterruptState(events.slice(0, index + 1)) === 'stopped';
   for (let next = index + 1; next < events.length; next++) {
     const event = events[next];
     if (stopThread && threadId(event) && threadId(event) !== stopThread) continue;
@@ -29,7 +29,10 @@ function interruptScope(events: QuickstartSessionEvent[], index: number) {
       before = next;
       break;
     }
-    if (event.type === 'session.status_idle' || event.type === 'session.thread_status_idle') settled = true;
+    const idle = stopThread
+      ? event.type === 'session.thread_status_idle' && threadId(event) === stopThread
+      : event.type === 'session.status_idle';
+    if (idle && toRecord(event.stop_reason)?.type !== 'requires_action') settled = true;
   }
   return { index, before, settled: settled && typeof stop.processed_at === 'string', stopThread };
 }

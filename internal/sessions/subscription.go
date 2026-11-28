@@ -66,6 +66,7 @@ func (h *Handler) subscribeSessionThread(ctx context.Context, session db.Session
 }
 
 func (h *Handler) subscribeSession(ctx context.Context, session db.Session, connection *streamConnection, options StreamOptions) (*EventSubscription, error) {
+	connection.sessionStream = options.ThreadID == ""
 	cursorID := options.AfterEventID
 	ctx, cancel := context.WithCancel(ctx)
 	id, deliveries := h.streams.subscribe(session.WorkspaceUUID, session.ExternalID)
